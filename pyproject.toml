@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pre-call-briefing-engine"
+version = "0.1.0"
+description = "Pre-Call Intelligence Briefing Engine – decision-grade meeting briefs from Fireflies + Gmail"
+requires-python = ">=3.11"
+dependencies = [
+    "click>=8.1",
+    "pydantic>=2.5",
+    "pydantic-settings>=2.1",
+    "sqlalchemy>=2.0",
+    "aiosqlite>=0.19",
+    "httpx>=0.27",
+    "openai>=1.12",
+    "google-auth>=2.28",
+    "google-auth-oauthlib>=1.2",
+    "google-api-python-client>=2.118",
+    "python-dotenv>=1.0",
+    "rich>=13.7",
+    "jinja2>=3.1",
+    "tiktoken>=0.6",
+]
+
+[project.optional-dependencies]
+supabase = ["asyncpg>=0.29", "psycopg2-binary>=2.9"]
+dev = ["pytest>=8.0", "pytest-asyncio>=0.23", "pytest-cov>=4.1", "ruff>=0.3"]
+
+[project.scripts]
+brief = "app.cli.main:cli"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
