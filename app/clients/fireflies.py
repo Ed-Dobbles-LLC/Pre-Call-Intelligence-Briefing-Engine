@@ -2,6 +2,8 @@
 
 Thin wrapper around the Fireflies API.  All methods return raw dicts;
 normalisation is handled by the ingest layer.
+
+API docs: https://docs.fireflies.ai/graphql-api/query/transcripts
 """
 
 from __future__ import annotations
@@ -19,28 +21,73 @@ logger = logging.getLogger(__name__)
 FIREFLIES_GQL_URL = "https://api.fireflies.ai/graphql"
 
 # ---------------------------------------------------------------------------
-# GraphQL fragments
+# GraphQL fragments – expanded to match full Fireflies schema
 # ---------------------------------------------------------------------------
 
 _TRANSCRIPT_FIELDS = """
     id
     title
     date
+    dateString
     duration
     organizer_email
     participants
+    transcript_url
+    meeting_link
+    meeting_attendees {
+        displayName
+        email
+        name
+    }
     summary {
         overview
         shorthand_bullet
         action_items
+        short_summary
+        keywords
+        outline
+        bullet_gist
     }
     sentences {
+        index
         speaker_name
+        speaker_id
         text
+        raw_text
         start_time
         end_time
+        ai_filters {
+            task
+            question
+            sentiment
+        }
     }
 """
+
+# Server-side filtered query using Fireflies native parameters
+QUERY_TRANSCRIPTS_FILTERED = """
+query TranscriptsFiltered(
+    $limit: Int,
+    $skip: Int,
+    $fromDate: DateTime,
+    $toDate: DateTime,
+    $participants: [String],
+    $mine: Boolean,
+    $keyword: String
+) {
+    transcripts(
+        limit: $limit,
+        skip: $skip,
+        fromDate: $fromDate,
+        toDate: $toDate,
+        participants: $participants,
+        mine: $mine,
+        keyword: $keyword
+    ) {
+        %s
+    }
+}
+""" % _TRANSCRIPT_FIELDS
 
 QUERY_TRANSCRIPTS = """
 query Transcripts($limit: Int, $skip: Int) {
@@ -86,10 +133,12 @@ class FirefliesClient:
             return data.get("data", {})
 
     async def list_transcripts(self, limit: int = 50, skip: int = 0) -> list[dict]:
+        """List recent transcripts (no filters)."""
         data = await self._post(QUERY_TRANSCRIPTS, {"limit": limit, "skip": skip})
         return data.get("transcripts", [])
 
     async def get_transcript(self, transcript_id: str) -> dict | None:
+        """Fetch a single transcript by ID."""
         data = await self._post(QUERY_TRANSCRIPT_BY_ID, {"id": transcript_id})
         return data.get("transcript")
 
@@ -98,62 +147,78 @@ class FirefliesClient:
         participant_email: str | None = None,
         participant_name: str | None = None,
         since: datetime | None = None,
+        until: datetime | None = None,
+        keyword: str | None = None,
         limit: int = 100,
     ) -> list[dict]:
-        """Fetch transcripts and filter client-side by participant or date.
+        """Search transcripts using server-side filters where possible,
+        then refine client-side for name-based matching.
 
-        The Fireflies API doesn't expose rich server-side search, so we pull
-        recent transcripts and filter locally.
+        Server-side filters (fast, handled by Fireflies API):
+          - participants: filter by attendee email
+          - fromDate / toDate: date range
+          - keyword: search titles and spoken words
+
+        Client-side filters (applied after fetch):
+          - participant_name: match against speaker_names, meeting_attendees, title
         """
+        variables: dict[str, Any] = {"limit": min(limit, 50), "skip": 0}
+
+        # Server-side: participant email filter
+        if participant_email:
+            variables["participants"] = [participant_email]
+
+        # Server-side: date range
+        if since:
+            variables["fromDate"] = since.isoformat()
+        if until:
+            variables["toDate"] = until.isoformat()
+
+        # Server-side: keyword search
+        if keyword:
+            variables["keyword"] = keyword
+
         all_transcripts: list[dict] = []
         skip = 0
-        batch = 50
         while len(all_transcripts) < limit:
-            batch_data = await self.list_transcripts(limit=batch, skip=skip)
-            if not batch_data:
+            variables["skip"] = skip
+            variables["limit"] = min(50, limit - len(all_transcripts))
+            data = await self._post(QUERY_TRANSCRIPTS_FILTERED, variables)
+            batch = data.get("transcripts", [])
+            if not batch:
                 break
-            all_transcripts.extend(batch_data)
-            skip += batch
+            all_transcripts.extend(batch)
+            skip += len(batch)
 
-        results: list[dict] = []
-        for t in all_transcripts:
-            # Date filter
-            t_date = t.get("date")
-            if since and t_date:
-                try:
-                    # Fireflies returns epoch ms or ISO string
-                    if isinstance(t_date, (int, float)):
-                        t_dt = datetime.utcfromtimestamp(t_date / 1000)
-                    else:
-                        t_dt = datetime.fromisoformat(str(t_date))
-                    if t_dt < since:
-                        continue
-                except (ValueError, TypeError):
-                    pass
+        # Client-side: name-based matching (API only filters by email)
+        if participant_name and not participant_email:
+            name_lower = participant_name.lower()
+            filtered = []
+            for t in all_transcripts:
+                if _transcript_mentions_name(t, name_lower):
+                    filtered.append(t)
+            return filtered[:limit]
 
-            # Participant filter
-            participants = t.get("participants", []) or []
-            if participant_email:
-                if participant_email.lower() not in [
-                    p.lower() for p in participants if isinstance(p, str)
-                ]:
-                    continue
-            if participant_name:
-                # Check participant names in sentences
-                sentences = t.get("sentences", []) or []
-                speaker_names = {
-                    s.get("speaker_name", "").lower()
-                    for s in sentences
-                    if s.get("speaker_name")
-                }
-                if participant_name.lower() not in speaker_names:
-                    # Also check title
-                    title = (t.get("title") or "").lower()
-                    if participant_name.lower() not in title:
-                        continue
+        return all_transcripts[:limit]
 
-            results.append(t)
-            if len(results) >= limit:
-                break
 
-        return results
+def _transcript_mentions_name(transcript: dict, name_lower: str) -> bool:
+    """Check if a transcript mentions a person by name."""
+    # Check meeting_attendees (structured, reliable)
+    for attendee in transcript.get("meeting_attendees") or []:
+        for field in ("displayName", "name", "email"):
+            val = (attendee.get(field) or "").lower()
+            if name_lower in val:
+                return True
+
+    # Check speaker names in sentences
+    for sentence in transcript.get("sentences") or []:
+        speaker = (sentence.get("speaker_name") or "").lower()
+        if name_lower in speaker:
+            return True
+
+    # Check title
+    if name_lower in (transcript.get("title") or "").lower():
+        return True
+
+    return False

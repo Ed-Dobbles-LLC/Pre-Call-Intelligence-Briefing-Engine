@@ -45,13 +45,30 @@ def normalize_transcript(raw: dict) -> NormalizedTranscript:
     if isinstance(action_items, str):
         action_items = [line.strip("- ").strip() for line in action_items.split("\n") if line.strip()]
 
+    # Build participant list from both participants[] and meeting_attendees[]
+    participants = list(raw.get("participants") or [])
+    for attendee in raw.get("meeting_attendees") or []:
+        email = attendee.get("email")
+        display = attendee.get("displayName") or attendee.get("name")
+        if email and email not in participants:
+            participants.append(email)
+        if display and display not in participants:
+            participants.append(display)
+
+    # Use the best available summary: overview > short_summary > shorthand_bullet
+    summary = (
+        summary_obj.get("overview")
+        or summary_obj.get("short_summary")
+        or summary_obj.get("shorthand_bullet")
+    )
+
     return NormalizedTranscript(
         source_id=raw.get("id", ""),
         title=raw.get("title"),
         date=_parse_fireflies_date(raw.get("date")),
         duration_minutes=(raw.get("duration") or 0) / 60 if raw.get("duration") else None,
-        participants=raw.get("participants") or [],
-        summary=summary_obj.get("overview") or summary_obj.get("shorthand_bullet"),
+        participants=participants,
+        summary=summary,
         action_items=action_items,
         sentences=sentences,
         raw_json=raw,
@@ -78,6 +95,11 @@ def store_transcript(normalized: NormalizedTranscript, entity_id: int | None = N
             session.refresh(existing)
             return existing
 
+        # Extract transcript_url for deep-linking in citations
+        transcript_url = None
+        if normalized.raw_json:
+            transcript_url = normalized.raw_json.get("transcript_url")
+
         record = SourceRecord(
             source_type="fireflies",
             source_id=normalized.source_id,
@@ -92,6 +114,7 @@ def store_transcript(normalized: NormalizedTranscript, entity_id: int | None = N
             ),
             raw_json=json.dumps(normalized.raw_json) if normalized.raw_json else None,
             normalized_json=normalized.model_dump_json(),
+            link=transcript_url,
         )
         session.add(record)
         session.commit()
