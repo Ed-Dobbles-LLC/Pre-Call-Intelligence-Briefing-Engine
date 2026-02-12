@@ -8,15 +8,18 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    env:
+      RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
     steps:
       - uses: actions/checkout@v4
 
       - name: Install Railway CLI
         run: npm i -g @railway/cli
 
+      - name: Link Railway project and service
+        run: railway link ${{ secrets.RAILWAY_PROJECT_ID }} ${{ secrets.RAILWAY_SERVICE_ID }}
+
       - name: Set shared variables on Railway
-        env:
-          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
         run: |
           railway variables set "OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}"
           railway variables set "ANTHROPIC_API_KEY=${{ secrets.ANTHROPIC_API_KEY }}"
@@ -28,6 +31,4 @@ jobs:
           railway variables set "INNGEST_SIGNING_KEY=${{ secrets.INNGEST_SIGNING_KEY }}"
 
       - name: Deploy to Railway
-        env:
-          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
         run: railway up --detach
