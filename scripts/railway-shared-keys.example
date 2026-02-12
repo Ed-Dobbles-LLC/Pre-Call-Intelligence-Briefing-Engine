@@ -1,8 +1,0 @@
-# ~/.railway-shared-keys
-# Shared API keys used across all your Railway projects.
-# Copy this file to ~/.railway-shared-keys and fill in your real values.
-#
-# DO NOT commit the real file — it lives in your home directory, not in git.
-
-OPENAI_API_KEY=sk-your-key-here
-FIREFLIES_API_KEY=ff-your-key-here
