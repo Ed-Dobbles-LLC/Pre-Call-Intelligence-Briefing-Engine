@@ -10,6 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+      RAILWAY_SERVICE_ID: b1dfec83-a286-43e7-a7ef-f3e916bad19a
     steps:
       - uses: actions/checkout@v4
 
