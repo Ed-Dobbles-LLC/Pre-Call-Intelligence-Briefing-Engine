@@ -18,7 +18,13 @@ jobs:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
         run: |
           railway variables set "OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}"
+          railway variables set "ANTHROPIC_API_KEY=${{ secrets.ANTHROPIC_API_KEY }}"
           railway variables set "FIREFLIES_API_KEY=${{ secrets.FIREFLIES_API_KEY }}"
+          railway variables set "GOOGLE_CLIENT_ID=${{ secrets.GOOGLE_CLIENT_ID }}"
+          railway variables set "GOOGLE_CLIENT_SECRET=${{ secrets.GOOGLE_CLIENT_SECRET }}"
+          railway variables set "GAMMA_API_KEY=${{ secrets.GAMMA_API_KEY }}"
+          railway variables set "INNGEST_EVENT_KEY=${{ secrets.INNGEST_EVENT_KEY }}"
+          railway variables set "INNGEST_SIGNING_KEY=${{ secrets.INNGEST_SIGNING_KEY }}"
 
       - name: Deploy to Railway
         env:
