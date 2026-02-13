@@ -230,12 +230,12 @@ async def async_sync_fireflies() -> dict:
         result = _process_transcripts(raw_transcripts)
         return result
 
-    except Exception:
+    except Exception as exc:
         logger.exception("Auto-sync failed")
         return {
             "transcripts_synced": 0,
             "profiles_updated": 0,
-            "error": "Sync failed - check server logs",
+            "error": f"Sync failed: {exc}",
         }
     finally:
         _sync_running = False
@@ -282,12 +282,12 @@ def sync_fireflies_transcripts() -> dict:
         result = _process_transcripts(raw_transcripts)
         return result
 
-    except Exception:
+    except Exception as exc:
         logger.exception("Auto-sync failed")
         return {
             "transcripts_synced": 0,
             "profiles_updated": 0,
-            "error": "Sync failed - check server logs",
+            "error": f"Sync failed: {exc}",
         }
     finally:
         _sync_running = False
