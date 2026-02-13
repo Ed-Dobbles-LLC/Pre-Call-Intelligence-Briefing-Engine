@@ -28,12 +28,10 @@ _TRANSCRIPT_FIELDS = """
     id
     title
     date
-    dateString
     duration
     organizer_email
     participants
     transcript_url
-    meeting_link
     meeting_attendees {
         displayName
         email
@@ -45,8 +43,6 @@ _TRANSCRIPT_FIELDS = """
         action_items
         short_summary
         keywords
-        outline
-        bullet_gist
     }
     sentences {
         index
@@ -56,11 +52,6 @@ _TRANSCRIPT_FIELDS = """
         raw_text
         start_time
         end_time
-        ai_filters {
-            task
-            question
-            sentiment
-        }
     }
 """
 
@@ -69,20 +60,14 @@ QUERY_TRANSCRIPTS_FILTERED = """
 query TranscriptsFiltered(
     $limit: Int,
     $skip: Int,
-    $fromDate: DateTime,
-    $toDate: DateTime,
-    $participants: [String],
-    $mine: Boolean,
-    $keyword: String
+    $fromDate: Float,
+    $toDate: Float
 ) {
     transcripts(
         limit: $limit,
         skip: $skip,
         fromDate: $fromDate,
-        toDate: $toDate,
-        participants: $participants,
-        mine: $mine,
-        keyword: $keyword
+        toDate: $toDate
     ) {
         %s
     }
@@ -129,7 +114,9 @@ class FirefliesClient:
             resp.raise_for_status()
             data = resp.json()
             if "errors" in data:
-                logger.error("Fireflies GraphQL errors: %s", data["errors"])
+                error_msgs = [e.get("message", str(e)) for e in data["errors"]]
+                logger.error("Fireflies GraphQL errors: %s", error_msgs)
+                raise RuntimeError(f"Fireflies API error: {'; '.join(error_msgs)}")
             return data.get("data", {})
 
     async def list_transcripts(self, limit: int = 50, skip: int = 0) -> list[dict]:
@@ -164,19 +151,11 @@ class FirefliesClient:
         """
         variables: dict[str, Any] = {"limit": min(limit, 50), "skip": 0}
 
-        # Server-side: participant email filter
-        if participant_email:
-            variables["participants"] = [participant_email]
-
-        # Server-side: date range
+        # Server-side: date range (Fireflies expects epoch milliseconds)
         if since:
-            variables["fromDate"] = since.isoformat()
+            variables["fromDate"] = int(since.timestamp() * 1000)
         if until:
-            variables["toDate"] = until.isoformat()
-
-        # Server-side: keyword search
-        if keyword:
-            variables["keyword"] = keyword
+            variables["toDate"] = int(until.timestamp() * 1000)
 
         all_transcripts: list[dict] = []
         skip = 0
@@ -184,20 +163,32 @@ class FirefliesClient:
             variables["skip"] = skip
             variables["limit"] = min(50, limit - len(all_transcripts))
             data = await self._post(QUERY_TRANSCRIPTS_FILTERED, variables)
-            batch = data.get("transcripts", [])
+            batch = data.get("transcripts") or []
             if not batch:
                 break
             all_transcripts.extend(batch)
             skip += len(batch)
 
-        # Client-side: name-based matching (API only filters by email)
-        if participant_name and not participant_email:
+        # Client-side: filter by participant email
+        if participant_email:
+            email_lower = participant_email.lower()
+            all_transcripts = [
+                t for t in all_transcripts
+                if email_lower in [
+                    (a.get("email") or "").lower()
+                    for a in (t.get("meeting_attendees") or [])
+                ] or email_lower in [
+                    (p or "").lower() for p in (t.get("participants") or [])
+                ]
+            ]
+
+        # Client-side: name-based matching
+        if participant_name:
             name_lower = participant_name.lower()
-            filtered = []
-            for t in all_transcripts:
-                if _transcript_mentions_name(t, name_lower):
-                    filtered.append(t)
-            return filtered[:limit]
+            all_transcripts = [
+                t for t in all_transcripts
+                if _transcript_mentions_name(t, name_lower)
+            ]
 
         return all_transcripts[:limit]
 
