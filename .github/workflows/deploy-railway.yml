@@ -21,11 +21,11 @@ jobs:
 
       - name: Set shared variables on Railway
         run: |
-          railway variables set "OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}" -s $RAILWAY_SERVICE_ID -e $RAILWAY_ENVIRONMENT_ID
-          railway variables set "ANTHROPIC_API_KEY=${{ secrets.ANTHROPIC_API_KEY }}" -s $RAILWAY_SERVICE_ID -e $RAILWAY_ENVIRONMENT_ID
-          railway variables set "FIREFLIES_API_KEY=${{ secrets.FIREFLIES_API_KEY }}" -s $RAILWAY_SERVICE_ID -e $RAILWAY_ENVIRONMENT_ID
-          railway variables set "GOOGLE_CLIENT_ID=${{ secrets.GOOGLE_CLIENT_ID }}" -s $RAILWAY_SERVICE_ID -e $RAILWAY_ENVIRONMENT_ID
-          railway variables set "GOOGLE_CLIENT_SECRET=${{ secrets.GOOGLE_CLIENT_SECRET }}" -s $RAILWAY_SERVICE_ID -e $RAILWAY_ENVIRONMENT_ID
+          railway variables --set "OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}" -s $RAILWAY_SERVICE_ID -e $RAILWAY_ENVIRONMENT_ID
+          railway variables --set "ANTHROPIC_API_KEY=${{ secrets.ANTHROPIC_API_KEY }}" -s $RAILWAY_SERVICE_ID -e $RAILWAY_ENVIRONMENT_ID
+          railway variables --set "FIREFLIES_API_KEY=${{ secrets.FIREFLIES_API_KEY }}" -s $RAILWAY_SERVICE_ID -e $RAILWAY_ENVIRONMENT_ID
+          railway variables --set "GOOGLE_CLIENT_ID=${{ secrets.GOOGLE_CLIENT_ID }}" -s $RAILWAY_SERVICE_ID -e $RAILWAY_ENVIRONMENT_ID
+          railway variables --set "GOOGLE_CLIENT_SECRET=${{ secrets.GOOGLE_CLIENT_SECRET }}" -s $RAILWAY_SERVICE_ID -e $RAILWAY_ENVIRONMENT_ID
 
       - name: Deploy to Railway
         run: railway up --detach -s $RAILWAY_SERVICE_ID -e $RAILWAY_ENVIRONMENT_ID
