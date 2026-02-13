@@ -1,24 +1,28 @@
 """FastAPI web API for the Pre-Call Intelligence Briefing Engine.
 
 Exposes the briefing pipeline as HTTP endpoints for Railway / cloud deployment.
+Serves a built-in web dashboard at the root URL.
 """
 
 from __future__ import annotations
 
+import json
 import logging
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Optional
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from app.brief.pipeline import run_pipeline
 from app.config import settings, validate_config
 from app.models import BriefOutput
-from app.store.database import init_db
+from app.store.database import BriefLog, get_session, init_db
 
 logging.basicConfig(
     level=getattr(logging, settings.log_level.upper(), logging.INFO),
@@ -200,3 +204,52 @@ def generate_brief_json(request: BriefRequest):
         raise HTTPException(status_code=500, detail="Brief generation failed.")
 
     return result.brief.model_dump()
+
+
+# ---------------------------------------------------------------------------
+# Recent briefs (for dashboard)
+# ---------------------------------------------------------------------------
+
+@app.get("/briefs/recent", dependencies=[Depends(verify_api_key)])
+def list_recent_briefs(limit: int = Query(20, ge=1, le=100)):
+    """Return recent brief audit log entries (newest first)."""
+    session = get_session()
+    try:
+        rows = (
+            session.query(BriefLog)
+            .order_by(BriefLog.created_at.desc())
+            .limit(limit)
+            .all()
+        )
+        return [
+            {
+                "id": row.id,
+                "person": row.person,
+                "company": row.company,
+                "topic": row.topic,
+                "confidence_score": row.confidence_score,
+                "brief_json": json.loads(row.brief_json) if row.brief_json else None,
+                "brief_markdown": row.brief_markdown,
+                "created_at": row.created_at.isoformat() if row.created_at else None,
+            }
+            for row in rows
+        ]
+    finally:
+        session.close()
+
+
+# ---------------------------------------------------------------------------
+# Dashboard (static files)
+# ---------------------------------------------------------------------------
+
+_static_dir = Path(__file__).parent / "static"
+
+
+@app.get("/", include_in_schema=False)
+def serve_dashboard():
+    """Serve the web dashboard."""
+    return FileResponse(_static_dir / "index.html")
+
+
+# Mount static assets last so it doesn't shadow API routes
+app.mount("/static", StaticFiles(directory=str(_static_dir)), name="static")

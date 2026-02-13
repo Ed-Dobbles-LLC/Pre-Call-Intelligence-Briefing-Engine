@@ -7,6 +7,7 @@ import os
 os.environ["DATABASE_URL"] = "sqlite:///./test_briefing_engine.db"
 os.environ["OPENAI_API_KEY"] = ""
 os.environ["FIREFLIES_API_KEY"] = ""
+os.environ["BRIEFING_API_KEY"] = ""  # disable auth for tests
 
 from fastapi.testclient import TestClient
 
@@ -68,3 +69,31 @@ class TestBriefEndpoint:
         data = response.json()
         assert "header" in data
         assert "open_loops" in data
+
+
+class TestDashboard:
+    def test_root_serves_dashboard(self):
+        response = client.get("/")
+        assert response.status_code == 200
+        assert "text/html" in response.headers["content-type"]
+        assert "Pre-Call Intelligence" in response.text
+
+    def test_recent_briefs_empty(self):
+        response = client.get("/briefs/recent")
+        assert response.status_code == 200
+        assert response.json() == []
+
+    def test_recent_briefs_after_generation(self):
+        # Generate a brief first
+        client.post("/brief", json={"person": "Dashboard Test", "skip_ingestion": True})
+        response = client.get("/briefs/recent")
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data) >= 1
+        assert data[0]["person"] == "Dashboard Test"
+
+    def test_recent_briefs_limit(self):
+        response = client.get("/briefs/recent?limit=1")
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data) <= 1

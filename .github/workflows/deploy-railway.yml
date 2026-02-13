@@ -1,13 +1,38 @@
-name: Deploy to Railway
+name: Test & Deploy to Railway
 
 on:
   push:
     branches: [main]
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 jobs:
-  deploy:
+  test:
     runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install .[dev]
+
+      - name: Run tests
+        env:
+          DATABASE_URL: "sqlite:///./test_briefing_engine.db"
+          OPENAI_API_KEY: ""
+          FIREFLIES_API_KEY: ""
+          BRIEFING_API_KEY: ""
+        run: pytest tests/ -v
+
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     env:
       RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
     steps:
