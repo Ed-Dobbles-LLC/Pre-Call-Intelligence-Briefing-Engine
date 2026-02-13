@@ -23,6 +23,12 @@ from app.brief.pipeline import run_pipeline
 from app.config import settings, validate_config
 from app.models import BriefOutput
 from app.store.database import BriefLog, get_session, init_db
+from app.sync.auto_sync import (
+    async_sync_fireflies,
+    get_all_profiles,
+    get_dashboard_stats,
+    start_background_sync,
+)
 
 logging.basicConfig(
     level=getattr(logging, settings.log_level.upper(), logging.INFO),
@@ -39,6 +45,13 @@ async def lifespan(app: FastAPI):
         init_db()
     except Exception:
         logger.exception("Database init failed – running in degraded mode")
+    # Start background auto-sync for Fireflies transcripts
+    if settings.fireflies_api_key:
+        start_background_sync(interval_minutes=30)
+        logger.info("Auto-sync enabled (every 30 minutes)")
+    else:
+        logger.info("Auto-sync disabled (no Fireflies API key)")
+
     logger.info("Briefing Engine API ready")
     yield
 
@@ -207,6 +220,31 @@ def generate_brief_json(request: BriefRequest):
         raise HTTPException(status_code=500, detail="Brief generation failed.")
 
     return result.brief.model_dump()
+
+
+# ---------------------------------------------------------------------------
+# Sync & Profiles
+# ---------------------------------------------------------------------------
+
+@app.post("/sync", dependencies=[Depends(verify_api_key)])
+async def trigger_sync():
+    """Trigger a manual sync of Fireflies transcripts and profile rebuild."""
+    result = await async_sync_fireflies()
+    if "error" in result:
+        raise HTTPException(status_code=400, detail=result["error"])
+    return result
+
+
+@app.get("/profiles", dependencies=[Depends(verify_api_key)])
+def list_profiles():
+    """Return all auto-generated contact profiles."""
+    return get_all_profiles()
+
+
+@app.get("/stats", dependencies=[Depends(verify_api_key)])
+def dashboard_stats():
+    """Return summary statistics for the dashboard."""
+    return get_dashboard_stats()
 
 
 # ---------------------------------------------------------------------------
