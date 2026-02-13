@@ -10,22 +10,11 @@ jobs:
     runs-on: ubuntu-latest
     env:
       RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
-      RAILWAY_PROJECT_ID: b8594932-2960-443e-9dcb-7e779187cdf8
-      RAILWAY_SERVICE_ID: b1dfec83-a286-43e7-a7ef-f3e916bad19a
-      RAILWAY_ENVIRONMENT_ID: b9486303-275f-4807-b13a-63fae3d755e2
     steps:
       - uses: actions/checkout@v4
 
       - name: Install Railway CLI
         run: npm i -g @railway/cli
 
-      - name: Set shared variables on Railway
-        run: |
-          railway variables --set "OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}" -s $RAILWAY_SERVICE_ID -e $RAILWAY_ENVIRONMENT_ID
-          railway variables --set "ANTHROPIC_API_KEY=${{ secrets.ANTHROPIC_API_KEY }}" -s $RAILWAY_SERVICE_ID -e $RAILWAY_ENVIRONMENT_ID
-          railway variables --set "FIREFLIES_API_KEY=${{ secrets.FIREFLIES_API_KEY }}" -s $RAILWAY_SERVICE_ID -e $RAILWAY_ENVIRONMENT_ID
-          railway variables --set "GOOGLE_CLIENT_ID=${{ secrets.GOOGLE_CLIENT_ID }}" -s $RAILWAY_SERVICE_ID -e $RAILWAY_ENVIRONMENT_ID
-          railway variables --set "GOOGLE_CLIENT_SECRET=${{ secrets.GOOGLE_CLIENT_SECRET }}" -s $RAILWAY_SERVICE_ID -e $RAILWAY_ENVIRONMENT_ID
-
       - name: Deploy to Railway
-        run: railway up --detach -s $RAILWAY_SERVICE_ID -e $RAILWAY_ENVIRONMENT_ID
+        run: railway up --detach
