@@ -19,7 +19,7 @@ from typing import Optional
 from sqlalchemy import desc
 
 from app.config import settings
-from app.store.database import SourceRecord, get_session, init_db
+from app.store.database import EmbeddingRecord, SourceRecord, get_session, init_db
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +41,74 @@ class RetrievedEvidence:
     @property
     def source_count(self) -> int:
         return len(self.all_source_records)
+
+
+def _cosine_similarity(a: list[float], b: list[float]) -> float:
+    """Compute cosine similarity between two vectors."""
+    dot = sum(x * y for x, y in zip(a, b))
+    norm_a = sum(x * x for x in a) ** 0.5
+    norm_b = sum(x * x for x in b) ** 0.5
+    if norm_a == 0 or norm_b == 0:
+        return 0.0
+    return dot / (norm_a * norm_b)
+
+
+def _semantic_search(
+    session,
+    query: str,
+    since: datetime,
+    exclude_ids: set[int],
+    top_k: int = 10,
+    threshold: float = 0.3,
+) -> list[SourceRecord]:
+    """Find source records semantically similar to the query string."""
+    if not settings.openai_api_key or not query.strip():
+        return []
+
+    try:
+        from app.clients.openai_client import EmbeddingClient
+        client = EmbeddingClient()
+        query_vec = client.embed_single(query)
+    except Exception:
+        logger.debug("Semantic search skipped – embedding failed")
+        return []
+
+    if not query_vec:
+        return []
+
+    embeddings = (
+        session.query(EmbeddingRecord)
+        .join(SourceRecord)
+        .filter(SourceRecord.date >= since)
+        .all()
+    )
+
+    scored: list[tuple[float, int]] = []
+    for emb in embeddings:
+        if emb.source_record_id in exclude_ids:
+            continue
+        try:
+            vec = json.loads(emb.embedding)
+        except (json.JSONDecodeError, TypeError):
+            continue
+        sim = _cosine_similarity(query_vec, vec)
+        if sim >= threshold:
+            scored.append((sim, emb.source_record_id))
+
+    # Dedupe by source_record_id, keep highest score
+    best: dict[int, float] = {}
+    for sim, rid in scored:
+        if rid not in best or sim > best[rid]:
+            best[rid] = sim
+    ranked = sorted(best.items(), key=lambda x: x[1], reverse=True)[:top_k]
+
+    record_ids = [rid for rid, _ in ranked]
+    if not record_ids:
+        return []
+
+    records = session.query(SourceRecord).filter(SourceRecord.id.in_(record_ids)).all()
+    logger.info("Semantic search found %d additional records", len(records))
+    return records
 
 
 def retrieve_for_entity(
@@ -116,6 +184,18 @@ def retrieve_for_entity(
                         candidates.append(record)
                         seen_ids.add(record.id)
                         break
+
+        # Strategy 3: Semantic search (boost with embeddings)
+        query_parts = [p for p in [person_name, company_name] if p]
+        if query_parts:
+            seen_ids = {r.id for r in candidates}
+            sem_records = _semantic_search(
+                session,
+                query=" ".join(query_parts),
+                since=since,
+                exclude_ids=seen_ids,
+            )
+            candidates.extend(sem_records)
 
         # Sort by date descending
         candidates.sort(key=lambda r: r.date or datetime.min, reverse=True)
