@@ -35,7 +35,10 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     validate_config()
     logger.info("Initialising database...")
-    init_db()
+    try:
+        init_db()
+    except Exception:
+        logger.exception("Database init failed – running in degraded mode")
     logger.info("Briefing Engine API ready")
     yield
 
