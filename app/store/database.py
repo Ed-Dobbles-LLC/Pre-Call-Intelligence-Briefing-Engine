@@ -19,6 +19,7 @@ from sqlalchemy import (
     String,
     Text,
     create_engine,
+    text,
 )
 from sqlalchemy.orm import Session, declarative_base, relationship, sessionmaker
 
@@ -138,7 +139,7 @@ class BriefLog(Base):
 # ---------------------------------------------------------------------------
 
 def get_engine(url: str | None = None):
-    url = url or settings.database_url
+    url = url or settings.effective_database_url
     connect_args = {}
     if url.startswith("sqlite"):
         connect_args["check_same_thread"] = False
@@ -151,8 +152,15 @@ def get_session_factory(url: str | None = None) -> sessionmaker:
 
 
 def init_db(url: str | None = None) -> None:
-    """Create all tables if they don't exist."""
+    """Create all tables if they don't exist.
+
+    On Postgres, enables the pgvector extension first.
+    """
     engine = get_engine(url)
+    if not (url or settings.effective_database_url).startswith("sqlite"):
+        with engine.connect() as conn:
+            conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+            conn.commit()
     Base.metadata.create_all(engine)
 
 

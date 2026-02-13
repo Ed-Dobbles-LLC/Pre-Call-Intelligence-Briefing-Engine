@@ -42,5 +42,17 @@ class Settings(BaseSettings):
     def is_sqlite(self) -> bool:
         return self.database_url.startswith("sqlite")
 
+    @property
+    def effective_database_url(self) -> str:
+        """Return a SQLAlchemy-compatible URL.
+
+        Railway injects ``postgres://`` but SQLAlchemy 2.0+ requires
+        ``postgresql://``.
+        """
+        url = self.database_url
+        if url.startswith("postgres://"):
+            url = url.replace("postgres://", "postgresql://", 1)
+        return url
+
 
 settings = Settings()
