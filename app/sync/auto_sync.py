@@ -114,12 +114,94 @@ def _determine_relationship_health(
     return "cold"
 
 
-def sync_fireflies_transcripts() -> dict:
-    """Fetch all Fireflies transcripts and build/update profiles.
+async def _fetch_transcripts(client: FirefliesClient, since: datetime) -> list[dict]:
+    """Fetch transcripts from Fireflies (async)."""
+    return await client.search_transcripts(since=since, limit=200)
 
-    Returns a summary dict with counts.
+
+def _process_transcripts(raw_transcripts: list[dict]) -> dict:
+    """Process raw transcripts: store them and extract participant data.
+
+    Returns a summary dict.
     """
-    global _last_sync, _sync_running
+    global _last_sync
+
+    transcripts_synced = 0
+    all_participants: dict[str, dict] = {}  # key -> participant info
+
+    for raw in raw_transcripts:
+        # Normalize and store transcript
+        normalized = normalize_transcript(raw)
+        store_transcript(normalized)
+        transcripts_synced += 1
+
+        # Extract participants
+        transcript_date = normalized.date
+        transcript_title = normalized.title or "Meeting"
+        summary = normalized.summary or ""
+        action_items = normalized.action_items or []
+
+        for p in _extract_participants_from_transcript(raw):
+            key = p["email"] or p["name"].lower()
+            if not key:
+                continue
+
+            if key not in all_participants:
+                all_participants[key] = {
+                    "name": p["name"],
+                    "email": p["email"],
+                    "company": _infer_company_from_email(p["email"]),
+                    "meeting_count": 0,
+                    "last_interaction": None,
+                    "interactions": [],
+                    "action_items": [],
+                }
+
+            entry = all_participants[key]
+
+            # Update name if we have a better one
+            if p["name"] and (not entry["name"] or len(p["name"]) > len(entry["name"])):
+                entry["name"] = p["name"]
+            if p["email"] and not entry["email"]:
+                entry["email"] = p["email"]
+            if not entry["company"]:
+                entry["company"] = _infer_company_from_email(p["email"])
+
+            entry["meeting_count"] += 1
+
+            if transcript_date:
+                if not entry["last_interaction"] or transcript_date > entry["last_interaction"]:
+                    entry["last_interaction"] = transcript_date
+
+            entry["interactions"].append({
+                "title": transcript_title,
+                "date": transcript_date.isoformat() if transcript_date else None,
+                "summary": summary[:300] if summary else None,
+                "participants": normalized.participants[:5],
+            })
+
+            # Collect action items
+            for item in action_items:
+                if item and item not in entry["action_items"]:
+                    entry["action_items"].append(item)
+
+    # Build profiles from participants
+    profiles_updated = _update_profiles(all_participants)
+
+    _last_sync = datetime.utcnow()
+
+    return {
+        "transcripts_synced": transcripts_synced,
+        "profiles_updated": profiles_updated,
+    }
+
+
+async def async_sync_fireflies() -> dict:
+    """Async version: fetch transcripts and build profiles.
+
+    Safe to call from within an existing event loop (e.g., FastAPI).
+    """
+    global _sync_running
 
     if not settings.fireflies_api_key:
         return {
@@ -140,88 +222,65 @@ def sync_fireflies_transcripts() -> dict:
     try:
         init_db()
         client = FirefliesClient()
+        since = datetime.utcnow() - timedelta(days=settings.retrieval_window_days)
 
-        # Fetch transcripts from the last retrieval_window_days
+        raw_transcripts = await _fetch_transcripts(client, since)
+        logger.info("Auto-sync: fetched %d transcripts from Fireflies", len(raw_transcripts))
+
+        result = _process_transcripts(raw_transcripts)
+        return result
+
+    except Exception:
+        logger.exception("Auto-sync failed")
+        return {
+            "transcripts_synced": 0,
+            "profiles_updated": 0,
+            "error": "Sync failed - check server logs",
+        }
+    finally:
+        _sync_running = False
+
+
+def sync_fireflies_transcripts() -> dict:
+    """Sync version: for use from background threads (no existing event loop).
+
+    Creates its own event loop. Do NOT call from inside FastAPI handlers.
+    """
+    global _sync_running
+
+    if not settings.fireflies_api_key:
+        return {
+            "transcripts_synced": 0,
+            "profiles_updated": 0,
+            "error": "Fireflies API key not configured",
+        }
+
+    with _sync_lock:
+        if _sync_running:
+            return {
+                "transcripts_synced": 0,
+                "profiles_updated": 0,
+                "error": "Sync already in progress",
+            }
+        _sync_running = True
+
+    try:
+        init_db()
+        client = FirefliesClient()
         since = datetime.utcnow() - timedelta(days=settings.retrieval_window_days)
 
         loop = asyncio.new_event_loop()
         try:
             raw_transcripts = loop.run_until_complete(
-                client.search_transcripts(since=since, limit=200)
+                _fetch_transcripts(client, since)
             )
         finally:
             loop.close()
 
         logger.info("Auto-sync: fetched %d transcripts from Fireflies", len(raw_transcripts))
 
-        transcripts_synced = 0
-        all_participants: dict[str, dict] = {}  # key -> participant info
-
-        for raw in raw_transcripts:
-            # Normalize and store transcript
-            normalized = normalize_transcript(raw)
-            store_transcript(normalized)
-            transcripts_synced += 1
-
-            # Extract participants
-            transcript_date = normalized.date
-            transcript_title = normalized.title or "Meeting"
-            summary = normalized.summary or ""
-            action_items = normalized.action_items or []
-
-            for p in _extract_participants_from_transcript(raw):
-                key = p["email"] or p["name"].lower()
-                if not key:
-                    continue
-
-                if key not in all_participants:
-                    all_participants[key] = {
-                        "name": p["name"],
-                        "email": p["email"],
-                        "company": _infer_company_from_email(p["email"]),
-                        "meeting_count": 0,
-                        "last_interaction": None,
-                        "interactions": [],
-                        "action_items": [],
-                    }
-
-                entry = all_participants[key]
-
-                # Update name if we have a better one
-                if p["name"] and (not entry["name"] or len(p["name"]) > len(entry["name"])):
-                    entry["name"] = p["name"]
-                if p["email"] and not entry["email"]:
-                    entry["email"] = p["email"]
-                if not entry["company"]:
-                    entry["company"] = _infer_company_from_email(p["email"])
-
-                entry["meeting_count"] += 1
-
-                if transcript_date:
-                    if not entry["last_interaction"] or transcript_date > entry["last_interaction"]:
-                        entry["last_interaction"] = transcript_date
-
-                entry["interactions"].append({
-                    "title": transcript_title,
-                    "date": transcript_date.isoformat() if transcript_date else None,
-                    "summary": summary[:300] if summary else None,
-                    "participants": normalized.participants[:5],
-                })
-
-                # Collect action items
-                for item in action_items:
-                    if item and item not in entry["action_items"]:
-                        entry["action_items"].append(item)
-
-        # Build profiles from participants
-        profiles_updated = _update_profiles(all_participants)
-
-        _last_sync = datetime.utcnow()
-
-        return {
-            "transcripts_synced": transcripts_synced,
-            "profiles_updated": profiles_updated,
-        }
+        result = _process_transcripts(raw_transcripts)
+        return result
 
     except Exception:
         logger.exception("Auto-sync failed")
@@ -282,7 +341,6 @@ def _update_profiles(all_participants: dict[str, dict]) -> int:
                 entity.aliases = json.dumps(aliases)
 
             # Store profile metadata in domains field (repurposed for persons)
-            # We serialize the full profile data as JSON here
             health = _determine_relationship_health(
                 pdata["meeting_count"],
                 pdata["last_interaction"],
@@ -397,7 +455,10 @@ def get_dashboard_stats() -> dict:
 
 
 def start_background_sync(interval_minutes: int = 30):
-    """Start a background thread that periodically syncs Fireflies transcripts."""
+    """Start a background thread that periodically syncs Fireflies transcripts.
+
+    Uses the sync version (own event loop) since this runs in a separate thread.
+    """
     def _sync_loop():
         while True:
             try:

@@ -24,10 +24,10 @@ from app.config import settings, validate_config
 from app.models import BriefOutput
 from app.store.database import BriefLog, get_session, init_db
 from app.sync.auto_sync import (
+    async_sync_fireflies,
     get_all_profiles,
     get_dashboard_stats,
     start_background_sync,
-    sync_fireflies_transcripts,
 )
 
 logging.basicConfig(
@@ -227,9 +227,9 @@ def generate_brief_json(request: BriefRequest):
 # ---------------------------------------------------------------------------
 
 @app.post("/sync", dependencies=[Depends(verify_api_key)])
-def trigger_sync():
+async def trigger_sync():
     """Trigger a manual sync of Fireflies transcripts and profile rebuild."""
-    result = sync_fireflies_transcripts()
+    result = await async_sync_fireflies()
     if "error" in result:
         raise HTTPException(status_code=400, detail=result["error"])
     return result
