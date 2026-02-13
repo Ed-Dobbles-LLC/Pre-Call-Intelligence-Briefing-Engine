@@ -60,8 +60,8 @@ QUERY_TRANSCRIPTS_FILTERED = """
 query TranscriptsFiltered(
     $limit: Int,
     $skip: Int,
-    $fromDate: Float,
-    $toDate: Float
+    $fromDate: DateTime,
+    $toDate: DateTime
 ) {
     transcripts(
         limit: $limit,
@@ -151,11 +151,11 @@ class FirefliesClient:
         """
         variables: dict[str, Any] = {"limit": min(limit, 50), "skip": 0}
 
-        # Server-side: date range (Fireflies expects epoch milliseconds)
+        # Server-side: date range (Fireflies expects ISO 8601: YYYY-MM-DDTHH:mm:ss.sssZ)
         if since:
-            variables["fromDate"] = int(since.timestamp() * 1000)
+            variables["fromDate"] = since.strftime("%Y-%m-%dT%H:%M:%S.000Z")
         if until:
-            variables["toDate"] = int(until.timestamp() * 1000)
+            variables["toDate"] = until.strftime("%Y-%m-%dT%H:%M:%S.000Z")
 
         all_transcripts: list[dict] = []
         skip = 0
