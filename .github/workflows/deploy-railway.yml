@@ -19,9 +19,6 @@ jobs:
       - name: Install Railway CLI
         run: npm i -g @railway/cli
 
-      - name: Link Railway service
-        run: railway link --project $RAILWAY_PROJECT_ID --environment $RAILWAY_ENVIRONMENT_ID --service $RAILWAY_SERVICE_ID
-
       - name: Set shared variables on Railway
         run: |
           railway variables set "OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}" -s $RAILWAY_SERVICE_ID -e $RAILWAY_ENVIRONMENT_ID
