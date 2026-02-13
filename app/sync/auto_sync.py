@@ -13,6 +13,7 @@ import threading
 import time
 from datetime import datetime, timedelta
 
+from app.clients.apollo import ApolloClient, normalize_enrichment
 from app.clients.fireflies import FirefliesClient
 from app.config import settings
 from app.ingest.fireflies_ingest import normalize_transcript, store_transcript
@@ -228,6 +229,11 @@ async def async_sync_fireflies() -> dict:
         logger.info("Auto-sync: fetched %d transcripts from Fireflies", len(raw_transcripts))
 
         result = _process_transcripts(raw_transcripts)
+
+        # Enrich profiles with Apollo.io data (photos, LinkedIn, titles)
+        enriched = await _enrich_profiles_with_apollo()
+        result["profiles_enriched"] = enriched
+
         return result
 
     except Exception as exc:
@@ -280,6 +286,17 @@ def sync_fireflies_transcripts() -> dict:
         logger.info("Auto-sync: fetched %d transcripts from Fireflies", len(raw_transcripts))
 
         result = _process_transcripts(raw_transcripts)
+
+        # Enrich profiles with Apollo.io data
+        enrich_loop = asyncio.new_event_loop()
+        try:
+            enriched = enrich_loop.run_until_complete(
+                _enrich_profiles_with_apollo()
+            )
+            result["profiles_enriched"] = enriched
+        finally:
+            enrich_loop.close()
+
         return result
 
     except Exception as exc:
@@ -377,6 +394,116 @@ def _update_profiles(all_participants: dict[str, dict]) -> int:
     return updated
 
 
+async def _enrich_profiles_with_apollo() -> int:
+    """Enrich person profiles via Apollo.io (skips already-enriched contacts)."""
+    if not settings.apollo_api_key:
+        return 0
+
+    session = get_session()
+    enriched_count = 0
+    try:
+        entities = session.query(EntityRecord).filter(
+            EntityRecord.entity_type == "person",
+            EntityRecord.domains.isnot(None),
+        ).all()
+
+        # Collect entities that need enrichment
+        to_enrich: list[tuple[EntityRecord, dict]] = []
+        for entity in entities:
+            try:
+                profile_data = json.loads(entity.domains or "{}")
+            except (json.JSONDecodeError, TypeError):
+                continue
+
+            # Skip if already enriched (has a non-empty apollo field)
+            if profile_data.get("apollo_enriched"):
+                continue
+
+            if not profile_data.get("meeting_count"):
+                continue
+
+            emails = json.loads(entity.emails or "[]")
+            to_enrich.append((entity, {
+                "email": emails[0] if emails else None,
+                "name": entity.name,
+                "company": profile_data.get("company"),
+            }))
+
+        if not to_enrich:
+            return 0
+
+        logger.info("Apollo enrichment: %d contacts to enrich", len(to_enrich))
+
+        client = ApolloClient()
+
+        # Build bulk request details
+        bulk_details = []
+        for _, info in to_enrich:
+            detail: dict[str, str] = {}
+            if info["email"]:
+                detail["email"] = info["email"]
+            elif info["name"]:
+                parts = info["name"].split(None, 1)
+                detail["first_name"] = parts[0]
+                if len(parts) > 1:
+                    detail["last_name"] = parts[1]
+                if info["company"]:
+                    detail["organization_name"] = info["company"]
+            bulk_details.append(detail)
+
+        results = await client.enrich_bulk(bulk_details)
+
+        for (entity, _), person in zip(to_enrich, results):
+            enrichment = normalize_enrichment(person)
+            if not enrichment:
+                # Mark as attempted so we don't retry every sync
+                try:
+                    profile_data = json.loads(entity.domains or "{}")
+                except (json.JSONDecodeError, TypeError):
+                    continue
+                profile_data["apollo_enriched"] = True
+                entity.domains = json.dumps(profile_data)
+                continue
+
+            try:
+                profile_data = json.loads(entity.domains or "{}")
+            except (json.JSONDecodeError, TypeError):
+                continue
+
+            profile_data["photo_url"] = enrichment.get("photo_url", "")
+            profile_data["linkedin_url"] = enrichment.get("linkedin_url", "")
+            profile_data["title"] = enrichment.get("title", "")
+            profile_data["headline"] = enrichment.get("headline", "")
+            profile_data["seniority"] = enrichment.get("seniority", "")
+            profile_data["location"] = ", ".join(
+                filter(None, [enrichment.get("city"), enrichment.get("state")])
+            )
+
+            # Use Apollo company name if we only had a domain guess
+            if enrichment.get("company_name") and not profile_data.get("company"):
+                profile_data["company"] = enrichment["company_name"]
+            elif enrichment.get("company_name"):
+                profile_data["company_full"] = enrichment["company_name"]
+
+            profile_data["company_industry"] = enrichment.get("company_industry", "")
+            profile_data["company_size"] = enrichment.get("company_size")
+            profile_data["company_linkedin"] = enrichment.get("company_linkedin", "")
+            profile_data["apollo_enriched"] = True
+
+            entity.domains = json.dumps(profile_data)
+            enriched_count += 1
+
+        session.commit()
+        logger.info("Apollo enrichment: enriched %d contacts", enriched_count)
+    except Exception:
+        session.rollback()
+        logger.exception("Apollo enrichment failed")
+    finally:
+        session.close()
+
+    return enriched_count
+
+
 def get_all_profiles() -> list[dict]:
     """Retrieve all person profiles from the database."""
     init_db()
@@ -413,6 +540,17 @@ def get_all_profiles() -> list[dict]:
                 "interactions": profile_data.get("interactions", []),
                 "action_items": profile_data.get("action_items", []),
                 "action_items_count": profile_data.get("action_items_count", 0),
+                # Apollo enrichment fields
+                "photo_url": profile_data.get("photo_url", ""),
+                "linkedin_url": profile_data.get("linkedin_url", ""),
+                "title": profile_data.get("title", ""),
+                "headline": profile_data.get("headline", ""),
+                "seniority": profile_data.get("seniority", ""),
+                "location": profile_data.get("location", ""),
+                "company_full": profile_data.get("company_full", ""),
+                "company_industry": profile_data.get("company_industry", ""),
+                "company_size": profile_data.get("company_size"),
+                "company_linkedin": profile_data.get("company_linkedin", ""),
             }
             profiles.append(profile)
 

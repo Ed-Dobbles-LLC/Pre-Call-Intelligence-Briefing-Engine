@@ -123,6 +123,7 @@ class HealthResponse(BaseModel):
     fireflies_configured: bool
     gmail_configured: bool
     openai_configured: bool
+    apollo_configured: bool
 
 
 # ---------------------------------------------------------------------------
@@ -139,6 +140,7 @@ def health_check():
         fireflies_configured=bool(settings.fireflies_api_key),
         gmail_configured=bool(settings.gmail_credentials_path),
         openai_configured=bool(settings.openai_api_key),
+        apollo_configured=bool(settings.apollo_api_key),
     )
 
 
