@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+logger = logging.getLogger(__name__)
 
 
 class Settings(BaseSettings):
@@ -28,6 +31,9 @@ class Settings(BaseSettings):
     google_client_id: str = ""
     google_client_secret: str = ""
     google_refresh_token: str = ""
+
+    # API authentication
+    briefing_api_key: str = ""
 
     # Database
     database_url: str = "sqlite:///./briefing_engine.db"
@@ -59,3 +65,41 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+
+def validate_config() -> list[str]:
+    """Check configuration and return a list of warnings.
+
+    Logs each warning. Returns the list so callers can surface them.
+    """
+    warnings: list[str] = []
+
+    if not settings.openai_api_key:
+        warnings.append(
+            "OPENAI_API_KEY is not set – brief generation and embeddings will fail"
+        )
+    if not settings.fireflies_api_key:
+        warnings.append(
+            "FIREFLIES_API_KEY is not set – Fireflies ingestion will be skipped"
+        )
+
+    has_gmail_oauth_file = (
+        settings.gmail_credentials_path
+        and Path(settings.gmail_credentials_path).exists()
+    )
+    has_gmail_env = settings.google_client_id and settings.google_refresh_token
+    if not has_gmail_oauth_file and not has_gmail_env:
+        warnings.append(
+            "Gmail not configured – set GOOGLE_CLIENT_ID + GOOGLE_REFRESH_TOKEN "
+            "or provide a credentials.json file"
+        )
+
+    if not settings.briefing_api_key:
+        warnings.append(
+            "BRIEFING_API_KEY is not set – API endpoints are unauthenticated"
+        )
+
+    for w in warnings:
+        logger.warning("Config: %s", w)
+
+    return warnings

@@ -9,13 +9,14 @@ import logging
 from contextlib import asynccontextmanager
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 
 from app.brief.pipeline import run_pipeline
-from app.config import settings
+from app.config import settings, validate_config
 from app.models import BriefOutput
 from app.store.database import init_db
 
@@ -28,6 +29,7 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    validate_config()
     logger.info("Initialising database...")
     init_db()
     logger.info("Briefing Engine API ready")
@@ -48,6 +50,24 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# ---------------------------------------------------------------------------
+# Authentication
+# ---------------------------------------------------------------------------
+
+_bearer_scheme = HTTPBearer(auto_error=False)
+
+
+def verify_api_key(
+    credentials: HTTPAuthorizationCredentials | None = Depends(_bearer_scheme),
+):
+    """Require a valid Bearer token when BRIEFING_API_KEY is set."""
+    expected = settings.briefing_api_key
+    if not expected:
+        return  # auth disabled – no key configured
+    if not credentials or credentials.credentials != expected:
+        raise HTTPException(status_code=401, detail="Invalid or missing API key")
 
 
 # ---------------------------------------------------------------------------
@@ -102,7 +122,7 @@ def health_check():
     )
 
 
-@app.post("/brief", response_model=BriefResponse)
+@app.post("/brief", response_model=BriefResponse, dependencies=[Depends(verify_api_key)])
 def generate_brief_endpoint(request: BriefRequest):
     """Generate a Pre-Call Intelligence Brief.
 
@@ -134,7 +154,7 @@ def generate_brief_endpoint(request: BriefRequest):
     )
 
 
-@app.post("/brief/markdown", response_class=PlainTextResponse)
+@app.post("/brief/markdown", response_class=PlainTextResponse, dependencies=[Depends(verify_api_key)])
 def generate_brief_markdown(request: BriefRequest):
     """Generate a brief and return only the markdown (for quick consumption)."""
     if not request.person and not request.company:
@@ -158,7 +178,7 @@ def generate_brief_markdown(request: BriefRequest):
     return result.markdown
 
 
-@app.post("/brief/json")
+@app.post("/brief/json", dependencies=[Depends(verify_api_key)])
 def generate_brief_json(request: BriefRequest):
     """Generate a brief and return only the structured JSON."""
     if not request.person and not request.company:

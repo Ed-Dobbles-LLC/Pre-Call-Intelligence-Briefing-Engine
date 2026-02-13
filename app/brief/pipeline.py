@@ -16,6 +16,7 @@ from app.config import settings
 from app.ingest.fireflies_ingest import ingest_fireflies_sync
 from app.ingest.gmail_ingest import ingest_gmail_for_company, ingest_gmail_for_person
 from app.models import BriefOutput
+from app.normalize.embeddings import embed_all_pending
 from app.normalize.entity_resolver import resolve_company, resolve_person
 from app.retrieve.retriever import retrieve_for_entity
 from app.store.database import BriefLog, get_session, init_db
@@ -133,6 +134,15 @@ def run_pipeline(
                 logger.exception("Gmail company ingestion failed – continuing with stored data")
     else:
         logger.info("Step 2: Skipping ingestion (using stored data only)")
+
+    # ── Step 2b: Embed any new source records ──
+    if settings.openai_api_key:
+        try:
+            n = embed_all_pending()
+            if n:
+                logger.info("Embedded %d new chunks", n)
+        except Exception:
+            logger.exception("Embedding failed – continuing without semantic search")
 
     # ── Step 3: Retrieval ──
     logger.info("Step 3: Retrieval")

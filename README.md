@@ -1,6 +1,6 @@
 # Pre-Call Intelligence Briefing Engine
 
-A command-line tool that produces **decision-grade Pre-Call Briefs** by ingesting Fireflies transcripts and Gmail emails, resolving entities, and generating cited intelligence reports.
+A tool that produces **decision-grade Pre-Call Briefs** by ingesting Fireflies transcripts and Gmail emails, resolving entities, and generating cited intelligence reports. Available as both a **CLI** and a **REST API** (deployed on Railway).
 
 ## Quick Start
 
@@ -23,7 +23,7 @@ Output files are written to `./out/`:
 ## Architecture
 
 ```
-Input (CLI)
+Input (CLI or API)
   │
   ├─ Entity Resolution ─── Map person/company → emails, aliases, domains
   │
@@ -31,7 +31,9 @@ Input (CLI)
   │   ├─ Fireflies API ──── Fetch transcripts → normalise → store
   │   └─ Gmail API ──────── Fetch emails → normalise → store
   │
-  ├─ Retrieval ──────────── Query stored artifacts for relevant evidence
+  ├─ Embeddings ──────────── Chunk + embed new records (OpenAI)
+  │
+  ├─ Retrieval ──────────── Keyword + semantic search for evidence
   │
   ├─ Brief Generation ───── LLM synthesises evidence into cited brief
   │
@@ -78,6 +80,46 @@ brief --person "Name"        # Person to brief on
 
 At least `--person` or `--company` is required.
 
+## Web API
+
+The engine is also available as a FastAPI service (deployed on Railway via Docker).
+
+### Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/health` | Health check and config status (no auth) |
+| `POST` | `/brief` | Generate a full brief (JSON response) |
+| `POST` | `/brief/markdown` | Generate a brief, return markdown only |
+| `POST` | `/brief/json` | Generate a brief, return structured JSON only |
+
+### Authentication
+
+Set `BRIEFING_API_KEY` to require a Bearer token on all `/brief` endpoints.
+When the key is not set, endpoints are open (useful for local dev).
+
+```bash
+# Example request
+curl -X POST https://your-app.railway.app/brief \
+  -H "Authorization: Bearer your-api-key" \
+  -H "Content-Type: application/json" \
+  -d '{"person": "Jane Doe", "company": "Acme Corp"}'
+```
+
+### Request body
+
+```json
+{
+  "person": "Jane Doe",
+  "company": "Acme Corp",
+  "topic": "Q1 Review",
+  "meeting_when": "2026-02-15 14:00",
+  "skip_ingestion": false
+}
+```
+
+At least `person` or `company` is required.
+
 ## Configuration
 
 All secrets are loaded from environment variables (or `.env` file):
@@ -88,8 +130,14 @@ All secrets are loaded from environment variables (or `.env` file):
 | `FIREFLIES_API_KEY` | For ingestion | Fireflies.ai API key |
 | `GMAIL_CREDENTIALS_PATH` | For Gmail | Path to OAuth2 credentials JSON |
 | `GMAIL_TOKEN_PATH` | For Gmail | Path to store OAuth token |
+| `GOOGLE_CLIENT_ID` | For Gmail (env) | OAuth client ID (alternative to credentials file) |
+| `GOOGLE_CLIENT_SECRET` | For Gmail (env) | OAuth client secret |
+| `GOOGLE_REFRESH_TOKEN` | For Gmail (env) | OAuth refresh token |
+| `BRIEFING_API_KEY` | Recommended | Bearer token for API auth (open if unset) |
 | `DATABASE_URL` | No | Default: `sqlite:///./briefing_engine.db` |
 | `OUTPUT_DIR` | No | Default: `./out` |
+
+Missing keys are logged as warnings at startup so you can diagnose configuration issues quickly.
 
 ## Running Tests
 
