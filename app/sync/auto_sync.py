@@ -460,8 +460,10 @@ async def _enrich_profiles_with_apollo() -> int:
             except (json.JSONDecodeError, TypeError):
                 continue
 
-            # Skip if already enriched (has a non-empty apollo field)
-            if profile_data.get("apollo_enriched"):
+            # Skip if already enriched AND has actual data (photo or linkedin)
+            if profile_data.get("apollo_enriched") and (
+                profile_data.get("photo_url") or profile_data.get("linkedin_url")
+            ):
                 continue
 
             if not profile_data.get("meeting_count"):
