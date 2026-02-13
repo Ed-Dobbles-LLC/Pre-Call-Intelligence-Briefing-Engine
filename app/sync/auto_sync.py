@@ -96,6 +96,30 @@ def _infer_company_from_email(email: str) -> str | None:
     return company.title()
 
 
+def _is_non_person(name: str, email: str = "") -> bool:
+    """Filter out meeting rooms, system accounts, and non-person entries."""
+    name_lower = name.lower().strip()
+    email_lower = (email or "").lower()
+
+    # System/bot email patterns
+    if email_lower and any(
+        pat in email_lower
+        for pat in ["@metaview.ai", "schedule@", "noreply@", "calendar@", "call-"]
+    ):
+        return True
+
+    # Meeting room / location names (contain numbers, floor, room, etc.)
+    room_patterns = ["floor", "room", "suite", "building", " - ", "conf ", "summerlin"]
+    if any(pat in name_lower for pat in room_patterns):
+        return True
+
+    # Names that are clearly not people (too short, just an email, etc.)
+    if "@" in name and "." in name:
+        return True  # Name is an email address
+
+    return False
+
+
 def _determine_relationship_health(
     meeting_count: int,
     last_interaction: datetime | None,
@@ -321,6 +345,10 @@ def _update_profiles(all_participants: dict[str, dict]) -> int:
             if not name:
                 continue
 
+            # Skip non-person entries (meeting rooms, system accounts, etc.)
+            if _is_non_person(name, pdata.get("email", "")):
+                continue
+
             # Find or create entity
             entity = session.query(EntityRecord).filter(
                 EntityRecord.entity_type == "person",
@@ -358,6 +386,14 @@ def _update_profiles(all_participants: dict[str, dict]) -> int:
                 entity.aliases = json.dumps(aliases)
 
             # Store profile metadata in domains field (repurposed for persons)
+            # Preserve existing Apollo enrichment data if present
+            existing_profile = {}
+            if entity.domains:
+                try:
+                    existing_profile = json.loads(entity.domains)
+                except (json.JSONDecodeError, TypeError):
+                    pass
+
             health = _determine_relationship_health(
                 pdata["meeting_count"],
                 pdata["last_interaction"],
@@ -366,7 +402,7 @@ def _update_profiles(all_participants: dict[str, dict]) -> int:
             profile_data = {
                 "meeting_count": pdata["meeting_count"],
                 "last_interaction": pdata["last_interaction"].isoformat() if pdata["last_interaction"] else None,
-                "company": pdata["company"],
+                "company": pdata["company"] or existing_profile.get("company"),
                 "relationship_health": health,
                 "interactions": sorted(
                     pdata["interactions"],
@@ -378,6 +414,15 @@ def _update_profiles(all_participants: dict[str, dict]) -> int:
                 "email_count": 0,
                 "updated_at": datetime.utcnow().isoformat(),
             }
+
+            # Carry forward Apollo enrichment fields
+            for key in (
+                "apollo_enriched", "photo_url", "linkedin_url", "title",
+                "headline", "seniority", "location", "company_full",
+                "company_industry", "company_size", "company_linkedin",
+            ):
+                if key in existing_profile:
+                    profile_data[key] = existing_profile[key]
 
             entity.domains = json.dumps(profile_data)
             entity.updated_at = datetime.utcnow()
@@ -436,22 +481,17 @@ async def _enrich_profiles_with_apollo() -> int:
 
         client = ApolloClient()
 
-        # Build bulk request details
-        bulk_details = []
-        for _, info in to_enrich:
-            detail: dict[str, str] = {}
-            if info["email"]:
-                detail["email"] = info["email"]
-            elif info["name"]:
-                parts = info["name"].split(None, 1)
-                detail["first_name"] = parts[0]
-                if len(parts) > 1:
-                    detail["last_name"] = parts[1]
-                if info["company"]:
-                    detail["organization_name"] = info["company"]
-            bulk_details.append(detail)
+        # Build contact list with all available data for best matching
+        contacts = [
+            {
+                "email": info["email"],
+                "name": info["name"],
+                "company": info["company"],
+            }
+            for _, info in to_enrich
+        ]
 
-        results = await client.enrich_bulk(bulk_details)
+        results = await client.enrich_many(contacts)
 
         for (entity, _), person in zip(to_enrich, results):
             enrichment = normalize_enrichment(person)

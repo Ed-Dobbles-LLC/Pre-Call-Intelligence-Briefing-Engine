@@ -8,6 +8,7 @@ API docs: https://docs.apollo.io/reference/people-enrichment
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -18,7 +19,6 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 
 APOLLO_ENRICH_URL = "https://api.apollo.io/api/v1/people/match"
-APOLLO_BULK_ENRICH_URL = "https://api.apollo.io/api/v1/people/bulk_match"
 
 
 class ApolloClient:
@@ -31,6 +31,7 @@ class ApolloClient:
         self.headers = {
             "x-api-key": self.api_key or "",
             "Content-Type": "application/json",
+            "Cache-Control": "no-cache",
         }
 
     async def enrich_person(
@@ -64,6 +65,7 @@ class ApolloClient:
             payload["organization_name"] = organization_name
 
         if not email and not name and not (first_name and last_name):
+            logger.debug("Apollo: skipping enrichment – no email or name provided")
             return None
 
         try:
@@ -74,51 +76,78 @@ class ApolloClient:
                 if resp.status_code == 429:
                     logger.warning("Apollo rate limit hit")
                     return None
-                resp.raise_for_status()
+                if resp.status_code != 200:
+                    logger.warning(
+                        "Apollo returned %d for %s: %s",
+                        resp.status_code,
+                        email or name,
+                        resp.text[:200],
+                    )
+                    return None
                 data = resp.json()
-                return data.get("person")
+                person = data.get("person")
+                if person:
+                    logger.info(
+                        "Apollo matched: %s -> %s (%s)",
+                        email or name,
+                        person.get("name", "?"),
+                        person.get("title", "?"),
+                    )
+                else:
+                    logger.info("Apollo: no match for %s", email or name)
+                return person
         except Exception:
             logger.exception("Apollo enrichment failed for %s", email or name)
             return None
 
-    async def enrich_bulk(
-        self, details: list[dict[str, str]]
+    async def enrich_many(
+        self, contacts: list[dict[str, str | None]]
     ) -> list[dict[str, Any] | None]:
-        """Enrich up to 10 people at once. Returns list of person dicts."""
-        if not self.api_key or not details:
-            return [None] * len(details)
+        """Enrich multiple contacts sequentially with rate-limit awareness.
+
+        Each contact dict should have: email, name, company (all optional).
+        Uses single-person endpoint for reliability.
+        """
+        if not self.api_key or not contacts:
+            return [None] * len(contacts)
 
         results: list[dict[str, Any] | None] = []
 
-        # Apollo bulk endpoint accepts max 10 per call
-        for i in range(0, len(details), 10):
-            batch = details[i : i + 10]
-            try:
-                async with httpx.AsyncClient(timeout=30) as client:
-                    resp = await client.post(
-                        APOLLO_BULK_ENRICH_URL,
-                        json={
-                            "details": batch,
-                            "reveal_personal_emails": False,
-                            "reveal_phone_number": False,
-                        },
-                        headers=self.headers,
-                    )
-                    if resp.status_code == 429:
-                        logger.warning("Apollo rate limit hit on bulk enrichment")
-                        results.extend([None] * len(batch))
-                        continue
-                    resp.raise_for_status()
-                    data = resp.json()
-                    matches = data.get("matches") or []
-                    # Pad with None if fewer matches than requested
-                    results.extend(matches)
-                    results.extend([None] * (len(batch) - len(matches)))
-            except Exception:
-                logger.exception("Apollo bulk enrichment failed")
-                results.extend([None] * len(batch))
+        for i, contact in enumerate(contacts):
+            email = contact.get("email")
+            name = contact.get("name") or ""
+            company = contact.get("company")
 
-        return results[: len(details)]
+            # Build the best possible lookup
+            parts = name.split(None, 1) if name else []
+            first = parts[0] if parts else None
+            last = parts[1] if len(parts) > 1 else None
+
+            # Extract domain from email for company matching
+            domain = None
+            if email and "@" in email:
+                domain = email.split("@")[1]
+                # Skip free email domains for company matching
+                if domain in {
+                    "gmail.com", "yahoo.com", "hotmail.com", "outlook.com",
+                    "me.com", "icloud.com", "protonmail.com",
+                }:
+                    domain = None
+
+            person = await self.enrich_person(
+                email=email,
+                first_name=first,
+                last_name=last,
+                domain=domain,
+                organization_name=company,
+            )
+            results.append(person)
+
+            # Brief pause between requests to respect rate limits
+            if i < len(contacts) - 1:
+                await asyncio.sleep(0.5)
+
+        return results
 
 
 def normalize_enrichment(person: dict[str, Any] | None) -> dict[str, Any]:
@@ -128,7 +157,7 @@ def normalize_enrichment(person: dict[str, Any] | None) -> dict[str, Any]:
 
     org = person.get("organization") or {}
 
-    return {
+    enriched = {
         "photo_url": person.get("photo_url") or "",
         "linkedin_url": person.get("linkedin_url") or "",
         "title": person.get("title") or "",
@@ -143,3 +172,14 @@ def normalize_enrichment(person: dict[str, Any] | None) -> dict[str, Any]:
         "company_domain": org.get("primary_domain") or "",
         "company_linkedin": org.get("linkedin_url") or "",
     }
+
+    # Only count as a real enrichment if we got at least some useful data
+    has_data = any([
+        enriched["photo_url"],
+        enriched["linkedin_url"],
+        enriched["title"],
+    ])
+    if not has_data:
+        return {}
+
+    return enriched
