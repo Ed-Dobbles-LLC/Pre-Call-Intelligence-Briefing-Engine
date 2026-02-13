@@ -1,0 +1,785 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Pre-Call Intelligence Briefing Engine</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg-primary: #0f1117;
+      --bg-secondary: #161822;
+      --bg-card: #1c1f2e;
+      --bg-input: #232639;
+      --border: #2a2d42;
+      --border-focus: #6366f1;
+      --text-primary: #e2e4ed;
+      --text-secondary: #8b8fa7;
+      --text-muted: #5c6078;
+      --accent: #6366f1;
+      --accent-hover: #818cf8;
+      --accent-glow: rgba(99, 102, 241, 0.15);
+      --success: #34d399;
+      --warning: #fbbf24;
+      --danger: #f87171;
+      --confidence-low: #f87171;
+      --confidence-med: #fbbf24;
+      --confidence-high: #34d399;
+    }
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: var(--bg-primary);
+      color: var(--text-primary);
+      line-height: 1.6;
+      min-height: 100vh;
+    }
+
+    /* ── Top Nav ── */
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 24px;
+      height: 56px;
+      background: var(--bg-secondary);
+      border-bottom: 1px solid var(--border);
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+    .topbar-brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-weight: 600;
+      font-size: 15px;
+      letter-spacing: -0.01em;
+    }
+    .topbar-brand svg { flex-shrink: 0; }
+    .topbar-status {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      font-size: 13px;
+      color: var(--text-secondary);
+    }
+    .status-dot {
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      margin-right: 5px;
+    }
+    .status-dot.ok { background: var(--success); box-shadow: 0 0 6px var(--success); }
+    .status-dot.warn { background: var(--warning); }
+    .status-dot.err { background: var(--danger); }
+
+    /* ── Layout ── */
+    .layout {
+      display: grid;
+      grid-template-columns: 380px 1fr;
+      height: calc(100vh - 56px);
+    }
+    @media (max-width: 900px) {
+      .layout { grid-template-columns: 1fr; }
+      .sidebar { border-right: none; border-bottom: 1px solid var(--border); max-height: 50vh; overflow-y: auto; }
+    }
+
+    /* ── Sidebar ── */
+    .sidebar {
+      background: var(--bg-secondary);
+      border-right: 1px solid var(--border);
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+    }
+    .sidebar-section {
+      padding: 20px;
+      border-bottom: 1px solid var(--border);
+    }
+    .sidebar-section:last-child { border-bottom: none; }
+    .section-title {
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--text-muted);
+      margin-bottom: 14px;
+    }
+
+    /* ── Form ── */
+    .form-group { margin-bottom: 14px; }
+    .form-group label {
+      display: block;
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--text-secondary);
+      margin-bottom: 5px;
+    }
+    .form-group input,
+    .form-group select {
+      width: 100%;
+      padding: 9px 12px;
+      background: var(--bg-input);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text-primary);
+      font-size: 14px;
+      font-family: inherit;
+      transition: border-color 0.15s, box-shadow 0.15s;
+    }
+    .form-group input:focus,
+    .form-group select:focus {
+      outline: none;
+      border-color: var(--border-focus);
+      box-shadow: 0 0 0 3px var(--accent-glow);
+    }
+    .form-group input::placeholder { color: var(--text-muted); }
+
+    .toggle-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 6px 0;
+    }
+    .toggle-row label { margin-bottom: 0; }
+    .toggle {
+      position: relative;
+      width: 40px;
+      height: 22px;
+    }
+    .toggle input { opacity: 0; width: 0; height: 0; }
+    .toggle-slider {
+      position: absolute;
+      inset: 0;
+      background: var(--bg-input);
+      border: 1px solid var(--border);
+      border-radius: 11px;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    .toggle-slider::before {
+      content: '';
+      position: absolute;
+      width: 16px;
+      height: 16px;
+      left: 2px;
+      top: 2px;
+      background: var(--text-secondary);
+      border-radius: 50%;
+      transition: transform 0.2s, background 0.2s;
+    }
+    .toggle input:checked + .toggle-slider { background: var(--accent); border-color: var(--accent); }
+    .toggle input:checked + .toggle-slider::before { transform: translateX(18px); background: #fff; }
+
+    .btn-generate {
+      width: 100%;
+      padding: 11px;
+      background: var(--accent);
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 600;
+      font-family: inherit;
+      cursor: pointer;
+      transition: background 0.15s, transform 0.1s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+    }
+    .btn-generate:hover { background: var(--accent-hover); }
+    .btn-generate:active { transform: scale(0.98); }
+    .btn-generate:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+      transform: none;
+    }
+
+    .spinner {
+      width: 16px;
+      height: 16px;
+      border: 2px solid rgba(255,255,255,0.3);
+      border-top-color: #fff;
+      border-radius: 50%;
+      animation: spin 0.6s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Recent briefs list ── */
+    .recent-list { list-style: none; }
+    .recent-item {
+      padding: 10px 12px;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: background 0.15s;
+      margin-bottom: 4px;
+    }
+    .recent-item:hover { background: var(--bg-input); }
+    .recent-item.active { background: var(--accent-glow); border: 1px solid rgba(99,102,241,0.3); }
+    .recent-item-title {
+      font-size: 14px;
+      font-weight: 500;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .recent-item-meta {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-top: 3px;
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+    .confidence-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 1px 7px;
+      border-radius: 4px;
+      font-weight: 600;
+      font-size: 11px;
+    }
+    .confidence-badge.high { background: rgba(52,211,153,0.15); color: var(--confidence-high); }
+    .confidence-badge.med  { background: rgba(251,191,36,0.15); color: var(--confidence-med); }
+    .confidence-badge.low  { background: rgba(248,113,113,0.15); color: var(--confidence-low); }
+    .empty-state {
+      text-align: center;
+      padding: 24px 12px;
+      color: var(--text-muted);
+      font-size: 13px;
+    }
+
+    /* ── Main panel ── */
+    .main-panel {
+      overflow-y: auto;
+      padding: 32px 40px;
+      position: relative;
+    }
+    @media (max-width: 900px) { .main-panel { padding: 20px 16px; } }
+
+    .brief-toolbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 20px;
+    }
+    .brief-toolbar-actions {
+      display: flex;
+      gap: 8px;
+    }
+    .btn-toolbar {
+      padding: 7px 14px;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text-secondary);
+      font-size: 13px;
+      font-family: inherit;
+      cursor: pointer;
+      transition: background 0.15s, color 0.15s;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .btn-toolbar:hover { background: var(--bg-input); color: var(--text-primary); }
+
+    .tab-bar {
+      display: flex;
+      gap: 4px;
+      background: var(--bg-card);
+      border-radius: 8px;
+      padding: 3px;
+    }
+    .tab-btn {
+      padding: 6px 14px;
+      background: transparent;
+      border: none;
+      border-radius: 6px;
+      color: var(--text-secondary);
+      font-size: 13px;
+      font-family: inherit;
+      cursor: pointer;
+      transition: background 0.15s, color 0.15s;
+    }
+    .tab-btn.active { background: var(--accent); color: #fff; }
+    .tab-btn:hover:not(.active) { background: var(--bg-input); }
+
+    /* ── Brief content ── */
+    .brief-content {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 32px;
+      min-height: 300px;
+    }
+    .brief-content.empty {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 500px;
+    }
+    .empty-icon { margin-bottom: 16px; opacity: 0.3; }
+    .empty-title { font-size: 18px; font-weight: 600; color: var(--text-secondary); margin-bottom: 6px; }
+    .empty-subtitle { font-size: 14px; color: var(--text-muted); max-width: 320px; text-align: center; }
+
+    /* ── Confidence meter ── */
+    .confidence-meter {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 16px 20px;
+      background: var(--bg-secondary);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      margin-bottom: 24px;
+    }
+    .meter-bar {
+      flex: 1;
+      height: 6px;
+      background: var(--bg-input);
+      border-radius: 3px;
+      overflow: hidden;
+    }
+    .meter-fill {
+      height: 100%;
+      border-radius: 3px;
+      transition: width 0.6s ease-out, background 0.3s;
+    }
+    .meter-label { font-size: 13px; font-weight: 600; min-width: 40px; text-align: right; }
+    .meter-caption { font-size: 12px; color: var(--text-muted); }
+
+    /* ── Markdown rendering ── */
+    .md-render h1 { font-size: 22px; font-weight: 700; margin: 0 0 16px; padding-bottom: 12px; border-bottom: 1px solid var(--border); }
+    .md-render h2 { font-size: 17px; font-weight: 600; margin: 28px 0 12px; color: var(--accent-hover); }
+    .md-render h3 { font-size: 15px; font-weight: 600; margin: 20px 0 8px; }
+    .md-render p { margin: 8px 0; color: var(--text-primary); }
+    .md-render ul, .md-render ol { padding-left: 20px; margin: 8px 0; }
+    .md-render li { margin: 4px 0; }
+    .md-render table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 14px; }
+    .md-render th {
+      text-align: left;
+      padding: 8px 12px;
+      background: var(--bg-secondary);
+      border: 1px solid var(--border);
+      font-weight: 600;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-secondary);
+    }
+    .md-render td { padding: 8px 12px; border: 1px solid var(--border); }
+    .md-render code { background: var(--bg-input); padding: 2px 6px; border-radius: 4px; font-size: 13px; }
+    .md-render em { color: var(--text-secondary); }
+    .md-render strong { color: #fff; }
+    .md-render hr { border: none; border-top: 1px solid var(--border); margin: 24px 0; }
+
+    .json-render {
+      white-space: pre-wrap;
+      font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+      font-size: 13px;
+      line-height: 1.5;
+      color: var(--text-primary);
+    }
+    .json-render .key { color: var(--accent-hover); }
+    .json-render .string { color: var(--success); }
+    .json-render .number { color: var(--warning); }
+    .json-render .boolean { color: var(--danger); }
+    .json-render .null { color: var(--text-muted); }
+
+    /* ── Error toast ── */
+    .toast {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      padding: 12px 20px;
+      background: #dc2626;
+      color: #fff;
+      border-radius: 8px;
+      font-size: 14px;
+      box-shadow: 0 4px 24px rgba(0,0,0,0.4);
+      transform: translateY(80px);
+      opacity: 0;
+      transition: all 0.3s ease;
+      z-index: 200;
+    }
+    .toast.visible { transform: translateY(0); opacity: 1; }
+
+    /* ── Scrollbar ── */
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+  </style>
+</head>
+<body>
+
+  <!-- Top bar -->
+  <nav class="topbar">
+    <div class="topbar-brand">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/>
+      </svg>
+      Pre-Call Intelligence Engine
+    </div>
+    <div class="topbar-status" id="healthStatus">
+      <span><span class="status-dot" id="healthDot"></span> <span id="healthText">Checking...</span></span>
+      <span id="dbBadge" style="display:none"></span>
+    </div>
+  </nav>
+
+  <!-- Main layout -->
+  <div class="layout">
+
+    <!-- Sidebar -->
+    <aside class="sidebar">
+      <div class="sidebar-section">
+        <div class="section-title">Generate Brief</div>
+
+        <form id="briefForm" onsubmit="return false;">
+          <div class="form-group">
+            <label for="person">Person</label>
+            <input type="text" id="person" placeholder="e.g. Jane Doe" autocomplete="off" />
+          </div>
+          <div class="form-group">
+            <label for="company">Company</label>
+            <input type="text" id="company" placeholder="e.g. Acme Corp" autocomplete="off" />
+          </div>
+          <div class="form-group">
+            <label for="topic">Topic</label>
+            <input type="text" id="topic" placeholder="e.g. Q1 Pipeline Review" autocomplete="off" />
+          </div>
+          <div class="form-group">
+            <label for="meetingWhen">Meeting Date/Time</label>
+            <input type="datetime-local" id="meetingWhen" />
+          </div>
+          <div class="form-group">
+            <div class="toggle-row">
+              <label for="skipIngestion" style="font-size:13px;color:var(--text-secondary)">Skip live ingestion</label>
+              <label class="toggle">
+                <input type="checkbox" id="skipIngestion" />
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+          </div>
+          <button class="btn-generate" id="generateBtn" onclick="generateBrief()">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+            Generate Brief
+          </button>
+        </form>
+      </div>
+
+      <div class="sidebar-section" style="flex:1;overflow-y:auto">
+        <div class="section-title">Recent Briefs</div>
+        <ul class="recent-list" id="recentList">
+          <li class="empty-state">Loading...</li>
+        </ul>
+      </div>
+    </aside>
+
+    <!-- Main content -->
+    <main class="main-panel" id="mainPanel">
+      <div id="briefToolbar" class="brief-toolbar" style="display:none">
+        <div class="tab-bar">
+          <button class="tab-btn active" onclick="switchView('rendered')" id="tabRendered">Rendered</button>
+          <button class="tab-btn" onclick="switchView('json')" id="tabJson">JSON</button>
+        </div>
+        <div class="brief-toolbar-actions">
+          <button class="btn-toolbar" onclick="copyBrief()">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+            Copy
+          </button>
+          <button class="btn-toolbar" onclick="downloadBrief()">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            Download
+          </button>
+        </div>
+      </div>
+
+      <!-- Empty state -->
+      <div class="brief-content empty" id="emptyState">
+        <div class="empty-icon">
+          <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/>
+          </svg>
+        </div>
+        <div class="empty-title">No brief loaded</div>
+        <div class="empty-subtitle">Fill in a person or company on the left and hit Generate to create a pre-call intelligence brief.</div>
+      </div>
+
+      <!-- Confidence meter (hidden initially) -->
+      <div id="confidenceMeter" class="confidence-meter" style="display:none">
+        <div>
+          <div class="meter-caption">Confidence</div>
+        </div>
+        <div class="meter-bar">
+          <div class="meter-fill" id="meterFill" style="width:0%"></div>
+        </div>
+        <div class="meter-label" id="meterLabel">0%</div>
+      </div>
+
+      <!-- Brief rendered view -->
+      <div class="brief-content md-render" id="renderedView" style="display:none"></div>
+
+      <!-- Brief JSON view -->
+      <div class="brief-content json-render" id="jsonView" style="display:none"></div>
+    </main>
+  </div>
+
+  <!-- Toast -->
+  <div class="toast" id="toast"></div>
+
+  <script>
+    // ── State ──
+    let currentBrief = null;   // raw JSON response
+    let currentMarkdown = '';
+    let currentView = 'rendered';
+    const API_BASE = '';  // same origin
+
+    // ── Helpers ──
+    function $(id) { return document.getElementById(id); }
+
+    function showToast(msg, duration = 4000) {
+      const t = $('toast');
+      t.textContent = msg;
+      t.classList.add('visible');
+      setTimeout(() => t.classList.remove('visible'), duration);
+    }
+
+    function confidenceClass(score) {
+      if (score >= 0.6) return 'high';
+      if (score >= 0.3) return 'med';
+      return 'low';
+    }
+
+    function confidenceColor(score) {
+      if (score >= 0.6) return 'var(--confidence-high)';
+      if (score >= 0.3) return 'var(--confidence-med)';
+      return 'var(--confidence-low)';
+    }
+
+    function formatDate(iso) {
+      if (!iso) return '';
+      const d = new Date(iso);
+      return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    }
+
+    function syntaxHighlight(json) {
+      if (typeof json !== 'string') json = JSON.stringify(json, null, 2);
+      return json.replace(/("(\\u[a-fA-F0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g,
+        function (match) {
+          let cls = 'number';
+          if (/^"/.test(match)) {
+            cls = /:$/.test(match) ? 'key' : 'string';
+          } else if (/true|false/.test(match)) {
+            cls = 'boolean';
+          } else if (/null/.test(match)) {
+            cls = 'null';
+          }
+          return '<span class="' + cls + '">' + match + '</span>';
+        }
+      );
+    }
+
+    // ── Health check ──
+    async function checkHealth() {
+      try {
+        const res = await fetch(API_BASE + '/health');
+        const data = await res.json();
+        const dot = $('healthDot');
+        const text = $('healthText');
+        const dbBadge = $('dbBadge');
+
+        if (data.status === 'ok') {
+          dot.className = 'status-dot ok';
+          text.textContent = 'Online';
+        } else {
+          dot.className = 'status-dot warn';
+          text.textContent = 'Degraded';
+        }
+
+        dbBadge.style.display = 'inline';
+        dbBadge.textContent = data.database === 'postgres' ? 'PostgreSQL' : 'SQLite';
+      } catch (e) {
+        $('healthDot').className = 'status-dot err';
+        $('healthText').textContent = 'Offline';
+      }
+    }
+
+    // ── Recent briefs ──
+    async function loadRecent() {
+      try {
+        const res = await fetch(API_BASE + '/briefs/recent');
+        const data = await res.json();
+        const list = $('recentList');
+
+        if (!data.length) {
+          list.innerHTML = '<li class="empty-state">No briefs generated yet. Create your first brief above.</li>';
+          return;
+        }
+
+        list.innerHTML = data.map((b, i) => `
+          <li class="recent-item" onclick="loadBriefFromRecent(${i})" data-index="${i}">
+            <div class="recent-item-title">${b.person || b.company || 'Brief'}</div>
+            <div class="recent-item-meta">
+              <span>${formatDate(b.created_at)}</span>
+              ${b.company ? '<span>' + b.company + '</span>' : ''}
+              <span class="confidence-badge ${confidenceClass(b.confidence_score)}">${Math.round(b.confidence_score * 100)}%</span>
+            </div>
+          </li>
+        `).join('');
+
+        // stash the data for click-loading
+        window._recentBriefs = data;
+      } catch (e) {
+        $('recentList').innerHTML = '<li class="empty-state">Could not load recent briefs.</li>';
+      }
+    }
+
+    function loadBriefFromRecent(index) {
+      const b = window._recentBriefs[index];
+      if (!b) return;
+
+      // mark active
+      document.querySelectorAll('.recent-item').forEach(el => el.classList.remove('active'));
+      document.querySelector(`[data-index="${index}"]`)?.classList.add('active');
+
+      currentBrief = b.brief_json ? (typeof b.brief_json === 'string' ? JSON.parse(b.brief_json) : b.brief_json) : null;
+      currentMarkdown = b.brief_markdown || '';
+      displayBrief(b.confidence_score);
+    }
+
+    // ── Generate ──
+    async function generateBrief() {
+      const person = $('person').value.trim();
+      const company = $('company').value.trim();
+      const topic = $('topic').value.trim();
+      const meetingWhen = $('meetingWhen').value;
+      const skipIngestion = $('skipIngestion').checked;
+
+      if (!person && !company) {
+        showToast('Enter at least a person or company name.');
+        return;
+      }
+
+      const btn = $('generateBtn');
+      btn.disabled = true;
+      btn.innerHTML = '<div class="spinner"></div> Generating...';
+
+      try {
+        const body = {};
+        if (person) body.person = person;
+        if (company) body.company = company;
+        if (topic) body.topic = topic;
+        if (meetingWhen) body.meeting_when = meetingWhen.replace('T', ' ');
+        body.skip_ingestion = skipIngestion;
+
+        const res = await fetch(API_BASE + '/brief', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({ detail: res.statusText }));
+          throw new Error(err.detail || 'Brief generation failed');
+        }
+
+        const data = await res.json();
+        currentBrief = data.brief;
+        currentMarkdown = data.markdown;
+        displayBrief(data.confidence_score);
+
+        // refresh recent
+        loadRecent();
+
+      } catch (e) {
+        showToast(e.message);
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = `
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+          Generate Brief`;
+      }
+    }
+
+    // ── Display ──
+    function displayBrief(confidenceScore) {
+      $('emptyState').style.display = 'none';
+      $('briefToolbar').style.display = 'flex';
+      $('confidenceMeter').style.display = 'flex';
+
+      // confidence meter
+      const pct = Math.round((confidenceScore || 0) * 100);
+      const fill = $('meterFill');
+      fill.style.width = pct + '%';
+      fill.style.background = confidenceColor(confidenceScore || 0);
+      $('meterLabel').textContent = pct + '%';
+      $('meterLabel').style.color = confidenceColor(confidenceScore || 0);
+
+      // rendered markdown
+      $('renderedView').innerHTML = marked.parse(currentMarkdown || '*No markdown available*');
+
+      // JSON
+      $('jsonView').innerHTML = currentBrief ? syntaxHighlight(currentBrief) : 'No JSON data';
+
+      switchView(currentView);
+    }
+
+    function switchView(view) {
+      currentView = view;
+      $('tabRendered').className = view === 'rendered' ? 'tab-btn active' : 'tab-btn';
+      $('tabJson').className = view === 'json' ? 'tab-btn active' : 'tab-btn';
+      $('renderedView').style.display = view === 'rendered' ? 'block' : 'none';
+      $('jsonView').style.display = view === 'json' ? 'block' : 'none';
+    }
+
+    // ── Actions ──
+    function copyBrief() {
+      const text = currentView === 'rendered' ? currentMarkdown : JSON.stringify(currentBrief, null, 2);
+      navigator.clipboard.writeText(text).then(() => {
+        showToast('Copied to clipboard!');
+        const t = $('toast');
+        t.style.background = '#059669';
+        setTimeout(() => t.style.background = '', 3000);
+      });
+    }
+
+    function downloadBrief() {
+      const isJson = currentView === 'json';
+      const content = isJson ? JSON.stringify(currentBrief, null, 2) : currentMarkdown;
+      const ext = isJson ? 'json' : 'md';
+      const mime = isJson ? 'application/json' : 'text/markdown';
+
+      const name = (currentBrief?.header?.person || currentBrief?.header?.company || 'brief')
+        .replace(/[^a-zA-Z0-9]/g, '_');
+
+      const blob = new Blob([content], { type: mime });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `brief_${name}.${ext}`;
+      a.click();
+      URL.revokeObjectURL(a.href);
+    }
+
+    // ── Init ──
+    checkHealth();
+    loadRecent();
+    setInterval(checkHealth, 30000);
+
+    // Allow Enter key to submit from person/company fields
+    ['person', 'company'].forEach(id => {
+      $(id).addEventListener('keydown', e => {
+        if (e.key === 'Enter') generateBrief();
+      });
+    });
+  </script>
+</body>
+</html>
