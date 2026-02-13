@@ -154,13 +154,19 @@ def get_session_factory(url: str | None = None) -> sessionmaker:
 def init_db(url: str | None = None) -> None:
     """Create all tables if they don't exist.
 
-    On Postgres, enables the pgvector extension first.
+    On Postgres, attempts to enable the pgvector extension (non-fatal if unavailable).
     """
+    import logging
+    _log = logging.getLogger(__name__)
+
     engine = get_engine(url)
     if not (url or settings.effective_database_url).startswith("sqlite"):
-        with engine.connect() as conn:
-            conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
-            conn.commit()
+        try:
+            with engine.connect() as conn:
+                conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+                conn.commit()
+        except Exception as exc:
+            _log.warning("pgvector extension not available (non-fatal): %s", exc)
     Base.metadata.create_all(engine)
 
 
