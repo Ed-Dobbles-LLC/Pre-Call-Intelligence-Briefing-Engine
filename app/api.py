@@ -228,6 +228,43 @@ def generate_brief_json(request: BriefRequest):
 # Sync & Profiles
 # ---------------------------------------------------------------------------
 
+@app.get("/debug/enrich", dependencies=[Depends(verify_api_key)])
+async def debug_enrich(email: str = Query(None), name: str = Query(None)):
+    """Test Apollo enrichment for a single contact. Returns raw result."""
+    from app.clients.apollo import ApolloClient, normalize_enrichment
+
+    if not settings.apollo_api_key:
+        return {"error": "APOLLO_API_KEY not configured"}
+
+    client = ApolloClient()
+
+    first_name = last_name = domain = None
+    if name:
+        parts = name.split(None, 1)
+        first_name = parts[0]
+        last_name = parts[1] if len(parts) > 1 else None
+    if email and "@" in email:
+        domain = email.split("@")[1]
+
+    person = await client.enrich_person(
+        email=email,
+        first_name=first_name,
+        last_name=last_name,
+        domain=domain,
+    )
+    normalized = normalize_enrichment(person)
+    return {
+        "input": {"email": email, "name": name},
+        "raw_person_keys": list(person.keys()) if person else None,
+        "photo_url": person.get("photo_url") if person else None,
+        "linkedin_url": person.get("linkedin_url") if person else None,
+        "title": person.get("title") if person else None,
+        "name": person.get("name") if person else None,
+        "normalized": normalized,
+        "matched": person is not None,
+    }
+
+
 @app.post("/sync", dependencies=[Depends(verify_api_key)])
 async def trigger_sync():
     """Trigger a manual sync of Fireflies transcripts and profile rebuild."""
