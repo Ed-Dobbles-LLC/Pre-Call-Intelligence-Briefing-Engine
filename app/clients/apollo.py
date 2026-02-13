@@ -101,16 +101,19 @@ class ApolloClient:
             return None
 
     async def enrich_many(
-        self, contacts: list[dict[str, str | None]]
+        self, contacts: list[dict[str, str | None]],
+        name_variants: dict[str, list[str]] | None = None,
     ) -> list[dict[str, Any] | None]:
         """Enrich multiple contacts sequentially with rate-limit awareness.
 
         Each contact dict should have: email, name, company (all optional).
         Uses single-person endpoint for reliability.
+        If a lookup fails and name_variants are provided, tries expanded names.
         """
         if not self.api_key or not contacts:
             return [None] * len(contacts)
 
+        name_variants = name_variants or {}
         results: list[dict[str, Any] | None] = []
 
         for i, contact in enumerate(contacts):
@@ -127,7 +130,6 @@ class ApolloClient:
             domain = None
             if email and "@" in email:
                 domain = email.split("@")[1]
-                # Skip free email domains for company matching
                 if domain in {
                     "gmail.com", "yahoo.com", "hotmail.com", "outlook.com",
                     "me.com", "icloud.com", "protonmail.com",
@@ -141,6 +143,26 @@ class ApolloClient:
                 domain=domain,
                 organization_name=company,
             )
+
+            # If no match and we have name variants, try expanded names
+            if not person and first and last:
+                first_lower = first.lower()
+                variants = name_variants.get(first_lower, [])
+                for variant in variants:
+                    logger.info(
+                        "Apollo: retrying %s %s as %s %s",
+                        first, last, variant.title(), last,
+                    )
+                    await asyncio.sleep(0.3)
+                    person = await self.enrich_person(
+                        first_name=variant.title(),
+                        last_name=last,
+                        domain=domain,
+                        organization_name=company,
+                    )
+                    if person:
+                        break
+
             results.append(person)
 
             # Brief pause between requests to respect rate limits

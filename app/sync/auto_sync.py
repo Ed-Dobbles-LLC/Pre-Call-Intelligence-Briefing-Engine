@@ -80,22 +80,102 @@ def _extract_participants_from_transcript(raw: dict) -> list[dict]:
     return participants
 
 
+_FREE_EMAIL_PROVIDERS = {
+    "gmail.com", "yahoo.com", "hotmail.com", "outlook.com",
+    "aol.com", "icloud.com", "mail.com", "protonmail.com",
+    "live.com", "msn.com", "ymail.com", "me.com",
+}
+
+
 def _infer_company_from_email(email: str) -> str | None:
     """Try to extract company name from email domain."""
     if not email or "@" not in email:
         return None
     domain = email.split("@")[1].lower()
-    # Skip common free email providers
-    free_providers = {
-        "gmail.com", "yahoo.com", "hotmail.com", "outlook.com",
-        "aol.com", "icloud.com", "mail.com", "protonmail.com",
-        "live.com", "msn.com", "ymail.com",
-    }
-    if domain in free_providers:
+    if domain in _FREE_EMAIL_PROVIDERS:
         return None
-    # Extract company name from domain (e.g., "acme.com" -> "Acme")
     company = domain.split(".")[0]
     return company.title()
+
+
+def _infer_company_from_meeting(title: str, participants: list[dict]) -> str | None:
+    """Infer company from meeting title and co-participant email domains.
+
+    Examples:
+      "Interview with AnswerRocket" → "AnswerRocket"
+      "Ed Dobbles - VP, Global Analytics & Data Science" + participant @aristocrat.com → "Aristocrat"
+    """
+    title_lower = (title or "").lower()
+
+    # Strategy 1: Extract company from "Interview with <Company>" pattern
+    patterns = [
+        r"interview\s+with\s+(.+?)(?:\s*[-–(]|$)",
+        r"(?:call|meeting|chat)\s+with\s+(.+?)(?:\s*[-–(]|$)",
+        r"^(.+?)\s+(?:video\s+)?call\b",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, title_lower)
+        if match:
+            candidate = match.group(1).strip()
+            # Filter out person names (companies usually don't have first+last pattern)
+            if candidate and " " not in candidate:
+                return candidate.title()
+            # If it's a known company keyword, use it
+            words = candidate.split()
+            if len(words) == 1:
+                return words[0].title()
+
+    # Strategy 2: Use co-participant email domains (most common non-free domain)
+    domain_counts: dict[str, int] = {}
+    for p in participants:
+        email = (p.get("email") or "").lower()
+        if email and "@" in email:
+            domain = email.split("@")[1]
+            if domain not in _FREE_EMAIL_PROVIDERS and "greenhouse.io" not in domain and "metaview" not in domain:
+                company = domain.split(".")[0].title()
+                domain_counts[company] = domain_counts.get(company, 0) + 1
+
+    if domain_counts:
+        # Return the most common company domain
+        return max(domain_counts, key=domain_counts.get)
+
+    return None
+
+
+# Common nickname → formal name variants for Apollo enrichment
+_NAME_VARIANTS = {
+    "ben": ["benjamin", "benedict"],
+    "bill": ["william"],
+    "bob": ["robert"],
+    "charlie": ["charles"],
+    "chris": ["christopher"],
+    "dan": ["daniel"],
+    "dave": ["david"],
+    "dick": ["richard"],
+    "ed": ["edward", "edmund"],
+    "eli": ["elijah", "elisabeth", "elizabeth"],
+    "jake": ["jacob"],
+    "jim": ["james"],
+    "joe": ["joseph"],
+    "jon": ["jonathan"],
+    "kate": ["katherine", "catherine"],
+    "ken": ["kenneth"],
+    "liz": ["elizabeth", "elisabeth"],
+    "matt": ["matthew"],
+    "mike": ["michael"],
+    "nick": ["nicholas"],
+    "pat": ["patrick", "patricia"],
+    "pete": ["peter"],
+    "rob": ["robert"],
+    "sam": ["samuel", "samantha"],
+    "steve": ["steven", "stephen"],
+    "sue": ["susan", "suzanne"],
+    "ted": ["theodore", "edward"],
+    "tim": ["timothy"],
+    "tom": ["thomas"],
+    "tony": ["anthony"],
+    "will": ["william"],
+}
 
 
 def _is_non_person(name: str, email: str = "") -> bool:
@@ -168,7 +248,14 @@ def _process_transcripts(raw_transcripts: list[dict]) -> dict:
         summary = normalized.summary or ""
         action_items = normalized.action_items or []
 
-        for p in _extract_participants_from_transcript(raw):
+        transcript_participants = _extract_participants_from_transcript(raw)
+
+        # Infer company from meeting title + participant emails
+        meeting_company = _infer_company_from_meeting(
+            transcript_title, transcript_participants
+        )
+
+        for p in transcript_participants:
             key = p["email"] or p["name"].lower()
             if not key:
                 continue
@@ -192,7 +279,11 @@ def _process_transcripts(raw_transcripts: list[dict]) -> dict:
             if p["email"] and not entry["email"]:
                 entry["email"] = p["email"]
             if not entry["company"]:
-                entry["company"] = _infer_company_from_email(p["email"])
+                # Try email domain first, then meeting context
+                entry["company"] = (
+                    _infer_company_from_email(p["email"])
+                    or meeting_company
+                )
 
             entry["meeting_count"] += 1
 
@@ -791,7 +882,7 @@ async def _enrich_profiles_with_apollo() -> int:
             for _, info in to_enrich
         ]
 
-        results = await client.enrich_many(contacts)
+        results = await client.enrich_many(contacts, name_variants=_NAME_VARIANTS)
 
         for (entity, _), person in zip(to_enrich, results):
             enrichment = normalize_enrichment(person)
