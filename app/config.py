@@ -22,9 +22,12 @@ class Settings(BaseSettings):
     # Fireflies
     fireflies_api_key: str = ""
 
-    # Gmail
+    # Gmail / Google OAuth
     gmail_credentials_path: str = "./credentials.json"
     gmail_token_path: str = "./token.json"
+    google_client_id: str = ""
+    google_client_secret: str = ""
+    google_refresh_token: str = ""
 
     # Database
     database_url: str = "sqlite:///./briefing_engine.db"
@@ -41,6 +44,18 @@ class Settings(BaseSettings):
     @property
     def is_sqlite(self) -> bool:
         return self.database_url.startswith("sqlite")
+
+    @property
+    def effective_database_url(self) -> str:
+        """Return a SQLAlchemy-compatible URL.
+
+        Railway injects ``postgres://`` but SQLAlchemy 2.0+ requires
+        ``postgresql://``.
+        """
+        url = self.database_url
+        if url.startswith("postgres://"):
+            url = url.replace("postgres://", "postgresql://", 1)
+        return url
 
 
 settings = Settings()
