@@ -4,30 +4,44 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Pre-Call Intelligence Briefing Engine</title>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
     :root {
-      --bg-primary: #0f1117;
-      --bg-secondary: #161822;
-      --bg-card: #1c1f2e;
-      --bg-input: #232639;
-      --border: #2a2d42;
-      --border-focus: #6366f1;
-      --text-primary: #e2e4ed;
-      --text-secondary: #8b8fa7;
-      --text-muted: #5c6078;
-      --accent: #6366f1;
-      --accent-hover: #818cf8;
-      --accent-glow: rgba(99, 102, 241, 0.15);
+      --bg-primary: #0a0b10;
+      --bg-secondary: #111318;
+      --bg-card: #161922;
+      --bg-card-hover: #1c1f2c;
+      --bg-input: #1e2130;
+      --border: #252839;
+      --border-light: #2e3148;
+      --text-primary: #e8eaf0;
+      --text-secondary: #9196ab;
+      --text-muted: #5d6280;
+      --accent: #7c5cfc;
+      --accent-light: #9b82fc;
+      --accent-glow: rgba(124, 92, 252, 0.12);
+      --accent-gradient: linear-gradient(135deg, #7c5cfc 0%, #5c8afc 100%);
       --success: #34d399;
+      --success-bg: rgba(52, 211, 153, 0.1);
       --warning: #fbbf24;
+      --warning-bg: rgba(251, 191, 36, 0.1);
       --danger: #f87171;
+      --danger-bg: rgba(248, 113, 113, 0.1);
+      --info: #60a5fa;
+      --info-bg: rgba(96, 165, 250, 0.1);
       --confidence-low: #f87171;
       --confidence-med: #fbbf24;
       --confidence-high: #34d399;
+      --shadow-sm: 0 1px 2px rgba(0,0,0,0.3);
+      --shadow-md: 0 4px 12px rgba(0,0,0,0.3);
+      --shadow-lg: 0 8px 32px rgba(0,0,0,0.4);
+      --radius-sm: 8px;
+      --radius-md: 12px;
+      --radius-lg: 16px;
+      --radius-xl: 20px;
     }
 
     body {
@@ -43,90 +57,534 @@
       display: flex;
       align-items: center;
       justify-content: space-between;
-      padding: 0 24px;
-      height: 56px;
+      padding: 0 32px;
+      height: 60px;
       background: var(--bg-secondary);
       border-bottom: 1px solid var(--border);
       position: sticky;
       top: 0;
       z-index: 100;
+      backdrop-filter: blur(12px);
     }
     .topbar-brand {
       display: flex;
       align-items: center;
-      gap: 10px;
-      font-weight: 600;
-      font-size: 15px;
-      letter-spacing: -0.01em;
+      gap: 12px;
+      font-weight: 700;
+      font-size: 16px;
+      letter-spacing: -0.02em;
     }
-    .topbar-brand svg { flex-shrink: 0; }
+    .topbar-brand .brand-icon {
+      width: 32px;
+      height: 32px;
+      background: var(--accent-gradient);
+      border-radius: var(--radius-sm);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .topbar-nav {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .nav-tab {
+      padding: 8px 16px;
+      background: transparent;
+      border: none;
+      border-radius: var(--radius-sm);
+      color: var(--text-secondary);
+      font-size: 14px;
+      font-weight: 500;
+      font-family: inherit;
+      cursor: pointer;
+      transition: all 0.2s;
+      position: relative;
+    }
+    .nav-tab:hover { color: var(--text-primary); background: var(--bg-card); }
+    .nav-tab.active {
+      color: var(--text-primary);
+      background: var(--bg-card);
+    }
+    .nav-tab.active::after {
+      content: '';
+      position: absolute;
+      bottom: -1px;
+      left: 16px;
+      right: 16px;
+      height: 2px;
+      background: var(--accent-gradient);
+      border-radius: 1px;
+    }
+    .nav-tab .badge {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 18px;
+      height: 18px;
+      padding: 0 5px;
+      background: var(--accent);
+      color: #fff;
+      border-radius: 9px;
+      font-size: 11px;
+      font-weight: 600;
+      margin-left: 6px;
+    }
+    .topbar-right {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
     .topbar-status {
       display: flex;
       align-items: center;
-      gap: 16px;
+      gap: 6px;
       font-size: 13px;
       color: var(--text-secondary);
+      padding: 6px 12px;
+      background: var(--bg-card);
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border);
     }
     .status-dot {
-      display: inline-block;
       width: 8px;
       height: 8px;
       border-radius: 50%;
-      margin-right: 5px;
+      flex-shrink: 0;
     }
-    .status-dot.ok { background: var(--success); box-shadow: 0 0 6px var(--success); }
+    .status-dot.ok { background: var(--success); box-shadow: 0 0 8px var(--success); }
     .status-dot.warn { background: var(--warning); }
     .status-dot.err { background: var(--danger); }
 
-    /* ── Layout ── */
-    .layout {
-      display: grid;
-      grid-template-columns: 380px 1fr;
-      height: calc(100vh - 56px);
+    /* ── Main Container ── */
+    .container {
+      max-width: 1280px;
+      margin: 0 auto;
+      padding: 32px;
     }
-    @media (max-width: 900px) {
-      .layout { grid-template-columns: 1fr; }
-      .sidebar { border-right: none; border-bottom: 1px solid var(--border); max-height: 50vh; overflow-y: auto; }
+    @media (max-width: 768px) { .container { padding: 16px; } }
+
+    /* ── Page Views ── */
+    .page-view { display: none; }
+    .page-view.active { display: block; }
+
+    /* ── Welcome / Home Page ── */
+    .welcome-hero {
+      text-align: center;
+      padding: 48px 0 40px;
+    }
+    .welcome-hero h1 {
+      font-size: 36px;
+      font-weight: 800;
+      letter-spacing: -0.03em;
+      margin-bottom: 8px;
+    }
+    .welcome-hero h1 .gradient-text {
+      background: var(--accent-gradient);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+    .welcome-hero p {
+      color: var(--text-secondary);
+      font-size: 16px;
+      max-width: 520px;
+      margin: 0 auto;
     }
 
-    /* ── Sidebar ── */
-    .sidebar {
-      background: var(--bg-secondary);
-      border-right: 1px solid var(--border);
-      overflow-y: auto;
+    /* ── Stats Cards ── */
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 16px;
+      margin-bottom: 32px;
+    }
+    .stat-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 24px;
+      transition: all 0.2s;
+    }
+    .stat-card:hover {
+      border-color: var(--border-light);
+      transform: translateY(-1px);
+      box-shadow: var(--shadow-md);
+    }
+    .stat-card-header {
       display: flex;
-      flex-direction: column;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 16px;
     }
-    .sidebar-section {
-      padding: 20px;
-      border-bottom: 1px solid var(--border);
+    .stat-card-icon {
+      width: 40px;
+      height: 40px;
+      border-radius: var(--radius-sm);
+      display: flex;
+      align-items: center;
+      justify-content: center;
     }
-    .sidebar-section:last-child { border-bottom: none; }
-    .section-title {
-      font-size: 11px;
+    .stat-card-icon.purple { background: var(--accent-glow); color: var(--accent); }
+    .stat-card-icon.green { background: var(--success-bg); color: var(--success); }
+    .stat-card-icon.blue { background: var(--info-bg); color: var(--info); }
+    .stat-card-icon.amber { background: var(--warning-bg); color: var(--warning); }
+    .stat-card-value {
+      font-size: 32px;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      line-height: 1;
+      margin-bottom: 4px;
+    }
+    .stat-card-label {
+      font-size: 13px;
+      color: var(--text-secondary);
+    }
+
+    /* ── Service Status Cards ── */
+    .services-section {
+      margin-bottom: 32px;
+    }
+    .section-heading {
+      font-size: 13px;
       font-weight: 600;
       text-transform: uppercase;
       letter-spacing: 0.08em;
       color: var(--text-muted);
-      margin-bottom: 14px;
+      margin-bottom: 16px;
+    }
+    .services-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 12px;
+    }
+    .service-card {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      padding: 18px 20px;
+      transition: all 0.2s;
+    }
+    .service-card:hover { border-color: var(--border-light); }
+    .service-icon {
+      width: 42px;
+      height: 42px;
+      border-radius: var(--radius-sm);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      font-size: 20px;
+    }
+    .service-icon.fireflies { background: linear-gradient(135deg, #ff6b35 0%, #ff9f1c 100%); }
+    .service-icon.gmail { background: linear-gradient(135deg, #ea4335 0%, #fbbc05 100%); }
+    .service-icon.openai { background: linear-gradient(135deg, #10a37f 0%, #1ed760 100%); }
+    .service-icon.database { background: linear-gradient(135deg, #336791 0%, #60a5fa 100%); }
+    .service-info { flex: 1; min-width: 0; }
+    .service-name { font-weight: 600; font-size: 14px; }
+    .service-status {
+      font-size: 12px;
+      margin-top: 2px;
+    }
+    .service-status.connected { color: var(--success); }
+    .service-status.disconnected { color: var(--text-muted); }
+
+    /* ── Quick Actions ── */
+    .quick-actions {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 16px;
+      margin-bottom: 32px;
+    }
+    .action-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 28px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .action-card:hover {
+      border-color: var(--accent);
+      background: var(--bg-card-hover);
+      box-shadow: 0 0 0 1px var(--accent-glow), var(--shadow-md);
+      transform: translateY(-2px);
+    }
+    .action-card-icon {
+      width: 48px;
+      height: 48px;
+      border-radius: var(--radius-md);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-bottom: 16px;
+    }
+    .action-card h3 {
+      font-size: 16px;
+      font-weight: 600;
+      margin-bottom: 6px;
+    }
+    .action-card p {
+      font-size: 13px;
+      color: var(--text-secondary);
+      line-height: 1.5;
     }
 
+    /* ── Auto-sync Banner ── */
+    .sync-banner {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      padding: 16px 24px;
+      margin-bottom: 32px;
+    }
+    .sync-banner-left {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+    .sync-indicator {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 14px;
+    }
+    .sync-indicator .pulse {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--success);
+      position: relative;
+    }
+    .sync-indicator .pulse::before {
+      content: '';
+      position: absolute;
+      inset: -3px;
+      border-radius: 50%;
+      border: 2px solid var(--success);
+      animation: pulse-ring 2s ease-out infinite;
+    }
+    @keyframes pulse-ring {
+      0% { opacity: 1; transform: scale(1); }
+      100% { opacity: 0; transform: scale(1.5); }
+    }
+    .sync-indicator.inactive .pulse {
+      background: var(--text-muted);
+    }
+    .sync-indicator.inactive .pulse::before {
+      display: none;
+    }
+    .sync-meta {
+      font-size: 12px;
+      color: var(--text-muted);
+      margin-top: 2px;
+    }
+    .btn-sync {
+      padding: 8px 20px;
+      background: var(--accent-gradient);
+      color: #fff;
+      border: none;
+      border-radius: var(--radius-sm);
+      font-size: 13px;
+      font-weight: 600;
+      font-family: inherit;
+      cursor: pointer;
+      transition: all 0.2s;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .btn-sync:hover { opacity: 0.9; transform: translateY(-1px); }
+    .btn-sync:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+    .btn-sync .spinner-sm {
+      width: 14px;
+      height: 14px;
+      border: 2px solid rgba(255,255,255,0.3);
+      border-top-color: #fff;
+      border-radius: 50%;
+      animation: spin 0.6s linear infinite;
+    }
+
+    /* ── Profiles Page ── */
+    .profiles-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 24px;
+    }
+    .profiles-header h2 {
+      font-size: 22px;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+    }
+    .search-box {
+      position: relative;
+      width: 300px;
+    }
+    .search-box input {
+      width: 100%;
+      padding: 9px 12px 9px 36px;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      color: var(--text-primary);
+      font-size: 14px;
+      font-family: inherit;
+      transition: all 0.15s;
+    }
+    .search-box input:focus {
+      outline: none;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px var(--accent-glow);
+    }
+    .search-box input::placeholder { color: var(--text-muted); }
+    .search-box svg {
+      position: absolute;
+      left: 12px;
+      top: 50%;
+      transform: translateY(-50%);
+      color: var(--text-muted);
+    }
+
+    .profiles-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+      gap: 16px;
+    }
+    .profile-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 24px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .profile-card:hover {
+      border-color: var(--border-light);
+      box-shadow: var(--shadow-md);
+      transform: translateY(-1px);
+    }
+    .profile-card-top {
+      display: flex;
+      align-items: flex-start;
+      gap: 14px;
+      margin-bottom: 16px;
+    }
+    .profile-avatar {
+      width: 48px;
+      height: 48px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+      font-size: 18px;
+      flex-shrink: 0;
+    }
+    .profile-info { flex: 1; min-width: 0; }
+    .profile-name {
+      font-size: 16px;
+      font-weight: 600;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .profile-company {
+      font-size: 13px;
+      color: var(--text-secondary);
+      margin-top: 1px;
+    }
+    .profile-tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-bottom: 14px;
+    }
+    .profile-tag {
+      padding: 3px 10px;
+      border-radius: 12px;
+      font-size: 11px;
+      font-weight: 500;
+    }
+    .profile-tag.meetings { background: var(--info-bg); color: var(--info); }
+    .profile-tag.emails { background: var(--accent-glow); color: var(--accent-light); }
+    .profile-tag.health-good { background: var(--success-bg); color: var(--success); }
+    .profile-tag.health-neutral { background: var(--warning-bg); color: var(--warning); }
+    .profile-tag.health-cold { background: var(--danger-bg); color: var(--danger); }
+    .profile-stats {
+      display: flex;
+      gap: 16px;
+      padding-top: 14px;
+      border-top: 1px solid var(--border);
+    }
+    .profile-stat {
+      display: flex;
+      flex-direction: column;
+    }
+    .profile-stat-value {
+      font-size: 16px;
+      font-weight: 600;
+    }
+    .profile-stat-label {
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+
+    /* ── Generate Brief Page ── */
+    .brief-page-layout {
+      display: grid;
+      grid-template-columns: 380px 1fr;
+      gap: 24px;
+      min-height: calc(100vh - 156px);
+    }
+    @media (max-width: 900px) {
+      .brief-page-layout { grid-template-columns: 1fr; }
+    }
+
+    .brief-sidebar {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+    .card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      overflow: hidden;
+    }
+    .card-header {
+      padding: 18px 24px;
+      border-bottom: 1px solid var(--border);
+      font-size: 13px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--text-secondary);
+    }
+    .card-body { padding: 24px; }
+
     /* ── Form ── */
-    .form-group { margin-bottom: 14px; }
+    .form-group { margin-bottom: 16px; }
     .form-group label {
       display: block;
       font-size: 13px;
       font-weight: 500;
       color: var(--text-secondary);
-      margin-bottom: 5px;
+      margin-bottom: 6px;
     }
     .form-group input,
     .form-group select {
       width: 100%;
-      padding: 9px 12px;
+      padding: 10px 14px;
       background: var(--bg-input);
       border: 1px solid var(--border);
-      border-radius: 8px;
+      border-radius: var(--radius-sm);
       color: var(--text-primary);
       font-size: 14px;
       font-family: inherit;
@@ -135,7 +593,7 @@
     .form-group input:focus,
     .form-group select:focus {
       outline: none;
-      border-color: var(--border-focus);
+      border-color: var(--accent);
       box-shadow: 0 0 0 3px var(--accent-glow);
     }
     .form-group input::placeholder { color: var(--text-muted); }
@@ -144,7 +602,7 @@
       display: flex;
       align-items: center;
       justify-content: space-between;
-      padding: 6px 0;
+      padding: 8px 0;
     }
     .toggle-row label { margin-bottom: 0; }
     .toggle {
@@ -178,28 +636,25 @@
 
     .btn-generate {
       width: 100%;
-      padding: 11px;
-      background: var(--accent);
+      padding: 12px;
+      background: var(--accent-gradient);
       color: #fff;
       border: none;
-      border-radius: 8px;
+      border-radius: var(--radius-sm);
       font-size: 14px;
       font-weight: 600;
       font-family: inherit;
       cursor: pointer;
-      transition: background 0.15s, transform 0.1s;
+      transition: all 0.2s;
       display: flex;
       align-items: center;
       justify-content: center;
       gap: 8px;
+      box-shadow: 0 2px 8px rgba(124, 92, 252, 0.3);
     }
-    .btn-generate:hover { background: var(--accent-hover); }
+    .btn-generate:hover { opacity: 0.9; transform: translateY(-1px); box-shadow: 0 4px 16px rgba(124, 92, 252, 0.4); }
     .btn-generate:active { transform: scale(0.98); }
-    .btn-generate:disabled {
-      opacity: 0.5;
-      cursor: not-allowed;
-      transform: none;
-    }
+    .btn-generate:disabled { opacity: 0.5; cursor: not-allowed; transform: none; box-shadow: none; }
 
     .spinner {
       width: 16px;
@@ -214,14 +669,15 @@
     /* ── Recent briefs list ── */
     .recent-list { list-style: none; }
     .recent-item {
-      padding: 10px 12px;
-      border-radius: 8px;
+      padding: 12px 16px;
+      border-radius: var(--radius-sm);
       cursor: pointer;
-      transition: background 0.15s;
+      transition: all 0.15s;
       margin-bottom: 4px;
+      border: 1px solid transparent;
     }
     .recent-item:hover { background: var(--bg-input); }
-    .recent-item.active { background: var(--accent-glow); border: 1px solid rgba(99,102,241,0.3); }
+    .recent-item.active { background: var(--accent-glow); border-color: rgba(124, 92, 252, 0.25); }
     .recent-item-title {
       font-size: 14px;
       font-weight: 500;
@@ -233,7 +689,7 @@
       display: flex;
       align-items: center;
       gap: 10px;
-      margin-top: 3px;
+      margin-top: 4px;
       font-size: 12px;
       color: var(--text-muted);
     }
@@ -241,34 +697,29 @@
       display: inline-flex;
       align-items: center;
       gap: 4px;
-      padding: 1px 7px;
+      padding: 2px 8px;
       border-radius: 4px;
       font-weight: 600;
       font-size: 11px;
     }
-    .confidence-badge.high { background: rgba(52,211,153,0.15); color: var(--confidence-high); }
-    .confidence-badge.med  { background: rgba(251,191,36,0.15); color: var(--confidence-med); }
-    .confidence-badge.low  { background: rgba(248,113,113,0.15); color: var(--confidence-low); }
+    .confidence-badge.high { background: rgba(52,211,153,0.12); color: var(--confidence-high); }
+    .confidence-badge.med  { background: rgba(251,191,36,0.12); color: var(--confidence-med); }
+    .confidence-badge.low  { background: rgba(248,113,113,0.12); color: var(--confidence-low); }
     .empty-state {
       text-align: center;
-      padding: 24px 12px;
+      padding: 32px 16px;
       color: var(--text-muted);
       font-size: 13px;
     }
 
-    /* ── Main panel ── */
-    .main-panel {
-      overflow-y: auto;
-      padding: 32px 40px;
-      position: relative;
-    }
-    @media (max-width: 900px) { .main-panel { padding: 20px 16px; } }
+    /* ── Main Brief panel ── */
+    .brief-main { position: relative; }
 
     .brief-toolbar {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      margin-bottom: 20px;
+      margin-bottom: 16px;
     }
     .brief-toolbar-actions {
       display: flex;
@@ -278,27 +729,28 @@
       padding: 7px 14px;
       background: var(--bg-card);
       border: 1px solid var(--border);
-      border-radius: 6px;
+      border-radius: var(--radius-sm);
       color: var(--text-secondary);
       font-size: 13px;
       font-family: inherit;
       cursor: pointer;
-      transition: background 0.15s, color 0.15s;
+      transition: all 0.15s;
       display: flex;
       align-items: center;
       gap: 6px;
     }
-    .btn-toolbar:hover { background: var(--bg-input); color: var(--text-primary); }
+    .btn-toolbar:hover { background: var(--bg-input); color: var(--text-primary); border-color: var(--border-light); }
 
     .tab-bar {
       display: flex;
       gap: 4px;
       background: var(--bg-card);
-      border-radius: 8px;
+      border-radius: var(--radius-sm);
       padding: 3px;
+      border: 1px solid var(--border);
     }
     .tab-btn {
-      padding: 6px 14px;
+      padding: 6px 16px;
       background: transparent;
       border: none;
       border-radius: 6px;
@@ -306,16 +758,16 @@
       font-size: 13px;
       font-family: inherit;
       cursor: pointer;
-      transition: background 0.15s, color 0.15s;
+      transition: all 0.15s;
     }
     .tab-btn.active { background: var(--accent); color: #fff; }
-    .tab-btn:hover:not(.active) { background: var(--bg-input); }
+    .tab-btn:hover:not(.active) { background: var(--bg-input); color: var(--text-primary); }
 
     /* ── Brief content ── */
     .brief-content {
       background: var(--bg-card);
       border: 1px solid var(--border);
-      border-radius: 12px;
+      border-radius: var(--radius-lg);
       padding: 32px;
       min-height: 300px;
     }
@@ -326,20 +778,20 @@
       justify-content: center;
       min-height: 500px;
     }
-    .empty-icon { margin-bottom: 16px; opacity: 0.3; }
-    .empty-title { font-size: 18px; font-weight: 600; color: var(--text-secondary); margin-bottom: 6px; }
-    .empty-subtitle { font-size: 14px; color: var(--text-muted); max-width: 320px; text-align: center; }
+    .empty-icon { margin-bottom: 20px; opacity: 0.2; }
+    .empty-title { font-size: 18px; font-weight: 600; color: var(--text-secondary); margin-bottom: 8px; }
+    .empty-subtitle { font-size: 14px; color: var(--text-muted); max-width: 360px; text-align: center; line-height: 1.6; }
 
     /* ── Confidence meter ── */
     .confidence-meter {
       display: flex;
       align-items: center;
-      gap: 12px;
+      gap: 14px;
       padding: 16px 20px;
-      background: var(--bg-secondary);
+      background: var(--bg-card);
       border: 1px solid var(--border);
-      border-radius: 10px;
-      margin-bottom: 24px;
+      border-radius: var(--radius-md);
+      margin-bottom: 20px;
     }
     .meter-bar {
       flex: 1;
@@ -353,12 +805,12 @@
       border-radius: 3px;
       transition: width 0.6s ease-out, background 0.3s;
     }
-    .meter-label { font-size: 13px; font-weight: 600; min-width: 40px; text-align: right; }
+    .meter-label { font-size: 14px; font-weight: 700; min-width: 42px; text-align: right; }
     .meter-caption { font-size: 12px; color: var(--text-muted); }
 
     /* ── Markdown rendering ── */
     .md-render h1 { font-size: 22px; font-weight: 700; margin: 0 0 16px; padding-bottom: 12px; border-bottom: 1px solid var(--border); }
-    .md-render h2 { font-size: 17px; font-weight: 600; margin: 28px 0 12px; color: var(--accent-hover); }
+    .md-render h2 { font-size: 17px; font-weight: 600; margin: 28px 0 12px; color: var(--accent-light); }
     .md-render h3 { font-size: 15px; font-weight: 600; margin: 20px 0 8px; }
     .md-render p { margin: 8px 0; color: var(--text-primary); }
     .md-render ul, .md-render ol { padding-left: 20px; margin: 8px 0; }
@@ -366,7 +818,7 @@
     .md-render table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 14px; }
     .md-render th {
       text-align: left;
-      padding: 8px 12px;
+      padding: 10px 14px;
       background: var(--bg-secondary);
       border: 1px solid var(--border);
       font-weight: 600;
@@ -375,7 +827,7 @@
       letter-spacing: 0.05em;
       color: var(--text-secondary);
     }
-    .md-render td { padding: 8px 12px; border: 1px solid var(--border); }
+    .md-render td { padding: 10px 14px; border: 1px solid var(--border); }
     .md-render code { background: var(--bg-input); padding: 2px 6px; border-radius: 4px; font-size: 13px; }
     .md-render em { color: var(--text-secondary); }
     .md-render strong { color: #fff; }
@@ -388,35 +840,126 @@
       line-height: 1.5;
       color: var(--text-primary);
     }
-    .json-render .key { color: var(--accent-hover); }
+    .json-render .key { color: var(--accent-light); }
     .json-render .string { color: var(--success); }
     .json-render .number { color: var(--warning); }
     .json-render .boolean { color: var(--danger); }
     .json-render .null { color: var(--text-muted); }
 
-    /* ── Error toast ── */
+    /* ── Profile Detail Modal ── */
+    .modal-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.65);
+      z-index: 200;
+      backdrop-filter: blur(4px);
+    }
+    .modal-overlay.visible { display: flex; align-items: center; justify-content: center; }
+    .modal {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-xl);
+      width: 90%;
+      max-width: 680px;
+      max-height: 85vh;
+      overflow-y: auto;
+      box-shadow: var(--shadow-lg);
+    }
+    .modal-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 24px 28px;
+      border-bottom: 1px solid var(--border);
+    }
+    .modal-header h3 {
+      font-size: 18px;
+      font-weight: 700;
+    }
+    .modal-close {
+      width: 32px;
+      height: 32px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      color: var(--text-secondary);
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .modal-close:hover { color: var(--text-primary); border-color: var(--border-light); }
+    .modal-body { padding: 28px; }
+    .modal-section {
+      margin-bottom: 24px;
+    }
+    .modal-section h4 {
+      font-size: 13px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--text-muted);
+      margin-bottom: 12px;
+    }
+    .interaction-item {
+      padding: 14px 16px;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      margin-bottom: 8px;
+    }
+    .interaction-item-title {
+      font-weight: 500;
+      font-size: 14px;
+      margin-bottom: 4px;
+    }
+    .interaction-item-meta {
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+    .interaction-item-summary {
+      font-size: 13px;
+      color: var(--text-secondary);
+      margin-top: 8px;
+      line-height: 1.5;
+    }
+
+    /* ── Toast ── */
     .toast {
       position: fixed;
       bottom: 24px;
       right: 24px;
-      padding: 12px 20px;
+      padding: 14px 24px;
       background: #dc2626;
       color: #fff;
-      border-radius: 8px;
+      border-radius: var(--radius-sm);
       font-size: 14px;
-      box-shadow: 0 4px 24px rgba(0,0,0,0.4);
+      font-weight: 500;
+      box-shadow: var(--shadow-lg);
       transform: translateY(80px);
       opacity: 0;
       transition: all 0.3s ease;
-      z-index: 200;
+      z-index: 300;
     }
     .toast.visible { transform: translateY(0); opacity: 1; }
+    .toast.success { background: #059669; }
 
     /* ── Scrollbar ── */
     ::-webkit-scrollbar { width: 6px; }
     ::-webkit-scrollbar-track { background: transparent; }
     ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
     ::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+
+    /* ── Utility ── */
+    .flex-center { display: flex; align-items: center; justify-content: center; }
+    .avatar-colors-0 { background: linear-gradient(135deg, #7c5cfc, #5c8afc); color: #fff; }
+    .avatar-colors-1 { background: linear-gradient(135deg, #f97316, #fbbf24); color: #fff; }
+    .avatar-colors-2 { background: linear-gradient(135deg, #ec4899, #f43f5e); color: #fff; }
+    .avatar-colors-3 { background: linear-gradient(135deg, #10b981, #34d399); color: #fff; }
+    .avatar-colors-4 { background: linear-gradient(135deg, #3b82f6, #60a5fa); color: #fff; }
+    .avatar-colors-5 { background: linear-gradient(135deg, #8b5cf6, #a78bfa); color: #fff; }
   </style>
 </head>
 <body>
@@ -424,113 +967,300 @@
   <!-- Top bar -->
   <nav class="topbar">
     <div class="topbar-brand">
-      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/>
-      </svg>
-      Pre-Call Intelligence Engine
+      <div class="brand-icon">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
+        </svg>
+      </div>
+      Pre-Call Intelligence
     </div>
-    <div class="topbar-status" id="healthStatus">
-      <span><span class="status-dot" id="healthDot"></span> <span id="healthText">Checking...</span></span>
-      <span id="dbBadge" style="display:none"></span>
+
+    <div class="topbar-nav">
+      <button class="nav-tab active" onclick="showPage('home')" id="navHome">Home</button>
+      <button class="nav-tab" onclick="showPage('profiles')" id="navProfiles">
+        Profiles
+        <span class="badge" id="profilesBadge" style="display:none">0</span>
+      </button>
+      <button class="nav-tab" onclick="showPage('generate')" id="navGenerate">Generate Brief</button>
+    </div>
+
+    <div class="topbar-right">
+      <div class="topbar-status" id="healthStatus">
+        <span class="status-dot" id="healthDot"></span>
+        <span id="healthText">Connecting...</span>
+      </div>
     </div>
   </nav>
 
-  <!-- Main layout -->
-  <div class="layout">
+  <!-- ═══════════════════ HOME PAGE ═══════════════════ -->
+  <div class="page-view active" id="pageHome">
+    <div class="container">
 
-    <!-- Sidebar -->
-    <aside class="sidebar">
-      <div class="sidebar-section">
-        <div class="section-title">Generate Brief</div>
+      <div class="welcome-hero">
+        <h1>Welcome to <span class="gradient-text">Pre-Call Intelligence</span></h1>
+        <p>Automatically analyze your Fireflies transcripts to build rich contact profiles and generate decision-grade pre-call briefs.</p>
+      </div>
 
-        <form id="briefForm" onsubmit="return false;">
-          <div class="form-group">
-            <label for="person">Person</label>
-            <input type="text" id="person" placeholder="e.g. Jane Doe" autocomplete="off" />
-          </div>
-          <div class="form-group">
-            <label for="company">Company</label>
-            <input type="text" id="company" placeholder="e.g. Acme Corp" autocomplete="off" />
-          </div>
-          <div class="form-group">
-            <label for="topic">Topic</label>
-            <input type="text" id="topic" placeholder="e.g. Q1 Pipeline Review" autocomplete="off" />
-          </div>
-          <div class="form-group">
-            <label for="meetingWhen">Meeting Date/Time</label>
-            <input type="datetime-local" id="meetingWhen" />
-          </div>
-          <div class="form-group">
-            <div class="toggle-row">
-              <label for="skipIngestion" style="font-size:13px;color:var(--text-secondary)">Skip live ingestion</label>
-              <label class="toggle">
-                <input type="checkbox" id="skipIngestion" />
-                <span class="toggle-slider"></span>
-              </label>
+      <!-- Stats -->
+      <div class="stats-grid" id="statsGrid">
+        <div class="stat-card">
+          <div class="stat-card-header">
+            <div class="stat-card-icon purple">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
             </div>
           </div>
-          <button class="btn-generate" id="generateBtn" onclick="generateBrief()">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
-            Generate Brief
-          </button>
-        </form>
-      </div>
-
-      <div class="sidebar-section" style="flex:1;overflow-y:auto">
-        <div class="section-title">Recent Briefs</div>
-        <ul class="recent-list" id="recentList">
-          <li class="empty-state">Loading...</li>
-        </ul>
-      </div>
-    </aside>
-
-    <!-- Main content -->
-    <main class="main-panel" id="mainPanel">
-      <div id="briefToolbar" class="brief-toolbar" style="display:none">
-        <div class="tab-bar">
-          <button class="tab-btn active" onclick="switchView('rendered')" id="tabRendered">Rendered</button>
-          <button class="tab-btn" onclick="switchView('json')" id="tabJson">JSON</button>
+          <div class="stat-card-value" id="statProfiles">--</div>
+          <div class="stat-card-label">Contact Profiles</div>
         </div>
-        <div class="brief-toolbar-actions">
-          <button class="btn-toolbar" onclick="copyBrief()">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-            Copy
-          </button>
-          <button class="btn-toolbar" onclick="downloadBrief()">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-            Download
-          </button>
+        <div class="stat-card">
+          <div class="stat-card-header">
+            <div class="stat-card-icon green">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+            </div>
+          </div>
+          <div class="stat-card-value" id="statTranscripts">--</div>
+          <div class="stat-card-label">Transcripts Synced</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-card-header">
+            <div class="stat-card-icon blue">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+            </div>
+          </div>
+          <div class="stat-card-value" id="statBriefs">--</div>
+          <div class="stat-card-label">Briefs Generated</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-card-header">
+            <div class="stat-card-icon amber">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+            </div>
+          </div>
+          <div class="stat-card-value" id="statLastSync">--</div>
+          <div class="stat-card-label">Last Sync</div>
         </div>
       </div>
 
-      <!-- Empty state -->
-      <div class="brief-content empty" id="emptyState">
-        <div class="empty-icon">
-          <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/>
-          </svg>
+      <!-- Auto-sync Banner -->
+      <div class="sync-banner">
+        <div class="sync-banner-left">
+          <div class="sync-indicator" id="syncIndicator">
+            <div class="pulse"></div>
+            <span id="syncStatusText">Auto-sync active</span>
+          </div>
+          <div class="sync-meta" id="syncMeta">Profiles update automatically from Fireflies transcripts</div>
         </div>
-        <div class="empty-title">No brief loaded</div>
-        <div class="empty-subtitle">Fill in a person or company on the left and hit Generate to create a pre-call intelligence brief.</div>
+        <button class="btn-sync" id="syncNowBtn" onclick="triggerSync()">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+          Sync Now
+        </button>
       </div>
 
-      <!-- Confidence meter (hidden initially) -->
-      <div id="confidenceMeter" class="confidence-meter" style="display:none">
-        <div>
-          <div class="meter-caption">Confidence</div>
+      <!-- Connected Services -->
+      <div class="services-section">
+        <div class="section-heading">Connected Services</div>
+        <div class="services-grid" id="servicesGrid">
+          <div class="service-card">
+            <div class="service-icon fireflies">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="white" stroke="none"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>
+            </div>
+            <div class="service-info">
+              <div class="service-name">Fireflies.ai</div>
+              <div class="service-status" id="svcFireflies">Checking...</div>
+            </div>
+          </div>
+          <div class="service-card">
+            <div class="service-icon gmail">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
+            </div>
+            <div class="service-info">
+              <div class="service-name">Gmail</div>
+              <div class="service-status" id="svcGmail">Checking...</div>
+            </div>
+          </div>
+          <div class="service-card">
+            <div class="service-icon openai">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"/></svg>
+            </div>
+            <div class="service-info">
+              <div class="service-name">OpenAI</div>
+              <div class="service-status" id="svcOpenAI">Checking...</div>
+            </div>
+          </div>
+          <div class="service-card">
+            <div class="service-icon database">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
+            </div>
+            <div class="service-info">
+              <div class="service-name" id="svcDbName">Database</div>
+              <div class="service-status" id="svcDatabase">Checking...</div>
+            </div>
+          </div>
         </div>
-        <div class="meter-bar">
-          <div class="meter-fill" id="meterFill" style="width:0%"></div>
-        </div>
-        <div class="meter-label" id="meterLabel">0%</div>
       </div>
 
-      <!-- Brief rendered view -->
-      <div class="brief-content md-render" id="renderedView" style="display:none"></div>
+      <!-- Quick Actions -->
+      <div class="section-heading">Quick Actions</div>
+      <div class="quick-actions">
+        <div class="action-card" onclick="showPage('generate')">
+          <div class="action-card-icon" style="background: var(--accent-glow);">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+          </div>
+          <h3>Generate Brief</h3>
+          <p>Create a decision-grade pre-call intelligence brief for an upcoming meeting.</p>
+        </div>
+        <div class="action-card" onclick="showPage('profiles')">
+          <div class="action-card-icon" style="background: var(--success-bg);">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--success)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+          </div>
+          <h3>View Profiles</h3>
+          <p>Browse auto-generated contact profiles built from your meeting transcripts.</p>
+        </div>
+        <div class="action-card" onclick="triggerSync()">
+          <div class="action-card-icon" style="background: var(--info-bg);">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--info)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+          </div>
+          <h3>Sync Transcripts</h3>
+          <p>Pull the latest Fireflies transcripts and automatically update all contact profiles.</p>
+        </div>
+      </div>
 
-      <!-- Brief JSON view -->
-      <div class="brief-content json-render" id="jsonView" style="display:none"></div>
-    </main>
+    </div>
+  </div>
+
+  <!-- ═══════════════════ PROFILES PAGE ═══════════════════ -->
+  <div class="page-view" id="pageProfiles">
+    <div class="container">
+      <div class="profiles-header">
+        <h2>Contact Profiles</h2>
+        <div class="search-box">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          <input type="text" placeholder="Search profiles..." id="profileSearch" oninput="filterProfiles()" />
+        </div>
+      </div>
+      <div class="profiles-grid" id="profilesGrid">
+        <div class="empty-state" style="grid-column: 1/-1; padding: 80px 16px;">
+          <div style="margin-bottom: 12px; opacity: 0.3;">
+            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+          </div>
+          <div class="empty-title">No profiles yet</div>
+          <div class="empty-subtitle">Click "Sync Now" on the Home page to pull transcripts from Fireflies and auto-build contact profiles.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════ GENERATE BRIEF PAGE ═══════════════════ -->
+  <div class="page-view" id="pageGenerate">
+    <div class="container">
+      <div class="brief-page-layout">
+
+        <!-- Sidebar -->
+        <div class="brief-sidebar">
+          <div class="card">
+            <div class="card-header">Generate Brief</div>
+            <div class="card-body">
+              <form id="briefForm" onsubmit="return false;">
+                <div class="form-group">
+                  <label for="person">Person</label>
+                  <input type="text" id="person" placeholder="e.g. Jane Doe" autocomplete="off" />
+                </div>
+                <div class="form-group">
+                  <label for="company">Company</label>
+                  <input type="text" id="company" placeholder="e.g. Acme Corp" autocomplete="off" />
+                </div>
+                <div class="form-group">
+                  <label for="topic">Topic</label>
+                  <input type="text" id="topic" placeholder="e.g. Q1 Pipeline Review" autocomplete="off" />
+                </div>
+                <div class="form-group">
+                  <label for="meetingWhen">Meeting Date/Time</label>
+                  <input type="datetime-local" id="meetingWhen" />
+                </div>
+                <div class="form-group">
+                  <div class="toggle-row">
+                    <label for="skipIngestion" style="font-size:13px;color:var(--text-secondary)">Skip live ingestion</label>
+                    <label class="toggle">
+                      <input type="checkbox" id="skipIngestion" />
+                      <span class="toggle-slider"></span>
+                    </label>
+                  </div>
+                </div>
+                <button class="btn-generate" id="generateBtn" onclick="generateBrief()">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+                  Generate Brief
+                </button>
+              </form>
+            </div>
+          </div>
+
+          <div class="card" style="flex:1; overflow-y: auto;">
+            <div class="card-header">Recent Briefs</div>
+            <div class="card-body" style="padding: 12px;">
+              <ul class="recent-list" id="recentList">
+                <li class="empty-state">Loading...</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+
+        <!-- Main content -->
+        <div class="brief-main">
+          <div id="briefToolbar" class="brief-toolbar" style="display:none">
+            <div class="tab-bar">
+              <button class="tab-btn active" onclick="switchView('rendered')" id="tabRendered">Rendered</button>
+              <button class="tab-btn" onclick="switchView('json')" id="tabJson">JSON</button>
+            </div>
+            <div class="brief-toolbar-actions">
+              <button class="btn-toolbar" onclick="copyBrief()">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                Copy
+              </button>
+              <button class="btn-toolbar" onclick="downloadBrief()">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                Download
+              </button>
+            </div>
+          </div>
+
+          <!-- Empty state -->
+          <div class="brief-content empty" id="emptyState">
+            <div class="empty-icon">
+              <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/>
+              </svg>
+            </div>
+            <div class="empty-title">No brief loaded</div>
+            <div class="empty-subtitle">Fill in a person or company on the left and hit Generate to create a pre-call intelligence brief.</div>
+          </div>
+
+          <!-- Confidence meter (hidden) -->
+          <div id="confidenceMeter" class="confidence-meter" style="display:none">
+            <div><div class="meter-caption">Confidence</div></div>
+            <div class="meter-bar"><div class="meter-fill" id="meterFill" style="width:0%"></div></div>
+            <div class="meter-label" id="meterLabel">0%</div>
+          </div>
+
+          <!-- Brief views -->
+          <div class="brief-content md-render" id="renderedView" style="display:none"></div>
+          <div class="brief-content json-render" id="jsonView" style="display:none"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════ PROFILE DETAIL MODAL ═══════════════════ -->
+  <div class="modal-overlay" id="profileModal">
+    <div class="modal">
+      <div class="modal-header">
+        <h3 id="modalProfileName">Profile</h3>
+        <button class="modal-close" onclick="closeProfileModal()">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      <div class="modal-body" id="modalProfileBody">
+      </div>
+    </div>
   </div>
 
   <!-- Toast -->
@@ -538,19 +1268,20 @@
 
   <script>
     // ── State ──
-    let currentBrief = null;   // raw JSON response
+    let currentBrief = null;
     let currentMarkdown = '';
     let currentView = 'rendered';
-    const API_BASE = '';  // same origin
+    let allProfiles = [];
+    const API_BASE = '';
 
     // ── Helpers ──
     function $(id) { return document.getElementById(id); }
 
-    function showToast(msg, duration = 4000) {
+    function showToast(msg, type = 'error', duration = 4000) {
       const t = $('toast');
       t.textContent = msg;
-      t.classList.add('visible');
-      setTimeout(() => t.classList.remove('visible'), duration);
+      t.className = 'toast visible' + (type === 'success' ? ' success' : '');
+      setTimeout(() => t.className = 'toast', duration);
     }
 
     function confidenceClass(score) {
@@ -571,21 +1302,55 @@
       return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
     }
 
+    function formatRelative(iso) {
+      if (!iso) return 'Never';
+      const d = new Date(iso);
+      const now = new Date();
+      const diff = now - d;
+      const mins = Math.floor(diff / 60000);
+      if (mins < 1) return 'Just now';
+      if (mins < 60) return mins + 'm ago';
+      const hrs = Math.floor(mins / 60);
+      if (hrs < 24) return hrs + 'h ago';
+      const days = Math.floor(hrs / 24);
+      if (days < 7) return days + 'd ago';
+      return formatDate(iso);
+    }
+
+    function getInitials(name) {
+      if (!name) return '?';
+      return name.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2);
+    }
+
+    function avatarClass(name) {
+      if (!name) return 'avatar-colors-0';
+      let hash = 0;
+      for (let i = 0; i < name.length; i++) hash = name.charCodeAt(i) + ((hash << 5) - hash);
+      return 'avatar-colors-' + (Math.abs(hash) % 6);
+    }
+
     function syntaxHighlight(json) {
       if (typeof json !== 'string') json = JSON.stringify(json, null, 2);
       return json.replace(/("(\\u[a-fA-F0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g,
         function (match) {
           let cls = 'number';
-          if (/^"/.test(match)) {
-            cls = /:$/.test(match) ? 'key' : 'string';
-          } else if (/true|false/.test(match)) {
-            cls = 'boolean';
-          } else if (/null/.test(match)) {
-            cls = 'null';
-          }
+          if (/^"/.test(match)) cls = /:$/.test(match) ? 'key' : 'string';
+          else if (/true|false/.test(match)) cls = 'boolean';
+          else if (/null/.test(match)) cls = 'null';
           return '<span class="' + cls + '">' + match + '</span>';
         }
       );
+    }
+
+    // ── Navigation ──
+    function showPage(page) {
+      document.querySelectorAll('.page-view').forEach(v => v.classList.remove('active'));
+      document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
+      $('page' + page.charAt(0).toUpperCase() + page.slice(1)).classList.add('active');
+      $('nav' + page.charAt(0).toUpperCase() + page.slice(1)).classList.add('active');
+
+      if (page === 'profiles') loadProfiles();
+      if (page === 'generate') loadRecent();
     }
 
     // ── Health check ──
@@ -593,25 +1358,207 @@
       try {
         const res = await fetch(API_BASE + '/health');
         const data = await res.json();
-        const dot = $('healthDot');
-        const text = $('healthText');
-        const dbBadge = $('dbBadge');
 
-        if (data.status === 'ok') {
-          dot.className = 'status-dot ok';
-          text.textContent = 'Online';
+        $('healthDot').className = 'status-dot ' + (data.status === 'ok' ? 'ok' : 'warn');
+        $('healthText').textContent = data.status === 'ok' ? 'Online' : 'Degraded';
+
+        // Services
+        $('svcFireflies').textContent = data.fireflies_configured ? 'Connected' : 'Not configured';
+        $('svcFireflies').className = 'service-status ' + (data.fireflies_configured ? 'connected' : 'disconnected');
+
+        $('svcGmail').textContent = data.gmail_configured ? 'Connected' : 'Not configured';
+        $('svcGmail').className = 'service-status ' + (data.gmail_configured ? 'connected' : 'disconnected');
+
+        $('svcOpenAI').textContent = data.openai_configured ? 'Connected' : 'Not configured';
+        $('svcOpenAI').className = 'service-status ' + (data.openai_configured ? 'connected' : 'disconnected');
+
+        const dbLabel = data.database === 'postgres' ? 'PostgreSQL' : 'SQLite';
+        $('svcDbName').textContent = dbLabel;
+        $('svcDatabase').textContent = 'Connected';
+        $('svcDatabase').className = 'service-status connected';
+
+        // Sync indicator
+        if (data.fireflies_configured) {
+          $('syncIndicator').classList.remove('inactive');
+          $('syncStatusText').textContent = 'Auto-sync active';
         } else {
-          dot.className = 'status-dot warn';
-          text.textContent = 'Degraded';
+          $('syncIndicator').classList.add('inactive');
+          $('syncStatusText').textContent = 'Auto-sync inactive';
+          $('syncMeta').textContent = 'Configure Fireflies API key to enable auto-sync';
         }
-
-        dbBadge.style.display = 'inline';
-        dbBadge.textContent = data.database === 'postgres' ? 'PostgreSQL' : 'SQLite';
       } catch (e) {
         $('healthDot').className = 'status-dot err';
         $('healthText').textContent = 'Offline';
       }
     }
+
+    // ── Dashboard Stats ──
+    async function loadStats() {
+      try {
+        const res = await fetch(API_BASE + '/stats');
+        if (!res.ok) return;
+        const data = await res.json();
+        $('statProfiles').textContent = data.profiles || 0;
+        $('statTranscripts').textContent = data.transcripts || 0;
+        $('statBriefs').textContent = data.briefs || 0;
+        $('statLastSync').textContent = data.last_sync ? formatRelative(data.last_sync) : 'Never';
+
+        if (data.profiles > 0) {
+          $('profilesBadge').style.display = 'inline-flex';
+          $('profilesBadge').textContent = data.profiles;
+        }
+      } catch (e) {}
+    }
+
+    // ── Auto-sync / Trigger sync ──
+    async function triggerSync() {
+      const btn = $('syncNowBtn');
+      btn.disabled = true;
+      btn.innerHTML = '<span class="spinner-sm"></span> Syncing...';
+
+      try {
+        const res = await fetch(API_BASE + '/sync', { method: 'POST' });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({ detail: 'Sync failed' }));
+          throw new Error(err.detail);
+        }
+        const data = await res.json();
+        showToast(`Synced ${data.transcripts_synced} transcripts, ${data.profiles_updated} profiles updated`, 'success');
+        loadStats();
+        loadProfiles();
+      } catch (e) {
+        showToast(e.message);
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg> Sync Now`;
+      }
+    }
+
+    // ── Profiles ──
+    async function loadProfiles() {
+      try {
+        const res = await fetch(API_BASE + '/profiles');
+        if (!res.ok) return;
+        allProfiles = await res.json();
+        renderProfiles(allProfiles);
+      } catch (e) {}
+    }
+
+    function renderProfiles(profiles) {
+      const grid = $('profilesGrid');
+      if (!profiles.length) {
+        grid.innerHTML = `
+          <div class="empty-state" style="grid-column: 1/-1; padding: 80px 16px;">
+            <div style="margin-bottom: 12px; opacity: 0.3;">
+              <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>
+            </div>
+            <div class="empty-title">No profiles yet</div>
+            <div class="empty-subtitle">Click "Sync Now" to pull transcripts from Fireflies and auto-build contact profiles.</div>
+          </div>`;
+        return;
+      }
+
+      grid.innerHTML = profiles.map((p, i) => {
+        const health = p.relationship_health || 'neutral';
+        const healthLabel = health.charAt(0).toUpperCase() + health.slice(1);
+        const healthClass = health === 'active' || health === 'warm' ? 'health-good' :
+                           health === 'cold' ? 'health-cold' : 'health-neutral';
+        return `
+        <div class="profile-card" onclick="openProfileModal(${i})">
+          <div class="profile-card-top">
+            <div class="profile-avatar ${avatarClass(p.name)}">${getInitials(p.name)}</div>
+            <div class="profile-info">
+              <div class="profile-name">${p.name}</div>
+              <div class="profile-company">${p.company || p.email || 'Unknown'}</div>
+            </div>
+          </div>
+          <div class="profile-tags">
+            <span class="profile-tag meetings">${p.meeting_count || 0} meetings</span>
+            ${p.email_count ? '<span class="profile-tag emails">' + p.email_count + ' emails</span>' : ''}
+            <span class="profile-tag ${healthClass}">${healthLabel}</span>
+          </div>
+          <div class="profile-stats">
+            <div class="profile-stat">
+              <div class="profile-stat-value">${formatRelative(p.last_interaction)}</div>
+              <div class="profile-stat-label">Last Contact</div>
+            </div>
+            <div class="profile-stat">
+              <div class="profile-stat-value">${p.action_items_count || 0}</div>
+              <div class="profile-stat-label">Open Items</div>
+            </div>
+          </div>
+        </div>`;
+      }).join('');
+    }
+
+    function filterProfiles() {
+      const q = $('profileSearch').value.toLowerCase();
+      if (!q) return renderProfiles(allProfiles);
+      renderProfiles(allProfiles.filter(p =>
+        (p.name || '').toLowerCase().includes(q) ||
+        (p.company || '').toLowerCase().includes(q) ||
+        (p.email || '').toLowerCase().includes(q)
+      ));
+    }
+
+    function openProfileModal(index) {
+      const p = allProfiles[index];
+      if (!p) return;
+      $('modalProfileName').textContent = p.name;
+
+      let html = `
+        <div class="modal-section">
+          <div style="display:flex;align-items:center;gap:16px;margin-bottom:20px">
+            <div class="profile-avatar ${avatarClass(p.name)}" style="width:56px;height:56px;font-size:22px">${getInitials(p.name)}</div>
+            <div>
+              <div style="font-size:20px;font-weight:700">${p.name}</div>
+              <div style="color:var(--text-secondary)">${p.company || ''}</div>
+              ${p.email ? '<div style="color:var(--text-muted);font-size:13px">' + p.email + '</div>' : ''}
+            </div>
+          </div>
+        </div>`;
+
+      if (p.interactions && p.interactions.length) {
+        html += `<div class="modal-section"><h4>Recent Interactions</h4>`;
+        p.interactions.slice(0, 10).forEach(int => {
+          html += `
+            <div class="interaction-item">
+              <div class="interaction-item-title">${int.title || 'Meeting'}</div>
+              <div class="interaction-item-meta">${formatDate(int.date)} ${int.participants ? '&middot; ' + int.participants.join(', ') : ''}</div>
+              ${int.summary ? '<div class="interaction-item-summary">' + int.summary + '</div>' : ''}
+            </div>`;
+        });
+        html += '</div>';
+      }
+
+      if (p.action_items && p.action_items.length) {
+        html += `<div class="modal-section"><h4>Open Action Items</h4>`;
+        p.action_items.forEach(item => {
+          html += `<div class="interaction-item"><div class="interaction-item-title">${item}</div></div>`;
+        });
+        html += '</div>';
+      }
+
+      html += `
+        <div style="padding-top:16px;border-top:1px solid var(--border);">
+          <button class="btn-generate" onclick="closeProfileModal(); $('person').value='${p.name.replace(/'/g, "\\'")}'; ${p.company ? "$('company').value='" + p.company.replace(/'/g, "\\'") + "';" : ''} showPage('generate');">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+            Generate Brief for ${p.name.split(' ')[0]}
+          </button>
+        </div>`;
+
+      $('modalProfileBody').innerHTML = html;
+      $('profileModal').classList.add('visible');
+    }
+
+    function closeProfileModal() {
+      $('profileModal').classList.remove('visible');
+    }
+
+    // Close modal on overlay click
+    $('profileModal').addEventListener('click', e => {
+      if (e.target === $('profileModal')) closeProfileModal();
+    });
 
     // ── Recent briefs ──
     async function loadRecent() {
@@ -621,7 +1568,7 @@
         const list = $('recentList');
 
         if (!data.length) {
-          list.innerHTML = '<li class="empty-state">No briefs generated yet. Create your first brief above.</li>';
+          list.innerHTML = '<li class="empty-state">No briefs generated yet.</li>';
           return;
         }
 
@@ -636,7 +1583,6 @@
           </li>
         `).join('');
 
-        // stash the data for click-loading
         window._recentBriefs = data;
       } catch (e) {
         $('recentList').innerHTML = '<li class="empty-state">Could not load recent briefs.</li>';
@@ -646,11 +1592,8 @@
     function loadBriefFromRecent(index) {
       const b = window._recentBriefs[index];
       if (!b) return;
-
-      // mark active
       document.querySelectorAll('.recent-item').forEach(el => el.classList.remove('active'));
       document.querySelector(`[data-index="${index}"]`)?.classList.add('active');
-
       currentBrief = b.brief_json ? (typeof b.brief_json === 'string' ? JSON.parse(b.brief_json) : b.brief_json) : null;
       currentMarkdown = b.brief_markdown || '';
       displayBrief(b.confidence_score);
@@ -696,17 +1639,12 @@
         currentBrief = data.brief;
         currentMarkdown = data.markdown;
         displayBrief(data.confidence_score);
-
-        // refresh recent
         loadRecent();
-
       } catch (e) {
         showToast(e.message);
       } finally {
         btn.disabled = false;
-        btn.innerHTML = `
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
-          Generate Brief`;
+        btn.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg> Generate Brief`;
       }
     }
 
@@ -716,7 +1654,6 @@
       $('briefToolbar').style.display = 'flex';
       $('confidenceMeter').style.display = 'flex';
 
-      // confidence meter
       const pct = Math.round((confidenceScore || 0) * 100);
       const fill = $('meterFill');
       fill.style.width = pct + '%';
@@ -724,12 +1661,8 @@
       $('meterLabel').textContent = pct + '%';
       $('meterLabel').style.color = confidenceColor(confidenceScore || 0);
 
-      // rendered markdown
       $('renderedView').innerHTML = marked.parse(currentMarkdown || '*No markdown available*');
-
-      // JSON
       $('jsonView').innerHTML = currentBrief ? syntaxHighlight(currentBrief) : 'No JSON data';
-
       switchView(currentView);
     }
 
@@ -744,12 +1677,7 @@
     // ── Actions ──
     function copyBrief() {
       const text = currentView === 'rendered' ? currentMarkdown : JSON.stringify(currentBrief, null, 2);
-      navigator.clipboard.writeText(text).then(() => {
-        showToast('Copied to clipboard!');
-        const t = $('toast');
-        t.style.background = '#059669';
-        setTimeout(() => t.style.background = '', 3000);
-      });
+      navigator.clipboard.writeText(text).then(() => showToast('Copied to clipboard!', 'success'));
     }
 
     function downloadBrief() {
@@ -757,10 +1685,7 @@
       const content = isJson ? JSON.stringify(currentBrief, null, 2) : currentMarkdown;
       const ext = isJson ? 'json' : 'md';
       const mime = isJson ? 'application/json' : 'text/markdown';
-
-      const name = (currentBrief?.header?.person || currentBrief?.header?.company || 'brief')
-        .replace(/[^a-zA-Z0-9]/g, '_');
-
+      const name = (currentBrief?.header?.person || currentBrief?.header?.company || 'brief').replace(/[^a-zA-Z0-9]/g, '_');
       const blob = new Blob([content], { type: mime });
       const a = document.createElement('a');
       a.href = URL.createObjectURL(blob);
@@ -771,15 +1696,17 @@
 
     // ── Init ──
     checkHealth();
+    loadStats();
     loadRecent();
     setInterval(checkHealth, 30000);
+    setInterval(loadStats, 60000);
 
-    // Allow Enter key to submit from person/company fields
     ['person', 'company'].forEach(id => {
-      $(id).addEventListener('keydown', e => {
-        if (e.key === 'Enter') generateBrief();
-      });
+      $(id).addEventListener('keydown', e => { if (e.key === 'Enter') generateBrief(); });
     });
+
+    // Escape key closes modal
+    document.addEventListener('keydown', e => { if (e.key === 'Escape') closeProfileModal(); });
   </script>
 </body>
 </html>
