@@ -24,6 +24,7 @@ from app.config import settings, validate_config
 from app.models import BriefOutput
 from app.store.database import BriefLog, get_session, init_db
 from app.sync.auto_sync import (
+    _extract_next_steps,
     async_sync_fireflies,
     get_all_profiles,
     get_dashboard_stats,
@@ -138,7 +139,7 @@ def health_check():
         version="0.1.0",
         database="sqlite" if settings.is_sqlite else "postgres",
         fireflies_configured=bool(settings.fireflies_api_key),
-        gmail_configured=bool(settings.gmail_credentials_path),
+        gmail_configured=bool(settings.google_client_id and settings.google_refresh_token),
         openai_configured=bool(settings.openai_api_key),
         apollo_configured=bool(settings.apollo_api_key),
     )
@@ -228,50 +229,10 @@ def generate_brief_json(request: BriefRequest):
 # Sync & Profiles
 # ---------------------------------------------------------------------------
 
-@app.get("/debug/enrich", dependencies=[Depends(verify_api_key)])
-async def debug_enrich(email: str = Query(None), name: str = Query(None)):
-    """Test Apollo enrichment — shows raw API response for debugging."""
-    import httpx
-
-    if not settings.apollo_api_key:
-        return {"error": "APOLLO_API_KEY not configured"}
-
-    payload: dict = {
-        "reveal_personal_emails": False,
-        "reveal_phone_number": False,
-    }
-    if email:
-        payload["email"] = email
-    if name:
-        parts = name.split(None, 1)
-        payload["first_name"] = parts[0]
-        if len(parts) > 1:
-            payload["last_name"] = parts[1]
-    if email and "@" in email:
-        domain = email.split("@")[1]
-        payload["domain"] = domain
-
-    headers = {
-        "x-api-key": settings.apollo_api_key,
-        "Content-Type": "application/json",
-        "Cache-Control": "no-cache",
-    }
-
-    try:
-        async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.post(
-                "https://api.apollo.io/api/v1/people/match",
-                json=payload,
-                headers=headers,
-            )
-            return {
-                "input": payload,
-                "api_key_prefix": settings.apollo_api_key[:8] + "...",
-                "status_code": resp.status_code,
-                "response_body": resp.json() if resp.status_code == 200 else resp.text[:500],
-            }
-    except Exception as e:
-        return {"error": str(e)}
+@app.get("/next-steps", dependencies=[Depends(verify_api_key)])
+def get_next_steps():
+    """Return extracted next steps from recent scheduling emails and profile data."""
+    return _extract_next_steps()
 
 
 @app.post("/sync", dependencies=[Depends(verify_api_key)])
