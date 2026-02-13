@@ -292,45 +292,63 @@
     .service-status.connected { color: var(--success); }
     .service-status.disconnected { color: var(--text-muted); }
 
-    /* ── Quick Actions ── */
-    .quick-actions {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-      gap: 16px;
+    /* ── Next Steps ── */
+    .next-steps {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
       margin-bottom: 32px;
     }
-    .action-card {
+    .next-step-item {
+      display: flex;
+      align-items: center;
+      gap: 14px;
       background: var(--bg-card);
       border: 1px solid var(--border);
-      border-radius: var(--radius-lg);
-      padding: 28px;
+      border-radius: var(--radius-md);
+      padding: 14px 20px;
       cursor: pointer;
       transition: all 0.2s;
     }
-    .action-card:hover {
+    .next-step-item:hover {
       border-color: var(--accent);
       background: var(--bg-card-hover);
-      box-shadow: 0 0 0 1px var(--accent-glow), var(--shadow-md);
-      transform: translateY(-2px);
+      transform: translateX(4px);
     }
-    .action-card-icon {
-      width: 48px;
-      height: 48px;
-      border-radius: var(--radius-md);
+    .next-step-icon {
+      width: 36px;
+      height: 36px;
+      border-radius: var(--radius-sm);
       display: flex;
       align-items: center;
       justify-content: center;
-      margin-bottom: 16px;
+      flex-shrink: 0;
     }
-    .action-card h3 {
-      font-size: 16px;
+    .next-step-content { flex: 1; min-width: 0; }
+    .next-step-title {
+      font-size: 14px;
       font-weight: 600;
-      margin-bottom: 6px;
+      margin-bottom: 2px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
-    .action-card p {
-      font-size: 13px;
-      color: var(--text-secondary);
-      line-height: 1.5;
+    .next-step-meta {
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+    .next-step-badge {
+      font-size: 11px;
+      font-weight: 600;
+      padding: 3px 10px;
+      border-radius: 99px;
+      flex-shrink: 0;
+    }
+    .next-step-empty {
+      text-align: center;
+      padding: 32px 16px;
+      color: var(--text-muted);
+      font-size: 14px;
     }
 
     /* ── Auto-sync Banner ── */
@@ -952,6 +970,38 @@
     ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
     ::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
 
+    /* ── Contact Links ── */
+    .contact-links {
+      display: flex;
+      gap: 8px;
+      margin-top: 6px;
+    }
+    .contact-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 12px;
+      color: var(--accent-light);
+      text-decoration: none;
+      padding: 2px 8px;
+      border-radius: 99px;
+      background: var(--accent-glow);
+      transition: all 0.15s;
+    }
+    .contact-link:hover {
+      background: rgba(124, 92, 252, 0.25);
+      color: #fff;
+    }
+    .contact-link svg { flex-shrink: 0; }
+
+    /* ── Gravatar avatar ── */
+    .profile-avatar-img {
+      width: 100%;
+      height: 100%;
+      border-radius: 50%;
+      object-fit: cover;
+    }
+
     /* ── Utility ── */
     .flex-center { display: flex; align-items: center; justify-content: center; }
     .avatar-colors-0 { background: linear-gradient(135deg, #7c5cfc, #5c8afc); color: #fff; }
@@ -1099,30 +1149,10 @@
         </div>
       </div>
 
-      <!-- Quick Actions -->
-      <div class="section-heading">Quick Actions</div>
-      <div class="quick-actions">
-        <div class="action-card" onclick="showPage('generate')">
-          <div class="action-card-icon" style="background: var(--accent-glow);">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
-          </div>
-          <h3>Generate Brief</h3>
-          <p>Create a decision-grade pre-call intelligence brief for an upcoming meeting.</p>
-        </div>
-        <div class="action-card" onclick="showPage('profiles')">
-          <div class="action-card-icon" style="background: var(--success-bg);">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--success)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
-          </div>
-          <h3>View Profiles</h3>
-          <p>Browse auto-generated contact profiles built from your meeting transcripts.</p>
-        </div>
-        <div class="action-card" onclick="triggerSync()">
-          <div class="action-card-icon" style="background: var(--info-bg);">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--info)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
-          </div>
-          <h3>Sync Transcripts</h3>
-          <p>Pull the latest Fireflies transcripts and automatically update all contact profiles.</p>
-        </div>
+      <!-- Next Steps (dynamically populated from contact data) -->
+      <div class="section-heading">Next Steps</div>
+      <div class="next-steps" id="nextStepsContainer">
+        <div class="next-step-empty">Loading next steps...</div>
       </div>
 
     </div>
@@ -1329,6 +1359,43 @@
       return 'avatar-colors-' + (Math.abs(hash) % 6);
     }
 
+    // Minimal MD5 for Gravatar (standard implementation)
+    function md5(s){function L(k,d){return(k<<d)|(k>>>(32-d))}function K(G,k){var I,d,F,H,x;F=(G&2147483648);H=(k&2147483648);I=(G&1073741824);d=(k&1073741824);x=(G&1073741823)+(k&1073741823);if(I&d)return(x^2147483648^F^H);if(I|d){if(x&1073741824)return(x^3221225472^F^H);else return(x^1073741824^F^H)}else return(x^F^H)}function r(d,F,k){return(d&F)|((~d)&k)}function q(d,F,k){return(d&k)|(F&(~k))}function p(d,F,k){return(d^F^k)}function n(d,F,k){return(F^(d|(~k)))}function u(G,F,aa,Z,k,H,I){G=K(G,K(K(r(F,aa,Z),k),I));return K(L(G,H),F)}function f(G,F,aa,Z,k,H,I){G=K(G,K(K(q(F,aa,Z),k),I));return K(L(G,H),F)}function D(G,F,aa,Z,k,H,I){G=K(G,K(K(p(F,aa,Z),k),I));return K(L(G,H),F)}function t(G,F,aa,Z,k,H,I){G=K(G,K(K(n(F,aa,Z),k),I));return K(L(G,H),F)}function e(G){var Z;var F=G.length;var x=F+8;var k=(x-(x%64))/64;var I=(k+1)*16;var aa=Array(I-1);var d=0;var H=0;while(H<F){Z=(H-(H%4))/4;d=(H%4)*8;aa[Z]=(aa[Z]|(G.charCodeAt(H)<<d));H++}Z=(H-(H%4))/4;d=(H%4)*8;aa[Z]=aa[Z]|(128<<d);aa[I-2]=F<<3;aa[I-1]=F>>>29;return aa}function B(x){var k="",F="",G,d;for(d=0;d<=3;d++){G=(x>>>(d*8))&255;F="0"+G.toString(16);k=k+F.substr(F.length-2,2)}return k}var C=Array();var P,h,E,v,g,Y,X,W,V;var S=7,Q=12,N=17,M=22;var A=5,z=9,y=14,w=20;var o=4,m=11,l=16,j=23;var U=6,T=10,R=15,O=21;s=function(x){var k=[];for(var d=0;d<x.length;d++){var F=x.charCodeAt(d);if(F<128)k.push(F);else if(F<2048){k.push(192|F>>6);k.push(128|F&63)}else{k.push(224|F>>12);k.push(128|F>>6&63);k.push(128|F&63)}}return String.fromCharCode.apply(null,k)}(s);C=e(s);Y=1732584193;X=4023233417;W=2562383102;V=271733878;for(P=0;P<C.length;P+=16){h=Y;E=X;v=W;g=V;Y=u(Y,X,W,V,C[P+0],S,3614090360);V=u(V,Y,X,W,C[P+1],Q,3905402710);W=u(W,V,Y,X,C[P+2],N,606105819);X=u(X,W,V,Y,C[P+3],M,3250441966);Y=u(Y,X,W,V,C[P+4],S,4118548399);V=u(V,Y,X,W,C[P+5],Q,1200080426);W=u(W,V,Y,X,C[P+6],N,2821735955);X=u(X,W,V,Y,C[P+7],M,4249261313);Y=u(Y,X,W,V,C[P+8],S,1770035416);V=u(V,Y,X,W,C[P+9],Q,2336552879);W=u(W,V,Y,X,C[P+10],N,4294925233);X=u(X,W,V,Y,C[P+11],M,2304563134);Y=u(Y,X,W,V,C[P+12],S,1804603682);V=u(V,Y,X,W,C[P+13],Q,4254626195);W=u(W,V,Y,X,C[P+14],N,2792965006);X=u(X,W,V,Y,C[P+15],M,1236535329);Y=f(Y,X,W,V,C[P+1],A,4129170786);V=f(V,Y,X,W,C[P+6],z,3225465664);W=f(W,V,Y,X,C[P+11],y,643717713);X=f(X,W,V,Y,C[P+0],w,3921069994);Y=f(Y,X,W,V,C[P+5],A,3593408605);V=f(V,Y,X,W,C[P+10],z,38016083);W=f(W,V,Y,X,C[P+15],y,3634488961);X=f(X,W,V,Y,C[P+4],w,3889429448);Y=f(Y,X,W,V,C[P+9],A,568446438);V=f(V,Y,X,W,C[P+14],z,3275163606);W=f(W,V,Y,X,C[P+3],y,4107603335);X=f(X,W,V,Y,C[P+8],w,1163531501);Y=f(Y,X,W,V,C[P+13],A,2850285829);V=f(V,Y,X,W,C[P+2],z,4243563512);W=f(W,V,Y,X,C[P+7],y,1735328473);X=f(X,W,V,Y,C[P+12],w,2368359562);Y=D(Y,X,W,V,C[P+5],o,4294588738);V=D(V,Y,X,W,C[P+8],m,2272392833);W=D(W,V,Y,X,C[P+11],l,1839030562);X=D(X,W,V,Y,C[P+14],j,4259657740);Y=D(Y,X,W,V,C[P+1],o,2763975236);V=D(V,Y,X,W,C[P+4],m,1272893353);W=D(W,V,Y,X,C[P+7],l,4139469664);X=D(X,W,V,Y,C[P+10],j,3200236656);Y=D(Y,X,W,V,C[P+13],o,681279174);V=D(V,Y,X,W,C[P+0],m,3936430074);W=D(W,V,Y,X,C[P+3],l,3572445317);X=D(X,W,V,Y,C[P+6],j,76029189);Y=D(Y,X,W,V,C[P+9],o,3654602809);V=D(V,Y,X,W,C[P+12],m,3873151461);W=D(W,V,Y,X,C[P+15],l,530742520);X=D(X,W,V,Y,C[P+2],j,3299628645);Y=t(Y,X,W,V,C[P+0],U,4096336452);V=t(V,Y,X,W,C[P+7],T,1126891415);W=t(W,V,Y,X,C[P+14],R,2878612391);X=t(X,W,V,Y,C[P+5],O,4237533241);Y=t(Y,X,W,V,C[P+12],U,1700485571);V=t(V,Y,X,W,C[P+3],T,2399980690);W=t(W,V,Y,X,C[P+10],R,4293915773);X=t(X,W,V,Y,C[P+1],O,2240044497);Y=t(Y,X,W,V,C[P+8],U,1873313359);V=t(V,Y,X,W,C[P+15],T,4264355552);W=t(W,V,Y,X,C[P+6],R,2734768916);X=t(X,W,V,Y,C[P+13],O,1309151649);Y=t(Y,X,W,V,C[P+4],U,4149444226);V=t(V,Y,X,W,C[P+11],T,3174756917);W=t(W,V,Y,X,C[P+2],R,718787259);X=t(X,W,V,Y,C[P+9],O,3951481745);Y=K(Y,h);X=K(X,E);W=K(W,v);V=K(V,g)}return(B(Y)+B(X)+B(W)+B(V)).toLowerCase()}
+
+    function getGravatarUrl(email, size) {
+      if (!email) return null;
+      const hash = md5(email.trim().toLowerCase());
+      return 'https://www.gravatar.com/avatar/' + hash + '?s=' + (size || 80) + '&d=404';
+    }
+
+    function avatarHtml(name, email, size) {
+      size = size || 40;
+      const gravatarUrl = getGravatarUrl(email, size * 2);
+      const initials = getInitials(name);
+      const colorCls = avatarClass(name);
+      if (gravatarUrl) {
+        return `<div class="profile-avatar ${colorCls}" style="width:${size}px;height:${size}px;font-size:${Math.round(size*0.4)}px">
+          <img class="profile-avatar-img" src="${gravatarUrl}" alt="" onerror="this.remove()">${initials}</div>`;
+      }
+      return `<div class="profile-avatar ${colorCls}" style="width:${size}px;height:${size}px;font-size:${Math.round(size*0.4)}px">${initials}</div>`;
+    }
+
+    function contactLinksHtml(email, name, company) {
+      let html = '';
+      if (email) {
+        html += `<a class="contact-link" href="mailto:${email}" onclick="event.stopPropagation()" title="Send email">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>
+          Email</a>`;
+      }
+      const q = encodeURIComponent([name, company].filter(Boolean).join(' '));
+      if (name) {
+        html += `<a class="contact-link" href="https://www.linkedin.com/search/results/all/?keywords=${q}" target="_blank" rel="noopener" onclick="event.stopPropagation()" title="Search on LinkedIn">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M20.5 2h-17A1.5 1.5 0 002 3.5v17A1.5 1.5 0 003.5 22h17a1.5 1.5 0 001.5-1.5v-17A1.5 1.5 0 0020.5 2zM8 19H5v-9h3zM6.5 8.25A1.75 1.75 0 118.3 6.5a1.78 1.78 0 01-1.8 1.75zM19 19h-3v-4.74c0-1.42-.6-1.93-1.38-1.93A1.74 1.74 0 0013 14.19V19h-3v-9h2.9v1.3a3.11 3.11 0 012.7-1.4c1.55 0 3.36.86 3.36 3.66z"/></svg>
+          LinkedIn</a>`;
+      }
+      return html ? '<div class="contact-links">' + html + '</div>' : '';
+    }
+
     function syntaxHighlight(json) {
       if (typeof json !== 'string') json = JSON.stringify(json, null, 2);
       return json.replace(/("(\\u[a-fA-F0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g,
@@ -1410,6 +1477,110 @@
       } catch (e) {}
     }
 
+    // ── Smart Next Steps ──
+    async function loadNextSteps() {
+      const container = $('nextStepsContainer');
+      try {
+        const res = await fetch(API_BASE + '/profiles');
+        if (!res.ok) throw new Error();
+        const profiles = await res.json();
+        if (!profiles.length) {
+          container.innerHTML = `
+            <div class="next-step-item" onclick="triggerSync()">
+              <div class="next-step-icon" style="background:var(--info-bg)">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--info)" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+              </div>
+              <div class="next-step-content">
+                <div class="next-step-title">Sync your first transcripts</div>
+                <div class="next-step-meta">Pull meetings from Fireflies to build contact profiles</div>
+              </div>
+            </div>`;
+          return;
+        }
+
+        const steps = [];
+
+        // 1. Cold contacts to re-engage (haven't spoken in 30+ days)
+        const cold = profiles.filter(p => p.relationship_health === 'cold').slice(0, 2);
+        cold.forEach(p => {
+          steps.push({
+            icon: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--danger)" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>`,
+            iconBg: 'var(--danger-bg)',
+            title: `Re-engage ${p.name}`,
+            meta: `${p.company ? p.company + ' \u00b7 ' : ''}Last contact ${formatRelative(p.last_interaction)}`,
+            badge: 'Cold',
+            badgeColor: 'var(--danger)',
+            badgeBg: 'var(--danger-bg)',
+            action: `showPage('profiles')`,
+            profile: p,
+          });
+        });
+
+        // 2. Contacts with open action items
+        const withItems = profiles.filter(p => (p.action_items_count || 0) > 0 && p.relationship_health !== 'cold').slice(0, 2);
+        withItems.forEach(p => {
+          steps.push({
+            icon: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--warning)" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>`,
+            iconBg: 'var(--warning-bg)',
+            title: `${p.action_items_count} open item${p.action_items_count > 1 ? 's' : ''} with ${p.name}`,
+            meta: p.action_items && p.action_items[0] ? p.action_items[0].substring(0, 60) + (p.action_items[0].length > 60 ? '...' : '') : '',
+            badge: 'Follow up',
+            badgeColor: 'var(--warning)',
+            badgeBg: 'var(--warning-bg)',
+            action: `showPage('profiles')`,
+            profile: p,
+          });
+        });
+
+        // 3. Active contacts ready for a brief
+        const active = profiles.filter(p => p.relationship_health === 'active' && (p.meeting_count || 0) >= 3).slice(0, 2);
+        active.forEach(p => {
+          steps.push({
+            icon: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>`,
+            iconBg: 'var(--accent-glow)',
+            title: `Prep brief for ${p.name}`,
+            meta: `${p.meeting_count} meetings${p.company ? ' \u00b7 ' + p.company : ''} \u00b7 Relationship: Active`,
+            badge: 'Ready',
+            badgeColor: 'var(--success)',
+            badgeBg: 'var(--success-bg)',
+            action: `$('person').value='${p.name.replace(/'/g, "\\'")}'; ${p.company ? "$('company').value='" + p.company.replace(/'/g, "\\'") + "';" : ''} showPage('generate')`,
+            profile: p,
+          });
+        });
+
+        // Limit to 5 total
+        const shown = steps.slice(0, 5);
+
+        if (!shown.length) {
+          container.innerHTML = `
+            <div class="next-step-item" onclick="showPage('generate')">
+              <div class="next-step-icon" style="background:var(--accent-glow)">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+              </div>
+              <div class="next-step-content">
+                <div class="next-step-title">Generate your first brief</div>
+                <div class="next-step-meta">All contacts are up to date. Pick someone and generate a pre-call brief.</div>
+              </div>
+            </div>`;
+          return;
+        }
+
+        container.innerHTML = shown.map(s => `
+          <div class="next-step-item" onclick="${s.action}">
+            <div class="next-step-icon" style="background:${s.iconBg}">${s.icon}</div>
+            <div class="next-step-content">
+              <div class="next-step-title">${s.title}</div>
+              <div class="next-step-meta">${s.meta}</div>
+            </div>
+            <span class="next-step-badge" style="color:${s.badgeColor};background:${s.badgeBg}">${s.badge}</span>
+          </div>
+        `).join('');
+
+      } catch (e) {
+        container.innerHTML = '<div class="next-step-empty">Could not load next steps</div>';
+      }
+    }
+
     // ── Auto-sync / Trigger sync ──
     async function triggerSync() {
       const btn = $('syncNowBtn');
@@ -1426,6 +1597,7 @@
         showToast(`Synced ${data.transcripts_synced} transcripts, ${data.profiles_updated} profiles updated`, 'success');
         loadStats();
         loadProfiles();
+        loadNextSteps();
       } catch (e) {
         showToast(e.message);
       } finally {
@@ -1466,10 +1638,11 @@
         return `
         <div class="profile-card" onclick="openProfileModal(${i})">
           <div class="profile-card-top">
-            <div class="profile-avatar ${avatarClass(p.name)}">${getInitials(p.name)}</div>
+            ${avatarHtml(p.name, p.email, 40)}
             <div class="profile-info">
               <div class="profile-name">${p.name}</div>
               <div class="profile-company">${p.company || p.email || 'Unknown'}</div>
+              ${contactLinksHtml(p.email, p.name, p.company)}
             </div>
           </div>
           <div class="profile-tags">
@@ -1509,11 +1682,12 @@
       let html = `
         <div class="modal-section">
           <div style="display:flex;align-items:center;gap:16px;margin-bottom:20px">
-            <div class="profile-avatar ${avatarClass(p.name)}" style="width:56px;height:56px;font-size:22px">${getInitials(p.name)}</div>
+            ${avatarHtml(p.name, p.email, 56)}
             <div>
               <div style="font-size:20px;font-weight:700">${p.name}</div>
               <div style="color:var(--text-secondary)">${p.company || ''}</div>
               ${p.email ? '<div style="color:var(--text-muted);font-size:13px">' + p.email + '</div>' : ''}
+              ${contactLinksHtml(p.email, p.name, p.company)}
             </div>
           </div>
         </div>`;
@@ -1697,6 +1871,7 @@
     // ── Init ──
     checkHealth();
     loadStats();
+    loadNextSteps();
     loadRecent();
     setInterval(checkHealth, 30000);
     setInterval(loadStats, 60000);
