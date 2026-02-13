@@ -61,7 +61,7 @@ class TestPersonResolution:
         result1 = resolve_person("Carol White", email="carol@corp.com")
         # Look up by email on different name
         session = get_session("sqlite:///./test_briefing_engine.db")
-        entity = session.query(EntityRecord).get(result1.entity_id)
+        entity = session.get(EntityRecord, result1.entity_id)
         assert entity is not None
         assert "carol@corp.com" in entity.get_emails()
         session.close()

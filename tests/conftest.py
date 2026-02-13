@@ -13,6 +13,7 @@ import pytest
 os.environ["DATABASE_URL"] = "sqlite:///./test_briefing_engine.db"
 os.environ["OPENAI_API_KEY"] = ""
 os.environ["FIREFLIES_API_KEY"] = ""
+os.environ["BRIEFING_API_KEY"] = ""  # disable auth for tests
 
 from app.store.database import Base, EntityRecord, SourceRecord, get_engine, get_session, init_db
 
