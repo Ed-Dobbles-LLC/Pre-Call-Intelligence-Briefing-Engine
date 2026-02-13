@@ -7,13 +7,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Python deps
+# Copy application code first (needed for pip install .)
 COPY pyproject.toml .
-RUN pip install --no-cache-dir . uvicorn[standard] fastapi
-
-# Copy application code
 COPY app/ app/
 COPY migrations/ migrations/
+
+# Python deps
+RUN pip install --no-cache-dir . uvicorn[standard] fastapi
 
 # Create output directory
 RUN mkdir -p /app/out
