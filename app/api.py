@@ -230,39 +230,48 @@ def generate_brief_json(request: BriefRequest):
 
 @app.get("/debug/enrich", dependencies=[Depends(verify_api_key)])
 async def debug_enrich(email: str = Query(None), name: str = Query(None)):
-    """Test Apollo enrichment for a single contact. Returns raw result."""
-    from app.clients.apollo import ApolloClient, normalize_enrichment
+    """Test Apollo enrichment — shows raw API response for debugging."""
+    import httpx
 
     if not settings.apollo_api_key:
         return {"error": "APOLLO_API_KEY not configured"}
 
-    client = ApolloClient()
-
-    first_name = last_name = domain = None
+    payload: dict = {
+        "reveal_personal_emails": False,
+        "reveal_phone_number": False,
+    }
+    if email:
+        payload["email"] = email
     if name:
         parts = name.split(None, 1)
-        first_name = parts[0]
-        last_name = parts[1] if len(parts) > 1 else None
+        payload["first_name"] = parts[0]
+        if len(parts) > 1:
+            payload["last_name"] = parts[1]
     if email and "@" in email:
         domain = email.split("@")[1]
+        payload["domain"] = domain
 
-    person = await client.enrich_person(
-        email=email,
-        first_name=first_name,
-        last_name=last_name,
-        domain=domain,
-    )
-    normalized = normalize_enrichment(person)
-    return {
-        "input": {"email": email, "name": name},
-        "raw_person_keys": list(person.keys()) if person else None,
-        "photo_url": person.get("photo_url") if person else None,
-        "linkedin_url": person.get("linkedin_url") if person else None,
-        "title": person.get("title") if person else None,
-        "name": person.get("name") if person else None,
-        "normalized": normalized,
-        "matched": person is not None,
+    headers = {
+        "x-api-key": settings.apollo_api_key,
+        "Content-Type": "application/json",
+        "Cache-Control": "no-cache",
     }
+
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.post(
+                "https://api.apollo.io/api/v1/people/match",
+                json=payload,
+                headers=headers,
+            )
+            return {
+                "input": payload,
+                "api_key_prefix": settings.apollo_api_key[:8] + "...",
+                "status_code": resp.status_code,
+                "response_body": resp.json() if resp.status_code == 200 else resp.text[:500],
+            }
+    except Exception as e:
+        return {"error": str(e)}
 
 
 @app.post("/sync", dependencies=[Depends(verify_api_key)])
