@@ -19,8 +19,10 @@ logger = logging.getLogger(__name__)
 def _get_gmail_service():
     """Build and return an authenticated Gmail API service.
 
-    Requires credentials.json (OAuth client) and token.json to exist.
-    On first run the user must complete the OAuth flow interactively.
+    Supports two authentication modes:
+    1. **Environment variables** (for cloud/Railway): Set GOOGLE_CLIENT_ID,
+       GOOGLE_CLIENT_SECRET, and GOOGLE_REFRESH_TOKEN.
+    2. **File-based** (for local dev): Provide credentials.json and token.json.
     """
     try:
         from google.auth.transport.requests import Request
@@ -36,6 +38,22 @@ def _get_gmail_service():
 
     SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
     creds = None
+
+    # Mode 1: Build credentials from environment variables
+    if settings.google_client_id and settings.google_client_secret and settings.google_refresh_token:
+        logger.info("Using env-var-based Google OAuth credentials")
+        creds = Credentials(
+            token=None,
+            refresh_token=settings.google_refresh_token,
+            token_uri="https://oauth2.googleapis.com/token",
+            client_id=settings.google_client_id,
+            client_secret=settings.google_client_secret,
+            scopes=SCOPES,
+        )
+        creds.refresh(Request())
+        return build("gmail", "v1", credentials=creds)
+
+    # Mode 2: File-based credentials (local dev)
     token_path = Path(settings.gmail_token_path)
     creds_path = Path(settings.gmail_credentials_path)
 
@@ -48,7 +66,9 @@ def _get_gmail_service():
         else:
             if not creds_path.exists():
                 logger.warning(
-                    "Gmail credentials file not found at %s – Gmail client disabled",
+                    "Gmail credentials not configured – set GOOGLE_CLIENT_ID, "
+                    "GOOGLE_CLIENT_SECRET, and GOOGLE_REFRESH_TOKEN env vars, "
+                    "or provide %s for local OAuth flow",
                     creds_path,
                 )
                 return None
