@@ -855,7 +855,8 @@ async def _enrich_profiles_with_apollo() -> int:
             ):
                 continue
 
-            if not profile_data.get("meeting_count"):
+            # Need at least some interactions
+            if not profile_data.get("meeting_count") and not profile_data.get("email_count"):
                 continue
 
             emails = json.loads(entity.emails or "[]")
@@ -958,7 +959,10 @@ def get_all_profiles() -> list[dict]:
             if not profile_data.get("meeting_count") and not profile_data.get("email_count"):
                 continue
 
+            # Filter out non-person entries (meeting rooms, system accounts)
             emails = json.loads(entity.emails or "[]")
+            if _is_non_person(entity.name, emails[0] if emails else ""):
+                continue
             profile = {
                 "id": entity.id,
                 "name": entity.name,
