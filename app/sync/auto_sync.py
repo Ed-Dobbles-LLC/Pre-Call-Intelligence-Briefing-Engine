@@ -190,16 +190,34 @@ def _is_non_person(name: str, email: str = "") -> bool:
     ):
         return True
 
-    # Meeting room / location names (contain numbers, floor, room, etc.)
-    room_patterns = ["floor", "room", "suite", "building", " - ", "conf ", "summerlin"]
+    # Meeting room / location names
+    room_patterns = [
+        "floor", "room", "suite", "building", " - ", "conf ",
+        "summerlin", "hq-", "nyc-", "usa-", "boardroom", "lobby",
+    ]
     if any(pat in name_lower for pat in room_patterns):
         return True
 
-    # Names that are clearly not people (too short, just an email, etc.)
+    # Names that start with a location/room code pattern (e.g. "USA-NYC-HQ-36-19")
+    if re.match(r"^[A-Z]{2,4}[-\s]", name):
+        return True
+
+    # Names that are clearly not people (just an email, etc.)
     if "@" in name and "." in name:
-        return True  # Name is an email address
+        return True
 
     return False
+
+
+def _normalize_name(name: str) -> str:
+    """Normalize a name for dedup comparison: 'Fox, Una' -> 'una fox', 'TRAWINSKI' -> 'trawinski'."""
+    name = name.strip()
+    # Handle "Last, First" format
+    if "," in name:
+        parts = [p.strip() for p in name.split(",", 1)]
+        if len(parts) == 2:
+            name = f"{parts[1]} {parts[0]}"
+    return name.lower()
 
 
 def _determine_relationship_health(
@@ -989,12 +1007,54 @@ def get_all_profiles() -> list[dict]:
             }
             profiles.append(profile)
 
+        # Deduplicate: merge profiles with the same normalized name
+        deduped: dict[str, dict] = {}
+        for profile in profiles:
+            norm = _normalize_name(profile["name"])
+            if norm in deduped:
+                existing = deduped[norm]
+                # Keep the one with more data (prefer enriched, more meetings)
+                existing_score = (
+                    (1 if existing.get("photo_url") else 0)
+                    + (1 if existing.get("linkedin_url") else 0)
+                    + existing.get("meeting_count", 0)
+                )
+                new_score = (
+                    (1 if profile.get("photo_url") else 0)
+                    + (1 if profile.get("linkedin_url") else 0)
+                    + profile.get("meeting_count", 0)
+                )
+                if new_score > existing_score:
+                    # Merge counts from existing into new
+                    profile["meeting_count"] = max(
+                        profile.get("meeting_count", 0),
+                        existing.get("meeting_count", 0),
+                    )
+                    profile["email_count"] = max(
+                        profile.get("email_count", 0),
+                        existing.get("email_count", 0),
+                    )
+                    deduped[norm] = profile
+                else:
+                    # Merge counts from new into existing
+                    existing["meeting_count"] = max(
+                        existing.get("meeting_count", 0),
+                        profile.get("meeting_count", 0),
+                    )
+                    existing["email_count"] = max(
+                        existing.get("email_count", 0),
+                        profile.get("email_count", 0),
+                    )
+            else:
+                deduped[norm] = profile
+
         # Sort by last interaction (most recent first)
-        profiles.sort(
+        result = list(deduped.values())
+        result.sort(
             key=lambda p: p.get("last_interaction") or "",
             reverse=True,
         )
-        return profiles
+        return result
     finally:
         session.close()
 
