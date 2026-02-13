@@ -1,7 +1,7 @@
-"""Automatic Fireflies transcript sync and profile builder.
+"""Automatic Fireflies transcript sync, Gmail email sync, and profile builder.
 
-Fetches ALL transcripts from Fireflies, stores them, and builds/updates
-contact profiles by extracting participants from each transcript.
+Fetches ALL transcripts from Fireflies, syncs Gmail emails, stores them,
+and builds/updates contact profiles with enrichment from Apollo.io.
 """
 
 from __future__ import annotations
@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import threading
 import time
 from datetime import datetime, timedelta
@@ -17,6 +18,7 @@ from app.clients.apollo import ApolloClient, normalize_enrichment
 from app.clients.fireflies import FirefliesClient
 from app.config import settings
 from app.ingest.fireflies_ingest import normalize_transcript, store_transcript
+from app.ingest.gmail_ingest import normalize_email, store_email
 from app.store.database import EntityRecord, SourceRecord, get_session, init_db
 
 logger = logging.getLogger(__name__)
@@ -254,6 +256,11 @@ async def async_sync_fireflies() -> dict:
 
         result = _process_transcripts(raw_transcripts)
 
+        # Sync Gmail emails for contacts and discover email-only profiles
+        gmail_result = _sync_gmail_emails()
+        result["emails_synced"] = gmail_result["emails_synced"]
+        result["email_profiles_created"] = gmail_result["email_profiles_created"]
+
         # Enrich profiles with Apollo.io data (photos, LinkedIn, titles)
         enriched = await _enrich_profiles_with_apollo()
         result["profiles_enriched"] = enriched
@@ -310,6 +317,11 @@ def sync_fireflies_transcripts() -> dict:
         logger.info("Auto-sync: fetched %d transcripts from Fireflies", len(raw_transcripts))
 
         result = _process_transcripts(raw_transcripts)
+
+        # Sync Gmail
+        gmail_result = _sync_gmail_emails()
+        result["emails_synced"] = gmail_result["emails_synced"]
+        result["email_profiles_created"] = gmail_result["email_profiles_created"]
 
         # Enrich profiles with Apollo.io data
         enrich_loop = asyncio.new_event_loop()
@@ -439,6 +451,292 @@ def _update_profiles(all_participants: dict[str, dict]) -> int:
     return updated
 
 
+def _parse_email_address(header_value: str) -> tuple[str, str]:
+    """Extract (name, email) from a Gmail header like 'Name <email>' or just 'email'."""
+    match = re.match(r'"?([^"<]*)"?\s*<([^>]+)>', header_value.strip())
+    if match:
+        return match.group(1).strip(), match.group(2).strip().lower()
+    # Plain email
+    email = header_value.strip().lower()
+    if "@" in email:
+        return "", email
+    return "", ""
+
+
+def _sync_gmail_emails() -> dict:
+    """Sync Gmail emails for known contacts, discover email-only contacts."""
+    from app.clients.gmail import GmailClient
+
+    client = GmailClient()
+    if not client.service:
+        logger.info("Gmail service not available, skipping email sync")
+        return {"emails_synced": 0, "email_profiles_created": 0}
+
+    session = get_session()
+    emails_synced = 0
+    email_profiles_created = 0
+
+    try:
+        # Build a set of known contact emails → entity
+        entities = session.query(EntityRecord).filter(
+            EntityRecord.entity_type == "person",
+        ).all()
+
+        known_emails: dict[str, EntityRecord] = {}  # email -> entity
+        own_emails: set[str] = set()  # user's own emails (skip these)
+        for entity in entities:
+            for email in json.loads(entity.emails or "[]"):
+                known_emails[email.lower()] = entity
+
+        # Fetch recent personal emails (exclude noise categories)
+        since = datetime.utcnow() - timedelta(days=min(settings.retrieval_window_days, 60))
+        date_str = since.strftime("%Y/%m/%d")
+        query = f"after:{date_str} -category:promotions -category:social -category:updates -category:forums"
+        raw_messages = client.search_messages(query, max_results=200)
+        logger.info("Gmail sync: fetched %d messages", len(raw_messages))
+
+        # Track all correspondents for email-only profile creation
+        correspondents: dict[str, dict] = {}  # email -> info
+
+        for raw_msg in raw_messages:
+            normalized = normalize_email(raw_msg)
+
+            # Parse sender and recipients
+            from_name, from_email = _parse_email_address(normalized.from_address or "")
+            to_addresses = []
+            for addr in normalized.to_addresses:
+                name, email = _parse_email_address(addr)
+                if email:
+                    to_addresses.append((name, email))
+
+            # Determine who this email is with (the other party, not us)
+            all_parties = [(from_name, from_email)] + to_addresses
+
+            # Figure out which entity this email belongs to
+            matched_entity = None
+            for _, party_email in all_parties:
+                if party_email in known_emails:
+                    matched_entity = known_emails[party_email]
+                    break
+
+            # Store the email
+            record = store_email(
+                normalized,
+                entity_id=matched_entity.id if matched_entity else None,
+            )
+            emails_synced += 1
+
+            # Track unknown correspondents for email-only profiles
+            for corr_name, corr_email in all_parties:
+                if not corr_email or corr_email in known_emails:
+                    continue
+                if _is_non_person(corr_name or corr_email, corr_email):
+                    continue
+
+                if corr_email not in correspondents:
+                    correspondents[corr_email] = {
+                        "name": corr_name,
+                        "email": corr_email,
+                        "email_count": 0,
+                        "last_email": None,
+                        "interactions": [],
+                        "has_scheduling": False,
+                    }
+                c = correspondents[corr_email]
+                c["email_count"] += 1
+                if corr_name and (not c["name"] or len(corr_name) > len(c["name"])):
+                    c["name"] = corr_name
+                if normalized.date:
+                    if not c["last_email"] or normalized.date > c["last_email"]:
+                        c["last_email"] = normalized.date
+                c["interactions"].append({
+                    "title": normalized.subject or "Email",
+                    "date": normalized.date.isoformat() if normalized.date else None,
+                    "summary": normalized.snippet or normalized.subject,
+                    "type": "email",
+                })
+
+                # Detect scheduling patterns
+                subj = (normalized.subject or "").lower()
+                body_start = (normalized.body_plain or "")[:500].lower()
+                sched_keywords = ["scheduled", "calendar", "invitation:", "meeting confirmed",
+                                  "interview", "let's meet", "call scheduled", "booked"]
+                if any(kw in subj or kw in body_start for kw in sched_keywords):
+                    c["has_scheduling"] = True
+
+        # Update email counts for known entities
+        for entity in entities:
+            email_count = session.query(SourceRecord).filter(
+                SourceRecord.source_type == "gmail",
+                SourceRecord.entity_id == entity.id,
+            ).count()
+            if email_count:
+                profile_data = {}
+                try:
+                    profile_data = json.loads(entity.domains or "{}")
+                except (json.JSONDecodeError, TypeError):
+                    pass
+                profile_data["email_count"] = email_count
+
+                # Add email interactions to profile
+                email_records = session.query(SourceRecord).filter(
+                    SourceRecord.source_type == "gmail",
+                    SourceRecord.entity_id == entity.id,
+                ).order_by(SourceRecord.date.desc()).limit(10).all()
+
+                email_interactions = []
+                for rec in email_records:
+                    email_interactions.append({
+                        "title": rec.title or "Email",
+                        "date": rec.date.isoformat() if rec.date else None,
+                        "summary": rec.summary,
+                        "type": "email",
+                    })
+
+                # Merge with existing interactions
+                existing = profile_data.get("interactions", [])
+                # Add email interactions that aren't already there
+                existing_dates = {i.get("date") for i in existing}
+                for ei in email_interactions:
+                    if ei["date"] not in existing_dates:
+                        existing.append(ei)
+
+                profile_data["interactions"] = sorted(
+                    existing,
+                    key=lambda x: x.get("date") or "",
+                    reverse=True,
+                )[:20]
+
+                # Update last_interaction if email is more recent
+                if email_records and email_records[0].date:
+                    last_meeting = profile_data.get("last_interaction")
+                    last_email = email_records[0].date.isoformat()
+                    if not last_meeting or last_email > last_meeting:
+                        profile_data["last_interaction"] = last_email
+
+                entity.domains = json.dumps(profile_data)
+
+        # Create email-only profiles for frequent correspondents (2+ emails)
+        for corr_email, corr_data in correspondents.items():
+            if corr_data["email_count"] < 2:
+                continue
+
+            # Check if entity already exists (might have been created by email matching)
+            exists = session.query(EntityRecord).filter(
+                EntityRecord.entity_type == "person",
+            ).all()
+            already_exists = False
+            for e in exists:
+                entity_emails = [x.lower() for x in json.loads(e.emails or "[]")]
+                if corr_email in entity_emails:
+                    already_exists = True
+                    break
+            if already_exists:
+                continue
+
+            name = corr_data["name"] or corr_email.split("@")[0].replace(".", " ").title()
+            entity = EntityRecord(
+                name=name,
+                entity_type="person",
+                emails=json.dumps([corr_email]),
+            )
+            session.add(entity)
+            session.flush()
+
+            health = _determine_relationship_health(0, corr_data["last_email"])
+            profile_data = {
+                "meeting_count": 0,
+                "email_count": corr_data["email_count"],
+                "last_interaction": corr_data["last_email"].isoformat() if corr_data["last_email"] else None,
+                "company": _infer_company_from_email(corr_email),
+                "relationship_health": health,
+                "interactions": sorted(
+                    corr_data["interactions"],
+                    key=lambda x: x.get("date") or "",
+                    reverse=True,
+                )[:20],
+                "action_items": [],
+                "action_items_count": 0,
+                "updated_at": datetime.utcnow().isoformat(),
+            }
+            entity.domains = json.dumps(profile_data)
+            email_profiles_created += 1
+            logger.info("Created email-only profile: %s (%s)", name, corr_email)
+
+        session.commit()
+        logger.info("Gmail sync: %d emails synced, %d email-only profiles created",
+                     emails_synced, email_profiles_created)
+
+    except Exception:
+        session.rollback()
+        logger.exception("Gmail sync failed")
+    finally:
+        session.close()
+
+    return {"emails_synced": emails_synced, "email_profiles_created": email_profiles_created}
+
+
+def _extract_next_steps() -> list[dict]:
+    """Extract next steps from recent scheduling emails and profile data."""
+    session = get_session()
+    next_steps = []
+
+    try:
+        # Look at recent emails for scheduling patterns
+        recent = datetime.utcnow() - timedelta(days=14)
+        email_records = session.query(SourceRecord).filter(
+            SourceRecord.source_type == "gmail",
+            SourceRecord.date >= recent,
+        ).order_by(SourceRecord.date.desc()).limit(50).all()
+
+        sched_keywords = ["scheduled", "invitation:", "interview", "calendar",
+                          "meeting confirmed", "call scheduled", "booked"]
+
+        for rec in email_records:
+            subj = (rec.title or "").lower()
+            if any(kw in subj for kw in sched_keywords):
+                # Extract who it's with
+                participants = json.loads(rec.participants or "[]")
+                person_name = None
+                for p in participants[:3]:
+                    _, email = _parse_email_address(p)
+                    if email:
+                        entity = None
+                        for e in session.query(EntityRecord).filter(
+                            EntityRecord.entity_type == "person",
+                        ).all():
+                            if email.lower() in [x.lower() for x in json.loads(e.emails or "[]")]:
+                                entity = e
+                                break
+                        if entity:
+                            person_name = entity.name
+                            break
+
+                next_steps.append({
+                    "type": "scheduled_meeting",
+                    "title": rec.title,
+                    "date": rec.date.isoformat() if rec.date else None,
+                    "person": person_name,
+                    "summary": f"Meeting scheduled: {rec.title}",
+                })
+
+        # Deduplicate by title
+        seen = set()
+        unique = []
+        for ns in next_steps:
+            key = ns["title"]
+            if key not in seen:
+                seen.add(key)
+                unique.append(ns)
+        return unique[:10]
+
+    except Exception:
+        logger.exception("Failed to extract next steps")
+        return []
+    finally:
+        session.close()
+
+
 async def _enrich_profiles_with_apollo() -> int:
     """Enrich person profiles via Apollo.io (skips already-enriched contacts)."""
     if not settings.apollo_api_key:
@@ -565,8 +863,8 @@ def get_all_profiles() -> list[dict]:
                 except (json.JSONDecodeError, TypeError):
                     pass
 
-            # Skip entities without profile data (no meetings)
-            if not profile_data.get("meeting_count"):
+            # Skip entities without any interactions
+            if not profile_data.get("meeting_count") and not profile_data.get("email_count"):
                 continue
 
             emails = json.loads(entity.emails or "[]")
