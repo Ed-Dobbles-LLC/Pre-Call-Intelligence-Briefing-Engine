@@ -1036,6 +1036,11 @@ def get_all_profiles() -> list[dict]:
                 # LinkedIn disambiguation
                 "linkedin_status": profile_data.get("linkedin_status", ""),
                 "linkedin_candidates": profile_data.get("linkedin_candidates", []),
+                # Deep profile
+                "deep_profile": profile_data.get("deep_profile", ""),
+                "deep_profile_generated_at": profile_data.get(
+                    "deep_profile_generated_at", ""
+                ),
             }
             profiles.append(profile)
 

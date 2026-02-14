@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import logging
 from contextlib import asynccontextmanager
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
@@ -20,6 +21,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from app.brief.pipeline import run_pipeline
+from app.brief.profiler import build_interactions_summary, generate_deep_profile
 from app.config import settings, validate_config
 from app.models import BriefOutput
 from app.store.database import BriefLog, EntityRecord, get_session, init_db
@@ -410,6 +412,64 @@ def set_linkedin(profile_id: int, request: SetLinkedInRequest):
         session.rollback()
         logger.exception("Failed to set LinkedIn for profile %d", profile_id)
         raise HTTPException(status_code=500, detail="Failed to update profile")
+    finally:
+        session.close()
+
+
+@app.post("/profiles/{profile_id}/deep-profile", dependencies=[Depends(verify_api_key)])
+def generate_profile_research(profile_id: int):
+    """Generate a deep intelligence profile for a verified contact.
+
+    Uses the LLM to produce a structured executive dossier with career analysis,
+    strategic patterns, conversation playbook, and risk signals.
+    Only works for profiles with linkedin_status == 'confirmed'.
+    """
+    if not settings.openai_api_key:
+        raise HTTPException(status_code=400, detail="OpenAI API key not configured")
+
+    session = get_session()
+    try:
+        entity = session.query(EntityRecord).get(profile_id)
+        if not entity:
+            raise HTTPException(status_code=404, detail="Profile not found")
+
+        profile_data = json.loads(entity.domains or "{}")
+
+        if profile_data.get("linkedin_status") != "confirmed":
+            raise HTTPException(
+                status_code=422,
+                detail="Profile must be verified before generating deep research",
+            )
+
+        interactions_summary = build_interactions_summary(profile_data)
+
+        result = generate_deep_profile(
+            name=entity.name,
+            title=profile_data.get("title", ""),
+            company=profile_data.get("company", ""),
+            linkedin_url=profile_data.get("linkedin_url", ""),
+            location=profile_data.get("location", ""),
+            industry=profile_data.get("company_industry", ""),
+            company_size=profile_data.get("company_size"),
+            interactions_summary=interactions_summary,
+        )
+
+        profile_data["deep_profile"] = result
+        profile_data["deep_profile_generated_at"] = datetime.utcnow().isoformat()
+        entity.domains = json.dumps(profile_data)
+        session.commit()
+
+        return {
+            "status": "ok",
+            "deep_profile": result,
+            "generated_at": profile_data["deep_profile_generated_at"],
+        }
+    except HTTPException:
+        raise
+    except Exception:
+        session.rollback()
+        logger.exception("Deep profile generation failed for profile %d", profile_id)
+        raise HTTPException(status_code=500, detail="Deep profile generation failed")
     finally:
         session.close()
 
