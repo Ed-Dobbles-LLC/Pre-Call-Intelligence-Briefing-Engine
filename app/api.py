@@ -25,7 +25,7 @@ from app.brief.profiler import build_interactions_summary, generate_deep_profile
 from app.config import settings, validate_config
 from app.models import BriefOutput
 from app.store.database import BriefLog, EntityRecord, get_session, init_db
-from app.clients.apollo import ApolloClient, normalize_candidate
+from app.clients.apollo import ApolloClient, normalize_candidate, normalize_enrichment
 from app.sync.auto_sync import (
     _extract_next_steps,
     async_sync_fireflies,
@@ -262,6 +262,79 @@ def list_profiles():
     return get_all_profiles()
 
 
+async def _enrich_confirmed_profile(
+    entity: EntityRecord, profile_data: dict, session
+) -> bool:
+    """Try to enrich a confirmed profile via Apollo using its LinkedIn URL.
+
+    Called after confirm or manual-set to get photo, title, and other data
+    that Apollo's search endpoint may not have returned.
+    Returns True if new data was written.
+    """
+    linkedin_url = profile_data.get("linkedin_url", "")
+    if not linkedin_url or not settings.apollo_api_key:
+        return False
+
+    try:
+        client = ApolloClient()
+        emails = json.loads(entity.emails or "[]")
+        parts = entity.name.split(None, 1) if entity.name else []
+        first = parts[0] if parts else None
+        last = parts[1] if len(parts) > 1 else None
+
+        person = await client.enrich_person(
+            email=emails[0] if emails else None,
+            first_name=first,
+            last_name=last,
+            linkedin_url=linkedin_url,
+            organization_name=profile_data.get("company"),
+        )
+        if not person:
+            return False
+
+        enrichment = normalize_enrichment(person)
+        if not enrichment:
+            return False
+
+        updated = False
+        # Fill in missing fields from enrichment — never overwrite user-confirmed data
+        for key in (
+            "photo_url", "title", "headline", "seniority",
+            "company_industry", "company_size", "company_linkedin",
+        ):
+            if enrichment.get(key) and not profile_data.get(key):
+                profile_data[key] = enrichment[key]
+                updated = True
+
+        # Location is a composite field
+        if not profile_data.get("location"):
+            loc = ", ".join(filter(None, [
+                person.get("city", ""),
+                person.get("state", ""),
+            ]))
+            if loc:
+                profile_data["location"] = loc
+                updated = True
+
+        if not profile_data.get("company"):
+            org = person.get("organization") or {}
+            if org.get("name"):
+                profile_data["company"] = org["name"]
+                updated = True
+
+        if updated:
+            entity.domains = json.dumps(profile_data)
+            session.commit()
+            logger.info(
+                "Enriched confirmed profile %s (id=%d) via Apollo",
+                entity.name, entity.id,
+            )
+        return updated
+    except Exception:
+        logger.exception("Post-confirm enrichment failed for %s", entity.name)
+        return False
+
+
 class ConfirmLinkedInRequest(BaseModel):
     candidate_index: int = Field(
         ..., ge=-1,
@@ -283,10 +356,11 @@ def profiles_pending_review():
 
 
 @app.post("/profiles/{profile_id}/confirm-linkedin", dependencies=[Depends(verify_api_key)])
-def confirm_linkedin(profile_id: int, request: ConfirmLinkedInRequest):
+async def confirm_linkedin(profile_id: int, request: ConfirmLinkedInRequest):
     """Confirm or reject a LinkedIn candidate for a profile.
 
     candidate_index = -1 means 'none of the above' (mark as no_match).
+    After confirmation, tries Apollo enrichment to fill in missing photo/title.
     """
     session = get_session()
     try:
@@ -330,6 +404,11 @@ def confirm_linkedin(profile_id: int, request: ConfirmLinkedInRequest):
 
         entity.domains = json.dumps(profile_data)
         session.commit()
+
+        # If the candidate had no photo, try Apollo enrichment using LinkedIn URL
+        if not profile_data.get("photo_url") and profile_data.get("linkedin_url"):
+            await _enrich_confirmed_profile(entity, profile_data, session)
+
         return {"status": "ok", "linkedin_status": "confirmed"}
     except HTTPException:
         raise
@@ -400,8 +479,12 @@ class SetLinkedInRequest(BaseModel):
 
 
 @app.post("/profiles/{profile_id}/set-linkedin", dependencies=[Depends(verify_api_key)])
-def set_linkedin(profile_id: int, request: SetLinkedInRequest):
-    """Manually set a LinkedIn URL for a profile."""
+async def set_linkedin(profile_id: int, request: SetLinkedInRequest):
+    """Manually set a LinkedIn URL for a profile.
+
+    After saving, tries Apollo enrichment using the LinkedIn URL to pull
+    photo, title, and other data.
+    """
     session = get_session()
     try:
         entity = session.query(EntityRecord).get(profile_id)
@@ -414,6 +497,10 @@ def set_linkedin(profile_id: int, request: SetLinkedInRequest):
         profile_data["linkedin_candidates"] = []
         entity.domains = json.dumps(profile_data)
         session.commit()
+
+        # Try to enrich with photo/title from Apollo using the LinkedIn URL
+        await _enrich_confirmed_profile(entity, profile_data, session)
+
         return {"status": "ok", "linkedin_status": "confirmed"}
     except HTTPException:
         raise

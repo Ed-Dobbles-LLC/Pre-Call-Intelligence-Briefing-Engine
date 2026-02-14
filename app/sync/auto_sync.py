@@ -336,6 +336,8 @@ async def async_sync_fireflies() -> dict:
     """Async version: fetch transcripts and build profiles.
 
     Safe to call from within an existing event loop (e.g., FastAPI).
+    Holds _sync_lock during all database-mutating operations so that
+    concurrent repair or profile reads see a consistent state.
     """
     global _sync_running
 
@@ -346,15 +348,15 @@ async def async_sync_fireflies() -> dict:
             "error": "Fireflies API key not configured",
         }
 
-    with _sync_lock:
-        if _sync_running:
-            return {
-                "transcripts_synced": 0,
-                "profiles_updated": 0,
-                "error": "Sync already in progress",
-            }
-        _sync_running = True
+    acquired = _sync_lock.acquire(blocking=False)
+    if not acquired:
+        return {
+            "transcripts_synced": 0,
+            "profiles_updated": 0,
+            "error": "Sync already in progress",
+        }
 
+    _sync_running = True
     try:
         init_db()
         client = FirefliesClient()
@@ -385,12 +387,14 @@ async def async_sync_fireflies() -> dict:
         }
     finally:
         _sync_running = False
+        _sync_lock.release()
 
 
 def sync_fireflies_transcripts() -> dict:
     """Sync version: for use from background threads (no existing event loop).
 
     Creates its own event loop. Do NOT call from inside FastAPI handlers.
+    Holds _sync_lock during all database-mutating operations.
     """
     global _sync_running
 
@@ -401,15 +405,15 @@ def sync_fireflies_transcripts() -> dict:
             "error": "Fireflies API key not configured",
         }
 
-    with _sync_lock:
-        if _sync_running:
-            return {
-                "transcripts_synced": 0,
-                "profiles_updated": 0,
-                "error": "Sync already in progress",
-            }
-        _sync_running = True
+    acquired = _sync_lock.acquire(blocking=False)
+    if not acquired:
+        return {
+            "transcripts_synced": 0,
+            "profiles_updated": 0,
+            "error": "Sync already in progress",
+        }
 
+    _sync_running = True
     try:
         init_db()
         client = FirefliesClient()
@@ -453,6 +457,7 @@ def sync_fireflies_transcripts() -> dict:
         }
     finally:
         _sync_running = False
+        _sync_lock.release()
 
 
 def _update_profiles(all_participants: dict[str, dict]) -> int:
@@ -1130,62 +1135,106 @@ def repair_linkedin_status():
     """One-time repair: restore linkedin_status for profiles that were confirmed
     but had their status wiped by a sync bug.
 
-    Detection: if a profile has linkedin_url AND (title or photo_url) set
-    but linkedin_status is empty/missing, it was previously confirmed by the user.
+    Detection heuristic (to avoid false positives from old auto-matches):
+    - Profiles with linkedin_url + photo_url + title → were user-confirmed
+      (auto-match alone would not populate all three).
+    - Profiles with linkedin_url + only title OR only photo → likely auto-matched;
+      queue for user review instead of auto-confirming.
+    - Profiles with linkedin_url but no enrichment → queue for review.
+
+    Acquires _sync_lock to prevent concurrent modification with background sync.
     """
-    session = get_session()
-    repaired = 0
-    try:
-        entities = session.query(EntityRecord).filter(
-            EntityRecord.entity_type == "person",
-            EntityRecord.domains.isnot(None),
-        ).all()
+    with _sync_lock:
+        session = get_session()
+        repaired = 0
+        try:
+            entities = session.query(EntityRecord).filter(
+                EntityRecord.entity_type == "person",
+                EntityRecord.domains.isnot(None),
+            ).all()
 
-        for entity in entities:
-            try:
-                profile_data = json.loads(entity.domains or "{}")
-            except (json.JSONDecodeError, TypeError):
-                continue
+            for entity in entities:
+                try:
+                    profile_data = json.loads(entity.domains or "{}")
+                except (json.JSONDecodeError, TypeError):
+                    continue
 
-            # Already has a status — nothing to repair
-            if profile_data.get("linkedin_status"):
-                continue
+                # Already has a status — nothing to repair
+                if profile_data.get("linkedin_status"):
+                    continue
 
-            # Has enrichment data from a prior confirmation
-            has_linkedin = bool(profile_data.get("linkedin_url"))
-            has_enrichment = bool(profile_data.get("title") or profile_data.get("photo_url"))
+                has_linkedin = bool(profile_data.get("linkedin_url"))
+                if not has_linkedin:
+                    continue
 
-            if has_linkedin and has_enrichment:
-                profile_data["linkedin_status"] = "confirmed"
-                entity.domains = json.dumps(profile_data)
-                repaired += 1
-                logger.info("Repaired linkedin_status for %s (id=%d)", entity.name, entity.id)
-            elif has_linkedin and not has_enrichment:
-                # Has a LinkedIn URL (from auto-match) but no confirmed enrichment
-                # — needs user review
-                profile_data["linkedin_status"] = "pending_review"
-                if not profile_data.get("linkedin_candidates"):
-                    profile_data["linkedin_candidates"] = [{
-                        "linkedin_url": profile_data["linkedin_url"],
-                        "name": entity.name,
-                    }]
-                entity.domains = json.dumps(profile_data)
-                repaired += 1
-                logger.info(
-                    "Queued for review: %s (id=%d, has linkedin but no enrichment)",
-                    entity.name, entity.id,
-                )
+                has_photo = bool(profile_data.get("photo_url"))
+                has_title = bool(profile_data.get("title"))
 
-        if repaired:
-            session.commit()
-            logger.info("LinkedIn status repair: restored %d profiles", repaired)
-    except Exception:
-        session.rollback()
-        logger.exception("LinkedIn status repair failed")
-    finally:
-        session.close()
+                # Only auto-confirm if we have strong evidence of prior user
+                # confirmation: both photo AND title present alongside linkedin_url.
+                # A single field could come from an old auto-match.
+                if has_photo and has_title:
+                    profile_data["linkedin_status"] = "confirmed"
+                    entity.domains = json.dumps(profile_data)
+                    repaired += 1
+                    logger.info(
+                        "Repaired linkedin_status for %s (id=%d)",
+                        entity.name, entity.id,
+                    )
+                else:
+                    # Incomplete enrichment — queue for user review
+                    profile_data["linkedin_status"] = "pending_review"
+                    if not profile_data.get("linkedin_candidates"):
+                        profile_data["linkedin_candidates"] = [
+                            normalize_candidate_stub(
+                                linkedin_url=profile_data["linkedin_url"],
+                                name=entity.name,
+                                title=profile_data.get("title", ""),
+                                photo_url=profile_data.get("photo_url", ""),
+                            ),
+                        ]
+                    entity.domains = json.dumps(profile_data)
+                    repaired += 1
+                    logger.info(
+                        "Queued for review: %s (id=%d, incomplete enrichment)",
+                        entity.name, entity.id,
+                    )
+
+            if repaired:
+                session.commit()
+                logger.info("LinkedIn status repair: fixed %d profiles", repaired)
+        except Exception:
+            session.rollback()
+            logger.exception("LinkedIn status repair failed")
+        finally:
+            session.close()
 
     return repaired
+
+
+def normalize_candidate_stub(
+    linkedin_url: str,
+    name: str,
+    title: str = "",
+    photo_url: str = "",
+) -> dict:
+    """Build a minimal candidate dict for the review UI from existing data."""
+    return {
+        "linkedin_url": linkedin_url,
+        "name": name,
+        "photo_url": photo_url,
+        "title": title,
+        "headline": "",
+        "company_name": "",
+        "seniority": "",
+        "city": "",
+        "state": "",
+        "country": "",
+        "company_industry": "",
+        "company_size": None,
+        "company_domain": "",
+        "company_linkedin": "",
+    }
 
 
 def start_background_sync(interval_minutes: int = 30):

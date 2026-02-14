@@ -43,6 +43,7 @@ class ApolloClient:
         name: str | None = None,
         domain: str | None = None,
         organization_name: str | None = None,
+        linkedin_url: str | None = None,
     ) -> dict[str, Any] | None:
         """Enrich a single person. Returns the person dict or None."""
         if not self.api_key:
@@ -64,9 +65,11 @@ class ApolloClient:
             payload["domain"] = domain
         if organization_name:
             payload["organization_name"] = organization_name
+        if linkedin_url:
+            payload["linkedin_url"] = linkedin_url
 
-        if not email and not name and not (first_name and last_name):
-            logger.debug("Apollo: skipping enrichment – no email or name provided")
+        if not email and not name and not (first_name and last_name) and not linkedin_url:
+            logger.debug("Apollo: skipping enrichment – no email, name, or LinkedIn URL provided")
             return None
 
         try:
