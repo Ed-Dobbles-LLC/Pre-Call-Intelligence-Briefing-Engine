@@ -847,10 +847,11 @@ def _extract_next_steps() -> list[dict]:
 
 
 async def _enrich_profiles_with_apollo() -> int:
-    """Enrich person profiles via Apollo.io (skips already-enriched contacts).
+    """Enrich person profiles via Apollo.io.
 
-    When a direct match fails, performs a search and stores up to 5
-    candidate profiles so the user can disambiguate via the dashboard.
+    All matches (direct and search) are presented as candidates on the
+    Review page for user confirmation.  Nothing is auto-accepted so
+    that photos and LinkedIn links are always verified by a human.
     """
     if not settings.apollo_api_key:
         return 0
@@ -875,19 +876,19 @@ async def _enrich_profiles_with_apollo() -> int:
             if profile_data.get("linkedin_status") == "confirmed":
                 continue
 
-            # Skip if already enriched AND has actual data (photo or linkedin)
-            if profile_data.get("apollo_enriched") and (
-                profile_data.get("photo_url") or profile_data.get("linkedin_url")
-            ):
-                # Ensure linkedin_status is set for legacy enriched profiles
-                if not profile_data.get("linkedin_status"):
-                    profile_data["linkedin_status"] = "matched"
-                    entity.domains = json.dumps(profile_data)
-                continue
-
             # Skip contacts already pending review (candidates stored)
             if profile_data.get("linkedin_status") == "pending_review":
                 continue
+
+            # Skip contacts the user already dismissed
+            if profile_data.get("linkedin_status") == "no_match":
+                continue
+
+            # Previously auto-matched profiles should be re-reviewed —
+            # clear their stale data so the user can pick the right person.
+            if profile_data.get("linkedin_status") == "matched":
+                profile_data.pop("photo_url", None)
+                profile_data.pop("linkedin_url", None)
 
             # Need at least some interactions
             if not profile_data.get("meeting_count") and not profile_data.get("email_count"):
@@ -920,75 +921,59 @@ async def _enrich_profiles_with_apollo() -> int:
         results = await client.enrich_many(contacts, name_variants=_NAME_VARIANTS)
 
         for (entity, info), person in zip(to_enrich, results):
-            enrichment = normalize_enrichment(person)
-            if not enrichment:
-                # Direct match failed – search for candidates
-                try:
-                    profile_data = json.loads(entity.domains or "{}")
-                except (json.JSONDecodeError, TypeError):
-                    continue
-
-                await asyncio.sleep(0.3)
-                candidates_raw = await client.search_people(
-                    name=info["name"],
-                    organization_name=info["company"],
-                    per_page=5,
-                )
-
-                candidates = [
-                    normalize_candidate(c)
-                    for c in candidates_raw
-                    if c.get("linkedin_url") or c.get("photo_url")
-                ]
-
-                if candidates:
-                    profile_data["linkedin_status"] = "pending_review"
-                    profile_data["linkedin_candidates"] = candidates
-                    logger.info(
-                        "Apollo: %d candidates found for %s – pending review",
-                        len(candidates),
-                        entity.name,
-                    )
-                else:
-                    profile_data["linkedin_status"] = "no_match"
-                    profile_data["linkedin_candidates"] = []
-
-                profile_data["apollo_enriched"] = True
-                entity.domains = json.dumps(profile_data)
-                continue
-
             try:
                 profile_data = json.loads(entity.domains or "{}")
             except (json.JSONDecodeError, TypeError):
                 continue
 
-            profile_data["photo_url"] = enrichment.get("photo_url", "")
-            profile_data["linkedin_url"] = enrichment.get("linkedin_url", "")
-            profile_data["title"] = enrichment.get("title", "")
-            profile_data["headline"] = enrichment.get("headline", "")
-            profile_data["seniority"] = enrichment.get("seniority", "")
-            profile_data["location"] = ", ".join(
-                filter(None, [enrichment.get("city"), enrichment.get("state")])
+            # Build candidate list: start with the direct match (if any),
+            # then add search results so the user can pick the right one.
+            candidates: list[dict] = []
+
+            direct_match = normalize_enrichment(person)
+            if direct_match:
+                # Include the direct match as the first (recommended) candidate
+                candidate = normalize_candidate(person)
+                candidate["recommended"] = True
+                candidates.append(candidate)
+
+            # Always search for additional candidates
+            await asyncio.sleep(0.3)
+            candidates_raw = await client.search_people(
+                name=info["name"],
+                organization_name=info["company"],
+                per_page=5,
             )
 
-            # Use Apollo company name if we only had a domain guess
-            if enrichment.get("company_name") and not profile_data.get("company"):
-                profile_data["company"] = enrichment["company_name"]
-            elif enrichment.get("company_name"):
-                profile_data["company_full"] = enrichment["company_name"]
+            # Deduplicate search results against the direct match
+            direct_linkedin = candidates[0].get("linkedin_url") if candidates else None
+            for c in candidates_raw:
+                if not (c.get("linkedin_url") or c.get("photo_url")):
+                    continue
+                # Skip if same LinkedIn profile as the direct match
+                if direct_linkedin and c.get("linkedin_url") == direct_linkedin:
+                    continue
+                candidates.append(normalize_candidate(c))
 
-            profile_data["company_industry"] = enrichment.get("company_industry", "")
-            profile_data["company_size"] = enrichment.get("company_size")
-            profile_data["company_linkedin"] = enrichment.get("company_linkedin", "")
+            if candidates:
+                profile_data["linkedin_status"] = "pending_review"
+                profile_data["linkedin_candidates"] = candidates
+                logger.info(
+                    "Apollo: %d candidates for %s – pending review%s",
+                    len(candidates),
+                    entity.name,
+                    " (includes direct match)" if direct_match else "",
+                )
+                enriched_count += 1
+            else:
+                profile_data["linkedin_status"] = "no_match"
+                profile_data["linkedin_candidates"] = []
+
             profile_data["apollo_enriched"] = True
-            profile_data["linkedin_status"] = "matched"
-            profile_data["linkedin_candidates"] = []
-
             entity.domains = json.dumps(profile_data)
-            enriched_count += 1
 
         session.commit()
-        logger.info("Apollo enrichment: enriched %d contacts", enriched_count)
+        logger.info("Apollo enrichment: %d contacts queued for review", enriched_count)
     except Exception:
         session.rollback()
         logger.exception("Apollo enrichment failed")

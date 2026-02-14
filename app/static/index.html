@@ -1574,7 +1574,7 @@
           Email</a>`;
       }
       // Use real LinkedIn URL from Apollo if available, otherwise search
-      const liUrl = linkedinUrl || ('https://www.linkedin.com/search/results/all/?keywords=' + encodeURIComponent([name, company].filter(Boolean).join(' ')));
+      const liUrl = linkedinUrl || ('https://www.linkedin.com/search/results/people/?keywords=' + encodeURIComponent([name, company].filter(Boolean).join(' ')));
       if (name) {
         html += `<a class="contact-link" href="${liUrl}" target="_blank" rel="noopener" onclick="event.stopPropagation()" title="${linkedinUrl ? 'View LinkedIn profile' : 'Search on LinkedIn'}">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M20.5 2h-17A1.5 1.5 0 002 3.5v17A1.5 1.5 0 003.5 22h17a1.5 1.5 0 001.5-1.5v-17A1.5 1.5 0 0020.5 2zM8 19H5v-9h3zM6.5 8.25A1.75 1.75 0 118.3 6.5a1.78 1.78 0 01-1.8 1.75zM19 19h-3v-4.74c0-1.42-.6-1.93-1.38-1.93A1.74 1.74 0 0013 14.19V19h-3v-9h2.9v1.3a3.11 3.11 0 012.7-1.4c1.55 0 3.36.86 3.36 3.66z"/></svg>
@@ -2157,7 +2157,7 @@
                     : '<div class="profile-avatar ' + avatarClass(c.name) + '" style="width:40px;height:40px;font-size:16px">' + getInitials(c.name) + '</div>'
                   }
                   <div>
-                    <div class="candidate-name">${c.name || 'Unknown'}</div>
+                    <div class="candidate-name">${c.name || 'Unknown'}${c.recommended ? ' <span class="profile-tag" style="background:var(--success-bg);color:var(--success);font-size:10px;margin-left:6px">Best match</span>' : ''}</div>
                     <div class="candidate-title">${c.title ? c.title + (c.company_name ? ' @ ' + c.company_name : '') : (c.company_name || '')}</div>
                   </div>
                 </div>
