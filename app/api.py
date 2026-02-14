@@ -371,7 +371,10 @@ _static_dir = Path(__file__).parent / "static"
 @app.get("/", include_in_schema=False)
 def serve_dashboard():
     """Serve the web dashboard."""
-    return FileResponse(_static_dir / "index.html")
+    return FileResponse(
+        _static_dir / "index.html",
+        headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+    )
 
 
 # Mount static assets last so it doesn't shadow API routes
