@@ -536,11 +536,13 @@ def _update_profiles(all_participants: dict[str, dict]) -> int:
                 "updated_at": datetime.utcnow().isoformat(),
             }
 
-            # Carry forward Apollo enrichment fields
+            # Carry forward Apollo enrichment, LinkedIn verification, and deep profile
             for key in (
                 "apollo_enriched", "photo_url", "linkedin_url", "title",
                 "headline", "seniority", "location", "company_full",
                 "company_industry", "company_size", "company_linkedin",
+                "linkedin_status", "linkedin_candidates",
+                "deep_profile", "deep_profile_generated_at",
             ):
                 if key in existing_profile:
                     profile_data[key] = existing_profile[key]
