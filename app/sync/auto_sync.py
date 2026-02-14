@@ -536,11 +536,13 @@ def _update_profiles(all_participants: dict[str, dict]) -> int:
                 "updated_at": datetime.utcnow().isoformat(),
             }
 
-            # Carry forward Apollo enrichment fields
+            # Carry forward Apollo enrichment, LinkedIn verification, and deep profile
             for key in (
                 "apollo_enriched", "photo_url", "linkedin_url", "title",
                 "headline", "seniority", "location", "company_full",
                 "company_industry", "company_size", "company_linkedin",
+                "linkedin_status", "linkedin_candidates",
+                "deep_profile", "deep_profile_generated_at",
             ):
                 if key in existing_profile:
                     profile_data[key] = existing_profile[key]
@@ -1036,6 +1038,11 @@ def get_all_profiles() -> list[dict]:
                 # LinkedIn disambiguation
                 "linkedin_status": profile_data.get("linkedin_status", ""),
                 "linkedin_candidates": profile_data.get("linkedin_candidates", []),
+                # Deep profile
+                "deep_profile": profile_data.get("deep_profile", ""),
+                "deep_profile_generated_at": profile_data.get(
+                    "deep_profile_generated_at", ""
+                ),
             }
             profiles.append(profile)
 
@@ -1117,6 +1124,68 @@ def get_dashboard_stats() -> dict:
         }
     finally:
         session.close()
+
+
+def repair_linkedin_status():
+    """One-time repair: restore linkedin_status for profiles that were confirmed
+    but had their status wiped by a sync bug.
+
+    Detection: if a profile has linkedin_url AND (title or photo_url) set
+    but linkedin_status is empty/missing, it was previously confirmed by the user.
+    """
+    session = get_session()
+    repaired = 0
+    try:
+        entities = session.query(EntityRecord).filter(
+            EntityRecord.entity_type == "person",
+            EntityRecord.domains.isnot(None),
+        ).all()
+
+        for entity in entities:
+            try:
+                profile_data = json.loads(entity.domains or "{}")
+            except (json.JSONDecodeError, TypeError):
+                continue
+
+            # Already has a status — nothing to repair
+            if profile_data.get("linkedin_status"):
+                continue
+
+            # Has enrichment data from a prior confirmation
+            has_linkedin = bool(profile_data.get("linkedin_url"))
+            has_enrichment = bool(profile_data.get("title") or profile_data.get("photo_url"))
+
+            if has_linkedin and has_enrichment:
+                profile_data["linkedin_status"] = "confirmed"
+                entity.domains = json.dumps(profile_data)
+                repaired += 1
+                logger.info("Repaired linkedin_status for %s (id=%d)", entity.name, entity.id)
+            elif has_linkedin and not has_enrichment:
+                # Has a LinkedIn URL (from auto-match) but no confirmed enrichment
+                # — needs user review
+                profile_data["linkedin_status"] = "pending_review"
+                if not profile_data.get("linkedin_candidates"):
+                    profile_data["linkedin_candidates"] = [{
+                        "linkedin_url": profile_data["linkedin_url"],
+                        "name": entity.name,
+                    }]
+                entity.domains = json.dumps(profile_data)
+                repaired += 1
+                logger.info(
+                    "Queued for review: %s (id=%d, has linkedin but no enrichment)",
+                    entity.name, entity.id,
+                )
+
+        if repaired:
+            session.commit()
+            logger.info("LinkedIn status repair: restored %d profiles", repaired)
+    except Exception:
+        session.rollback()
+        logger.exception("LinkedIn status repair failed")
+    finally:
+        session.close()
+
+    return repaired
 
 
 def start_background_sync(interval_minutes: int = 30):
