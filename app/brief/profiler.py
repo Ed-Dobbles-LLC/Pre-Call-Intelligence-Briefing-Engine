@@ -38,8 +38,8 @@ fiction.
 category in parentheses: (LinkedIn profile), (LinkedIn post), (press \
 release), (company blog), (podcast: [name]), (conference talk: [name]), \
 (news: [outlet]), (SEC filing), (corporate registry), (Crunchbase), etc. \
-You do not need exact URLs, but you must name the source type so the user \
-can verify.
+When web search results are provided with URLs, cite the specific URL. \
+Otherwise, name the source type so the user can verify.
 
 4. **No generic executive fluff.** Phrases like "proven leader," \
 "passionate about innovation," or "track record of success" are banned. \
@@ -65,6 +65,9 @@ USER_PROMPT_TEMPLATE = """\
 
 ## INTERNAL CONTEXT (from our meetings and emails)
 {internal_context}
+
+## WEB RESEARCH (real-time search results)
+{web_research}
 
 ## REQUIRED DELIVERABLES
 
@@ -244,6 +247,7 @@ def generate_deep_profile(
     industry: str = "",
     company_size: int | None = None,
     interactions_summary: str = "",
+    web_research: str = "",
 ) -> str:
     """Generate a deep intelligence profile for a verified contact.
 
@@ -256,6 +260,12 @@ def generate_deep_profile(
     else:
         internal_context = "No internal meeting or email history available."
 
+    if not web_research:
+        web_research = (
+            "No web search results available. Rely on your training data and "
+            "flag all claims with appropriate confidence levels."
+        )
+
     user_prompt = USER_PROMPT_TEMPLATE.format(
         name=name,
         title=title or "Unknown",
@@ -265,6 +275,7 @@ def generate_deep_profile(
         industry=industry or "Unknown",
         company_size=f"{company_size:,} employees" if company_size else "Unknown",
         internal_context=internal_context,
+        web_research=web_research,
     )
 
     llm = LLMClient()

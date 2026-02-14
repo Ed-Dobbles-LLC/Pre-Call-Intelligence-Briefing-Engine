@@ -22,6 +22,7 @@ from pydantic import BaseModel, Field
 
 from app.brief.pipeline import run_pipeline
 from app.brief.profiler import build_interactions_summary, generate_deep_profile
+from app.clients.serpapi import SerpAPIClient, format_web_results_for_prompt
 from app.config import settings, validate_config
 from app.models import BriefOutput
 from app.store.database import BriefLog, EntityRecord, get_session, init_db
@@ -528,10 +529,11 @@ async def set_linkedin(profile_id: int, request: SetLinkedInRequest):
 
 
 @app.post("/profiles/{profile_id}/deep-profile", dependencies=[Depends(verify_api_key)])
-def generate_profile_research(profile_id: int):
+async def generate_profile_research(profile_id: int):
     """Generate a deep intelligence profile for a verified contact.
 
-    Uses the LLM to produce a structured executive dossier with career analysis,
+    Uses web search (SerpAPI) to gather real public data, then the LLM
+    to produce a structured executive dossier with career analysis,
     strategic patterns, conversation playbook, and risk signals.
     Only works for profiles with linkedin_status == 'confirmed'.
     """
@@ -554,6 +556,26 @@ def generate_profile_research(profile_id: int):
 
         interactions_summary = build_interactions_summary(profile_data)
 
+        # Fetch real web data via SerpAPI if configured
+        web_research = ""
+        if settings.serpapi_api_key:
+            try:
+                serp = SerpAPIClient()
+                results = await serp.search_person(
+                    name=entity.name,
+                    company=profile_data.get("company", ""),
+                    title=profile_data.get("title", ""),
+                    linkedin_url=profile_data.get("linkedin_url", ""),
+                )
+                web_research = format_web_results_for_prompt(results)
+                logger.info(
+                    "Web search for '%s' returned %d total results",
+                    entity.name,
+                    sum(len(v) for v in results.values()),
+                )
+            except Exception:
+                logger.exception("Web search failed for '%s', proceeding without", entity.name)
+
         result = generate_deep_profile(
             name=entity.name,
             title=profile_data.get("title", ""),
@@ -563,6 +585,7 @@ def generate_profile_research(profile_id: int):
             industry=profile_data.get("company_industry", ""),
             company_size=profile_data.get("company_size"),
             interactions_summary=interactions_summary,
+            web_research=web_research,
         )
 
         profile_data["deep_profile"] = result
