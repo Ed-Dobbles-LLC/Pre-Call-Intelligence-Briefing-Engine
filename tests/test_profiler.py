@@ -205,6 +205,9 @@ class TestPromptTemplates:
     def test_system_prompt_requires_disambiguation(self):
         assert "Disambiguation" in SYSTEM_PROMPT
 
+    def test_system_prompt_supports_web_citations(self):
+        assert "URL" in SYSTEM_PROMPT
+
     def test_user_prompt_template_has_all_sections(self):
         assert "SUBJECT IDENTIFIERS" in USER_PROMPT_TEMPLATE
         assert "INTERNAL CONTEXT" in USER_PROMPT_TEMPLATE
@@ -239,8 +242,13 @@ class TestPromptTemplates:
             industry="Test",
             company_size="Test",
             internal_context="Test",
+            web_research="Test",
         )
         assert "{" not in result  # no unfilled placeholders
 
     def test_user_prompt_has_quality_self_check(self):
         assert "QUALITY SELF-CHECK" in USER_PROMPT_TEMPLATE
+
+    def test_user_prompt_has_web_research_section(self):
+        assert "WEB RESEARCH" in USER_PROMPT_TEMPLATE
+        assert "{web_research}" in USER_PROMPT_TEMPLATE

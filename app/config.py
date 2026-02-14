@@ -28,6 +28,9 @@ class Settings(BaseSettings):
     # Apollo.io (contact enrichment)
     apollo_api_key: str = ""
 
+    # SerpAPI (web search for deep profiles)
+    serpapi_api_key: str = ""
+
     # Gmail / Google OAuth
     gmail_credentials_path: str = "./credentials.json"
     gmail_token_path: str = "./token.json"
