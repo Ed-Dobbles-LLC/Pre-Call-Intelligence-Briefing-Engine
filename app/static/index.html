@@ -2014,6 +2014,7 @@
             </div>
           </div>
           ${p.company_industry || p.company_size ? '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">' + (p.company_industry ? '<span class="profile-tag meetings">' + p.company_industry + '</span>' : '') + (p.company_size ? '<span class="profile-tag emails">' + p.company_size.toLocaleString() + ' employees</span>' : '') + '</div>' : ''}
+          ${p.linkedin_status === 'confirmed' ? '<div style="margin-top:14px"><button class="btn-research" onclick="' + (p.deep_profile ? 'scrollToDeepProfile(' + p.id + ')' : 'generateDeepProfile(' + p.id + ')') + '"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/><path d="M11 8v6M8 11h6"/></svg>' + (p.deep_profile ? 'View Intelligence Dossier' : 'Run Deep Research') + '</button></div>' : ''}
         </div>`;
 
       if (p.interactions && p.interactions.length) {
@@ -2097,6 +2098,11 @@
     });
 
     // ── Deep Profile Research ──
+    function scrollToDeepProfile(profileId) {
+      const section = document.getElementById('deepProfileSection' + profileId);
+      if (section) section.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+
     async function generateDeepProfile(profileId, regenerate) {
       const section = document.getElementById('deepProfileSection' + profileId);
       if (!section) return;
