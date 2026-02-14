@@ -22,7 +22,7 @@ from pydantic import BaseModel, Field
 from app.brief.pipeline import run_pipeline
 from app.config import settings, validate_config
 from app.models import BriefOutput
-from app.store.database import BriefLog, get_session, init_db
+from app.store.database import BriefLog, EntityRecord, get_session, init_db
 from app.sync.auto_sync import (
     _extract_next_steps,
     async_sync_fireflies,
@@ -248,6 +248,79 @@ async def trigger_sync():
 def list_profiles():
     """Return all auto-generated contact profiles."""
     return get_all_profiles()
+
+
+class ConfirmLinkedInRequest(BaseModel):
+    candidate_index: int = Field(
+        ..., ge=-1,
+        description="Index into linkedin_candidates, or -1 for 'none of the above'",
+    )
+
+
+@app.get("/profiles/pending-review", dependencies=[Depends(verify_api_key)])
+def profiles_pending_review():
+    """Return profiles that need LinkedIn disambiguation."""
+    all_p = get_all_profiles()
+    return [p for p in all_p if p.get("linkedin_status") == "pending_review"]
+
+
+@app.post("/profiles/{profile_id}/confirm-linkedin", dependencies=[Depends(verify_api_key)])
+def confirm_linkedin(profile_id: int, request: ConfirmLinkedInRequest):
+    """Confirm or reject a LinkedIn candidate for a profile.
+
+    candidate_index = -1 means 'none of the above' (mark as no_match).
+    """
+    session = get_session()
+    try:
+        entity = session.query(EntityRecord).get(profile_id)
+        if not entity:
+            raise HTTPException(status_code=404, detail="Profile not found")
+
+        profile_data = json.loads(entity.domains or "{}")
+        candidates = profile_data.get("linkedin_candidates", [])
+
+        if request.candidate_index == -1:
+            profile_data["linkedin_status"] = "no_match"
+            profile_data["linkedin_candidates"] = []
+            entity.domains = json.dumps(profile_data)
+            session.commit()
+            return {"status": "ok", "linkedin_status": "no_match"}
+
+        if request.candidate_index >= len(candidates):
+            raise HTTPException(status_code=422, detail="Invalid candidate index")
+
+        chosen = candidates[request.candidate_index]
+
+        profile_data["photo_url"] = chosen.get("photo_url", "")
+        profile_data["linkedin_url"] = chosen.get("linkedin_url", "")
+        profile_data["title"] = chosen.get("title", "")
+        profile_data["headline"] = chosen.get("headline", "")
+        profile_data["seniority"] = chosen.get("seniority", "")
+        profile_data["location"] = ", ".join(
+            filter(None, [chosen.get("city", ""), chosen.get("state", "")])
+        )
+        if chosen.get("company_name") and not profile_data.get("company"):
+            profile_data["company"] = chosen["company_name"]
+        elif chosen.get("company_name"):
+            profile_data["company_full"] = chosen["company_name"]
+        profile_data["company_industry"] = chosen.get("company_industry", "")
+        profile_data["company_size"] = chosen.get("company_size")
+        profile_data["company_linkedin"] = chosen.get("company_linkedin", "")
+
+        profile_data["linkedin_status"] = "confirmed"
+        profile_data["linkedin_candidates"] = []
+
+        entity.domains = json.dumps(profile_data)
+        session.commit()
+        return {"status": "ok", "linkedin_status": "confirmed"}
+    except HTTPException:
+        raise
+    except Exception:
+        session.rollback()
+        logger.exception("Failed to confirm LinkedIn for profile %d", profile_id)
+        raise HTTPException(status_code=500, detail="Failed to update profile")
+    finally:
+        session.close()
 
 
 @app.get("/stats", dependencies=[Depends(verify_api_key)])
