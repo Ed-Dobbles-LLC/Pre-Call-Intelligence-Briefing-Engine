@@ -1673,15 +1673,30 @@
       return '';
     }
 
+    function avatarFallback(img) {
+      const fallbacks = (img.dataset.fallbacks || '').split('|').filter(Boolean);
+      if (fallbacks.length) {
+        img.src = fallbacks[0];
+        img.dataset.fallbacks = fallbacks.slice(1).join('|');
+      } else {
+        img.remove();
+      }
+    }
+
     function avatarHtml(name, email, size, photoUrl) {
       size = size || 40;
       const initials = getInitials(name);
       const colorCls = avatarClass(name);
-      // Prefer Apollo photo, then Gravatar, then initials
-      const imgSrc = photoUrl || getGravatarUrl(email, size * 2);
-      if (imgSrc) {
+      // Fallback chain: Apollo photo → unavatar.io (multi-source) → Gravatar → initials
+      const sources = [];
+      if (photoUrl) sources.push(photoUrl);
+      if (email) sources.push('https://unavatar.io/' + encodeURIComponent(email.trim().toLowerCase()) + '?fallback=false');
+      const gravatar = getGravatarUrl(email, size * 2);
+      if (gravatar) sources.push(gravatar);
+      if (sources.length) {
+        const fallbacks = sources.slice(1).join('|');
         return `<div class="profile-avatar ${colorCls}" style="width:${size}px;height:${size}px;font-size:${Math.round(size*0.4)}px">
-          <img class="profile-avatar-img" src="${imgSrc}" alt="" onerror="this.remove()">${initials}</div>`;
+          <img class="profile-avatar-img" src="${sources[0]}" alt="" data-fallbacks="${fallbacks}" onerror="avatarFallback(this)">${initials}</div>`;
       }
       return `<div class="profile-avatar ${colorCls}" style="width:${size}px;height:${size}px;font-size:${Math.round(size*0.4)}px">${initials}</div>`;
     }
