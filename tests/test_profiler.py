@@ -187,19 +187,46 @@ class TestGenerateDeepProfile:
 
 class TestPromptTemplates:
     def test_system_prompt_has_rules(self):
-        assert "RULES" in SYSTEM_PROMPT
+        assert "CRITICAL RULES" in SYSTEM_PROMPT
         assert "senior executive intelligence analyst" in SYSTEM_PROMPT
 
+    def test_system_prompt_requires_evidence_tagging(self):
+        assert "[FACT]" in SYSTEM_PROMPT
+        assert "[INFERENCE]" in SYSTEM_PROMPT
+        assert "[INTERNAL]" in SYSTEM_PROMPT
+
+    def test_system_prompt_requires_gap_flagging(self):
+        assert "No public evidence found" in SYSTEM_PROMPT
+
+    def test_system_prompt_bans_fluff(self):
+        assert "generic executive fluff" in SYSTEM_PROMPT
+        assert "banned" in SYSTEM_PROMPT
+
+    def test_system_prompt_requires_disambiguation(self):
+        assert "Disambiguation" in SYSTEM_PROMPT
+
     def test_user_prompt_template_has_all_sections(self):
-        assert "PROFILE REQUEST" in USER_PROMPT_TEMPLATE
+        assert "SUBJECT IDENTIFIERS" in USER_PROMPT_TEMPLATE
         assert "INTERNAL CONTEXT" in USER_PROMPT_TEMPLATE
-        assert "Executive Snapshot" in USER_PROMPT_TEMPLATE
-        assert "Intellectual Profile" in USER_PROMPT_TEMPLATE
-        assert "Strategic Pattern Analysis" in USER_PROMPT_TEMPLATE
-        assert "Meeting Behavior Forecast" in USER_PROMPT_TEMPLATE
-        assert "Power Map Context" in USER_PROMPT_TEMPLATE
-        assert "Strategic Conversation Playbook" in USER_PROMPT_TEMPLATE
-        assert "Risk & Opportunity Signals" in USER_PROMPT_TEMPLATE
+        assert "Executive Summary" in USER_PROMPT_TEMPLATE
+        assert "Identity & Disambiguation" in USER_PROMPT_TEMPLATE
+        assert "Career Timeline" in USER_PROMPT_TEMPLATE
+        assert "Public Statements & Positions" in USER_PROMPT_TEMPLATE
+        assert "Rhetorical & Cognitive Patterns" in USER_PROMPT_TEMPLATE
+        assert "Tone & Behavioral Forecast" in USER_PROMPT_TEMPLATE
+        assert "Cross-Topic Position Map" in USER_PROMPT_TEMPLATE
+        assert "Gaps, Risks & Inconsistencies" in USER_PROMPT_TEMPLATE
+        assert "Targeted Interview Questions" in USER_PROMPT_TEMPLATE
+        assert "Conversation Strategy" in USER_PROMPT_TEMPLATE
+
+    def test_user_prompt_requires_tables(self):
+        assert "| Date/Period |" in USER_PROMPT_TEMPLATE
+        assert "| Topic Area |" in USER_PROMPT_TEMPLATE
+
+    def test_user_prompt_requires_question_rationale(self):
+        """Each interview question must explain why it's being asked."""
+        assert "Why this question" in USER_PROMPT_TEMPLATE
+        assert "tied to a specific claim" in USER_PROMPT_TEMPLATE
 
     def test_user_prompt_template_format_fields(self):
         """Ensure all format placeholders can be filled."""
@@ -214,3 +241,6 @@ class TestPromptTemplates:
             internal_context="Test",
         )
         assert "{" not in result  # no unfilled placeholders
+
+    def test_user_prompt_has_quality_self_check(self):
+        assert "QUALITY SELF-CHECK" in USER_PROMPT_TEMPLATE
