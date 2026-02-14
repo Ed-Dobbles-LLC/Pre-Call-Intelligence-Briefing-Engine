@@ -27,6 +27,14 @@ from app.config import settings
 
 Base = declarative_base()
 
+# Module-level flag: True when pgvector extension is confirmed available.
+_pgvector_available: bool = False
+
+
+def pgvector_available() -> bool:
+    """Return whether the pgvector extension was successfully enabled."""
+    return _pgvector_available
+
 
 # ---------------------------------------------------------------------------
 # Entities
@@ -154,19 +162,35 @@ def get_session_factory(url: str | None = None) -> sessionmaker:
 def init_db(url: str | None = None) -> None:
     """Create all tables if they don't exist.
 
-    On Postgres, attempts to enable the pgvector extension (non-fatal if unavailable).
+    On Postgres, probes for the pgvector extension but never attempts to
+    CREATE it (which requires superuser on managed hosts like Railway).
+    The embeddings table always uses a TEXT column with JSON-serialised
+    vectors so the application works identically with or without pgvector.
     """
+    global _pgvector_available
     import logging
     _log = logging.getLogger(__name__)
 
     engine = get_engine(url)
-    if not (url or settings.effective_database_url).startswith("sqlite"):
+    effective_url = url or settings.effective_database_url
+    if not effective_url.startswith("sqlite"):
         try:
             with engine.connect() as conn:
-                conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
-                conn.commit()
+                row = conn.execute(
+                    text(
+                        "SELECT 1 FROM pg_extension WHERE extname = 'vector'"
+                    )
+                ).fetchone()
+                if row:
+                    _pgvector_available = True
+                    _log.info("pgvector extension detected")
+                else:
+                    _log.info(
+                        "pgvector extension not installed — embeddings will "
+                        "use TEXT column with in-memory cosine similarity"
+                    )
         except Exception as exc:
-            _log.warning("pgvector extension not available (non-fatal): %s", exc)
+            _log.warning("Could not probe for pgvector extension: %s", exc)
     Base.metadata.create_all(engine)
 
 
