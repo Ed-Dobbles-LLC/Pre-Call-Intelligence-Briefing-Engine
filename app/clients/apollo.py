@@ -19,6 +19,7 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 
 APOLLO_ENRICH_URL = "https://api.apollo.io/api/v1/people/match"
+APOLLO_SEARCH_URL = "https://api.apollo.io/api/v1/mixed_people/search"
 
 
 class ApolloClient:
@@ -100,6 +101,57 @@ class ApolloClient:
             logger.exception("Apollo enrichment failed for %s", email or name)
             return None
 
+    async def search_people(
+        self,
+        name: str | None = None,
+        organization_name: str | None = None,
+        per_page: int = 5,
+    ) -> list[dict[str, Any]]:
+        """Search Apollo for people matching name/company. Returns a list of candidates."""
+        if not self.api_key:
+            return []
+        if not name and not organization_name:
+            return []
+
+        payload: dict[str, Any] = {
+            "page": 1,
+            "per_page": per_page,
+        }
+        q_parts = []
+        if name:
+            q_parts.append(name)
+        if organization_name:
+            q_parts.append(organization_name)
+            payload["organization_name"] = organization_name
+        payload["q_keywords"] = " ".join(q_parts)
+
+        try:
+            async with httpx.AsyncClient(timeout=15) as client:
+                resp = await client.post(
+                    APOLLO_SEARCH_URL, json=payload, headers=self.headers
+                )
+                if resp.status_code == 429:
+                    logger.warning("Apollo search rate limit hit")
+                    return []
+                if resp.status_code != 200:
+                    logger.warning(
+                        "Apollo search returned %d: %s",
+                        resp.status_code,
+                        resp.text[:200],
+                    )
+                    return []
+                data = resp.json()
+                people = data.get("people") or []
+                logger.info(
+                    "Apollo search for '%s' returned %d candidates",
+                    " ".join(q_parts),
+                    len(people),
+                )
+                return people
+        except Exception:
+            logger.exception("Apollo search failed for '%s'", " ".join(q_parts))
+            return []
+
     async def enrich_many(
         self, contacts: list[dict[str, str | None]],
         name_variants: dict[str, list[str]] | None = None,
@@ -170,6 +222,27 @@ class ApolloClient:
                 await asyncio.sleep(0.5)
 
         return results
+
+
+def normalize_candidate(person: dict[str, Any]) -> dict[str, Any]:
+    """Summarise a raw Apollo person record into a disambiguation candidate."""
+    org = person.get("organization") or {}
+    return {
+        "name": person.get("name") or "",
+        "photo_url": person.get("photo_url") or "",
+        "linkedin_url": person.get("linkedin_url") or "",
+        "title": person.get("title") or "",
+        "headline": person.get("headline") or "",
+        "company_name": org.get("name") or "",
+        "seniority": person.get("seniority") or "",
+        "city": person.get("city") or "",
+        "state": person.get("state") or "",
+        "country": person.get("country") or "",
+        "company_industry": org.get("industry") or "",
+        "company_size": org.get("estimated_num_employees"),
+        "company_domain": org.get("primary_domain") or "",
+        "company_linkedin": org.get("linkedin_url") or "",
+    }
 
 
 def normalize_enrichment(person: dict[str, Any] | None) -> dict[str, Any]:

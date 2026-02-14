@@ -1003,6 +1003,159 @@
       object-fit: cover;
     }
 
+    /* ── LinkedIn Review Page ── */
+    .review-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 24px;
+    }
+    .review-header h2 {
+      font-size: 22px;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+    }
+    .review-count {
+      font-size: 14px;
+      color: var(--text-secondary);
+    }
+    .review-list {
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+    .review-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 24px;
+    }
+    .review-card-header {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      margin-bottom: 20px;
+      padding-bottom: 16px;
+      border-bottom: 1px solid var(--border);
+    }
+    .review-card-info { flex: 1; min-width: 0; }
+    .review-card-name {
+      font-size: 18px;
+      font-weight: 600;
+    }
+    .review-card-meta {
+      font-size: 13px;
+      color: var(--text-secondary);
+      margin-top: 2px;
+    }
+    .review-label {
+      font-size: 12px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--text-muted);
+      margin-bottom: 12px;
+    }
+    .candidates-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+    .candidate-card {
+      background: var(--bg-secondary);
+      border: 2px solid var(--border);
+      border-radius: var(--radius-md);
+      padding: 16px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .candidate-card:hover {
+      border-color: var(--accent);
+      background: var(--bg-card-hover);
+      transform: translateY(-1px);
+      box-shadow: var(--shadow-md);
+    }
+    .candidate-card.selected {
+      border-color: var(--accent);
+      background: var(--accent-glow);
+    }
+    .candidate-top {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 10px;
+    }
+    .candidate-name {
+      font-size: 14px;
+      font-weight: 600;
+    }
+    .candidate-title {
+      font-size: 12px;
+      color: var(--text-secondary);
+      margin-top: 1px;
+    }
+    .candidate-details {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+    .candidate-detail {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .candidate-li-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 12px;
+      color: var(--accent-light);
+      text-decoration: none;
+      margin-top: 8px;
+    }
+    .candidate-li-link:hover { color: #fff; }
+    .review-actions {
+      display: flex;
+      gap: 10px;
+      margin-top: 16px;
+      padding-top: 16px;
+      border-top: 1px solid var(--border);
+    }
+    .btn-confirm {
+      padding: 8px 20px;
+      background: var(--accent-gradient);
+      color: #fff;
+      border: none;
+      border-radius: var(--radius-sm);
+      font-size: 13px;
+      font-weight: 600;
+      font-family: inherit;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .btn-confirm:hover { opacity: 0.9; }
+    .btn-confirm:disabled { opacity: 0.4; cursor: not-allowed; }
+    .btn-none {
+      padding: 8px 20px;
+      background: transparent;
+      color: var(--text-secondary);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      font-size: 13px;
+      font-weight: 500;
+      font-family: inherit;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .btn-none:hover { color: var(--text-primary); border-color: var(--border-light); }
+    .review-empty {
+      text-align: center;
+      padding: 80px 16px;
+    }
+
     /* ── Utility ── */
     .flex-center { display: flex; align-items: center; justify-content: center; }
     .avatar-colors-0 { background: linear-gradient(135deg, #7c5cfc, #5c8afc); color: #fff; }
@@ -1031,6 +1184,10 @@
       <button class="nav-tab" onclick="showPage('profiles')" id="navProfiles">
         Profiles
         <span class="badge" id="profilesBadge" style="display:none">0</span>
+      </button>
+      <button class="nav-tab" onclick="showPage('review')" id="navReview">
+        Review
+        <span class="badge" id="reviewBadge" style="display:none">0</span>
       </button>
       <button class="nav-tab" onclick="showPage('generate')" id="navGenerate">Generate Brief</button>
     </div>
@@ -1185,6 +1342,24 @@
           </div>
           <div class="empty-title">No profiles yet</div>
           <div class="empty-subtitle">Click "Sync Now" on the Home page to pull transcripts from Fireflies and auto-build contact profiles.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════ LINKEDIN REVIEW PAGE ═══════════════════ -->
+  <div class="page-view" id="pageReview">
+    <div class="container">
+      <div class="review-header">
+        <h2>LinkedIn Profile Review</h2>
+        <div class="review-count" id="reviewCount"></div>
+      </div>
+      <div class="review-list" id="reviewList">
+        <div class="review-empty">
+          <div style="margin-bottom: 12px; opacity: 0.3;">
+            <svg width="48" height="48" viewBox="0 0 24 24" fill="currentColor"><path d="M20.5 2h-17A1.5 1.5 0 002 3.5v17A1.5 1.5 0 003.5 22h17a1.5 1.5 0 001.5-1.5v-17A1.5 1.5 0 0020.5 2zM8 19H5v-9h3zM6.5 8.25A1.75 1.75 0 118.3 6.5a1.78 1.78 0 01-1.8 1.75zM19 19h-3v-4.74c0-1.42-.6-1.93-1.38-1.93A1.74 1.74 0 0013 14.19V19h-3v-9h2.9v1.3a3.11 3.11 0 012.7-1.4c1.55 0 3.36.86 3.36 3.66z"/></svg>
+          </div>
+          <div class="empty-title">Loading...</div>
         </div>
       </div>
     </div>
@@ -1429,6 +1604,7 @@
       $('nav' + page.charAt(0).toUpperCase() + page.slice(1)).classList.add('active');
 
       if (page === 'profiles') loadProfiles();
+      if (page === 'review') loadPendingReviews();
       if (page === 'generate') loadRecent();
     }
 
@@ -1633,6 +1809,7 @@
         loadStats();
         loadProfiles();
         loadNextSteps();
+        loadPendingReviews();
       } catch (e) {
         showToast(e.message);
       } finally {
@@ -1685,6 +1862,8 @@
             ${p.email_count ? '<span class="profile-tag emails">' + p.email_count + ' email' + (p.email_count > 1 ? 's' : '') + '</span>' : ''}
             ${!p.meeting_count && !p.email_count ? '<span class="profile-tag">New</span>' : ''}
             <span class="profile-tag ${healthClass}">${healthLabel}</span>
+            ${p.linkedin_status === 'pending_review' ? '<span class="profile-tag" style="background:var(--warning-bg);color:var(--warning)">Needs Review</span>' : ''}
+            ${p.linkedin_url ? '<span class="profile-tag" style="background:var(--success-bg);color:var(--success)">LinkedIn</span>' : ''}
           </div>
           <div class="profile-stats">
             <div class="profile-stat">
@@ -1915,11 +2094,162 @@
       URL.revokeObjectURL(a.href);
     }
 
+    // ── LinkedIn Review ──
+    let pendingReviews = [];
+    let selectedCandidates = {}; // profileId -> candidate index
+
+    async function loadPendingReviews() {
+      try {
+        const res = await fetch(API_BASE + '/profiles/pending-review');
+        if (!res.ok) return;
+        pendingReviews = await res.json();
+        renderPendingReviews();
+        // Update badge
+        if (pendingReviews.length > 0) {
+          $('reviewBadge').style.display = 'inline-flex';
+          $('reviewBadge').textContent = pendingReviews.length;
+        } else {
+          $('reviewBadge').style.display = 'none';
+        }
+      } catch (e) {}
+    }
+
+    function renderPendingReviews() {
+      const container = $('reviewList');
+      $('reviewCount').textContent = pendingReviews.length
+        ? pendingReviews.length + ' contact' + (pendingReviews.length > 1 ? 's' : '') + ' need review'
+        : '';
+
+      if (!pendingReviews.length) {
+        container.innerHTML = `
+          <div class="review-empty">
+            <div style="margin-bottom: 12px; opacity: 0.3;">
+              <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+            </div>
+            <div class="empty-title">All caught up</div>
+            <div class="empty-subtitle">No contacts need LinkedIn profile review right now. When a sync finds contacts that can't be matched automatically, they'll appear here.</div>
+          </div>`;
+        return;
+      }
+
+      container.innerHTML = pendingReviews.map((p, pi) => {
+        const candidates = p.linkedin_candidates || [];
+        const selectedIdx = selectedCandidates[p.id];
+        return `
+        <div class="review-card" id="reviewCard${p.id}">
+          <div class="review-card-header">
+            ${avatarHtml(p.name, p.email, 48, p.photo_url)}
+            <div class="review-card-info">
+              <div class="review-card-name">${p.name}</div>
+              <div class="review-card-meta">
+                ${p.company ? p.company + ' &middot; ' : ''}${p.email || ''}
+                ${p.meeting_count ? ' &middot; ' + p.meeting_count + ' meeting' + (p.meeting_count > 1 ? 's' : '') : ''}
+              </div>
+            </div>
+          </div>
+          <div class="review-label">Select the correct LinkedIn profile</div>
+          <div class="candidates-grid">
+            ${candidates.map((c, ci) => `
+              <div class="candidate-card ${selectedIdx === ci ? 'selected' : ''}" onclick="selectCandidate(${p.id}, ${ci})">
+                <div class="candidate-top">
+                  ${c.photo_url
+                    ? '<div class="profile-avatar" style="width:40px;height:40px"><img class="profile-avatar-img" src="' + c.photo_url + '" alt="" onerror="this.parentElement.innerHTML=\'' + getInitials(c.name) + '\'"></div>'
+                    : '<div class="profile-avatar ' + avatarClass(c.name) + '" style="width:40px;height:40px;font-size:16px">' + getInitials(c.name) + '</div>'
+                  }
+                  <div>
+                    <div class="candidate-name">${c.name || 'Unknown'}</div>
+                    <div class="candidate-title">${c.title ? c.title + (c.company_name ? ' @ ' + c.company_name : '') : (c.company_name || '')}</div>
+                  </div>
+                </div>
+                <div class="candidate-details">
+                  ${c.headline ? '<div class="candidate-detail">' + c.headline + '</div>' : ''}
+                  ${c.city || c.state ? '<div class="candidate-detail"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg> ' + [c.city, c.state].filter(Boolean).join(', ') + '</div>' : ''}
+                  ${c.company_industry ? '<div class="candidate-detail">' + c.company_industry + (c.company_size ? ' &middot; ~' + c.company_size.toLocaleString() + ' employees' : '') + '</div>' : ''}
+                </div>
+                ${c.linkedin_url ? '<a class="candidate-li-link" href="' + c.linkedin_url + '" target="_blank" rel="noopener" onclick="event.stopPropagation()"><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M20.5 2h-17A1.5 1.5 0 002 3.5v17A1.5 1.5 0 003.5 22h17a1.5 1.5 0 001.5-1.5v-17A1.5 1.5 0 0020.5 2zM8 19H5v-9h3zM6.5 8.25A1.75 1.75 0 118.3 6.5a1.78 1.78 0 01-1.8 1.75zM19 19h-3v-4.74c0-1.42-.6-1.93-1.38-1.93A1.74 1.74 0 0013 14.19V19h-3v-9h2.9v1.3a3.11 3.11 0 012.7-1.4c1.55 0 3.36.86 3.36 3.66z"/></svg> View profile</a>' : ''}
+              </div>
+            `).join('')}
+          </div>
+          <div class="review-actions">
+            <button class="btn-confirm" id="confirmBtn${p.id}" ${selectedIdx === undefined ? 'disabled' : ''} onclick="confirmLinkedIn(${p.id})">
+              Confirm Selection
+            </button>
+            <button class="btn-none" onclick="rejectLinkedIn(${p.id})">None of the above</button>
+          </div>
+        </div>`;
+      }).join('');
+    }
+
+    function selectCandidate(profileId, candidateIndex) {
+      selectedCandidates[profileId] = candidateIndex;
+      // Re-render just the card's candidate selection states
+      const card = document.getElementById('reviewCard' + profileId);
+      if (card) {
+        card.querySelectorAll('.candidate-card').forEach((el, i) => {
+          el.classList.toggle('selected', i === candidateIndex);
+        });
+        const btn = document.getElementById('confirmBtn' + profileId);
+        if (btn) btn.disabled = false;
+      }
+    }
+
+    async function confirmLinkedIn(profileId) {
+      const idx = selectedCandidates[profileId];
+      if (idx === undefined) return;
+      const btn = document.getElementById('confirmBtn' + profileId);
+      if (btn) { btn.disabled = true; btn.textContent = 'Saving...'; }
+      try {
+        const res = await fetch(API_BASE + '/profiles/' + profileId + '/confirm-linkedin', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ candidate_index: idx }),
+        });
+        if (!res.ok) throw new Error('Failed to confirm');
+        showToast('LinkedIn profile confirmed!', 'success');
+        delete selectedCandidates[profileId];
+        pendingReviews = pendingReviews.filter(p => p.id !== profileId);
+        renderPendingReviews();
+        if (pendingReviews.length > 0) {
+          $('reviewBadge').textContent = pendingReviews.length;
+        } else {
+          $('reviewBadge').style.display = 'none';
+        }
+        // Refresh profiles to show new photo/linkedin
+        loadProfiles();
+      } catch (e) {
+        showToast(e.message);
+        if (btn) { btn.disabled = false; btn.textContent = 'Confirm Selection'; }
+      }
+    }
+
+    async function rejectLinkedIn(profileId) {
+      try {
+        const res = await fetch(API_BASE + '/profiles/' + profileId + '/confirm-linkedin', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ candidate_index: -1 }),
+        });
+        if (!res.ok) throw new Error('Failed to update');
+        showToast('Marked as no match', 'success');
+        delete selectedCandidates[profileId];
+        pendingReviews = pendingReviews.filter(p => p.id !== profileId);
+        renderPendingReviews();
+        if (pendingReviews.length > 0) {
+          $('reviewBadge').textContent = pendingReviews.length;
+        } else {
+          $('reviewBadge').style.display = 'none';
+        }
+      } catch (e) {
+        showToast(e.message);
+      }
+    }
+
     // ── Init ──
     checkHealth();
     loadStats();
     loadNextSteps();
     loadRecent();
+    loadPendingReviews();
     setInterval(checkHealth, 30000);
     setInterval(loadStats, 60000);
 

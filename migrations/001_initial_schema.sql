@@ -68,15 +68,13 @@ CREATE TABLE IF NOT EXISTS brief_logs (
 );
 
 -- ==========================================================================
--- SUPABASE MIGRATION NOTES
+-- POSTGRES / SUPABASE MIGRATION NOTES
 -- ==========================================================================
--- To migrate from SQLite to Supabase Postgres:
+-- To migrate from SQLite to Postgres:
 --
--- 1. Replace AUTOINCREMENT with SERIAL
--- 2. Replace the embeddings.embedding TEXT column with:
---       embedding vector(1536)
---    (requires the pgvector extension: CREATE EXTENSION IF NOT EXISTS vector;)
--- 3. Add a GiST or IVFFlat index on the embedding column:
---       CREATE INDEX ix_emb_vector ON embeddings USING ivfflat (embedding vector_cosine_ops);
--- 4. Update DATABASE_URL in .env to your Supabase connection string
--- 5. The application code auto-detects Postgres vs SQLite via the URL prefix
+-- 1. Run migration 002_postgres_railway.sql (uses SERIAL, TEXT embeddings)
+-- 2. Update DATABASE_URL in .env to your Postgres connection string
+-- 3. The application code auto-detects Postgres vs SQLite via the URL prefix
+-- 4. (Optional) If pgvector is available and you want native vector search,
+--    run migration 003_enable_pgvector.sql to upgrade the embeddings column
+--    to vector(1536) with an IVFFlat index

@@ -1,9 +1,11 @@
 -- Pre-Call Intelligence Briefing Engine
 -- Migration 002: PostgreSQL schema for Railway Postgres
 -- Run this against your Railway Postgres database
-
--- Enable pgvector for semantic search embeddings
-CREATE EXTENSION IF NOT EXISTS vector;
+--
+-- NOTE: This migration works with OR without pgvector.
+-- The embeddings.embedding column is TEXT (JSON-serialised float arrays).
+-- If you have pgvector installed and want native vector indexing, run
+-- migration 003_enable_pgvector.sql after this one.
 
 -- Entities: resolved persons and companies
 CREATE TABLE IF NOT EXISTS entities (
@@ -42,20 +44,21 @@ CREATE INDEX IF NOT EXISTS ix_source_type_date ON source_records(source_type, da
 CREATE INDEX IF NOT EXISTS ix_entity_date ON source_records(entity_id, date);
 CREATE INDEX IF NOT EXISTS ix_source_id ON source_records(source_id);
 
--- Embeddings: vector store for semantic retrieval
+-- Embeddings: stored as JSON text (compatible with all Postgres hosts)
+-- The application reads/writes JSON-serialised float arrays to this column
+-- and performs cosine similarity in Python.  See 003_enable_pgvector.sql
+-- for an optional upgrade to native vector(1536) + IVFFlat indexing.
 CREATE TABLE IF NOT EXISTS embeddings (
     id                  SERIAL PRIMARY KEY,
     source_record_id    INTEGER NOT NULL REFERENCES source_records(id),
     chunk_index         INTEGER DEFAULT 0,
     chunk_text          TEXT    NOT NULL,
-    embedding           vector(1536),
+    embedding           TEXT    NOT NULL,
     model               VARCHAR(128),
     created_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE INDEX IF NOT EXISTS ix_emb_source ON embeddings(source_record_id);
-CREATE INDEX IF NOT EXISTS ix_emb_vector ON embeddings USING ivfflat (embedding vector_cosine_ops)
-    WITH (lists = 100);
 
 -- Brief audit log
 CREATE TABLE IF NOT EXISTS brief_logs (
