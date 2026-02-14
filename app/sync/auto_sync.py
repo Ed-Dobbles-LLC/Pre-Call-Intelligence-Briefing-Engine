@@ -1029,9 +1029,9 @@ async def _enrich_profiles_with_apollo() -> int:
 async def _re_enrich_confirmed_profiles() -> int:
     """Re-enrich confirmed profiles that are missing photo_url.
 
-    This targets profiles that were confirmed before the enrichment-on-confirm
-    logic was added, or where Apollo's search results didn't include a photo.
-    Uses the stored linkedin_url for a precise Apollo match.
+    Targets confirmed profiles without a working photo. Tries Apollo
+    enrichment using linkedin_url when available, otherwise falls back
+    to email + name lookup.
     """
     if not settings.apollo_api_key:
         return 0
@@ -1056,8 +1056,11 @@ async def _re_enrich_confirmed_profiles() -> int:
                 continue
             if profile_data.get("photo_url"):
                 continue  # already has a photo
-            if not profile_data.get("linkedin_url"):
-                continue  # no LinkedIn URL to match against
+
+            # Need at least a LinkedIn URL or email to look up
+            emails = json.loads(entity.emails or "[]")
+            if not profile_data.get("linkedin_url") and not emails:
+                continue
 
             to_enrich.append((entity, profile_data))
 
@@ -1085,6 +1088,22 @@ async def _re_enrich_confirmed_profiles() -> int:
                     linkedin_url=profile_data.get("linkedin_url"),
                     organization_name=profile_data.get("company"),
                 )
+
+                # If direct enrichment found no photo, try search as fallback
+                if not person or not person.get("photo_url"):
+                    await asyncio.sleep(0.3)
+                    search_results = await client.search_people(
+                        name=entity.name,
+                        organization_name=profile_data.get("company"),
+                        per_page=3,
+                    )
+                    for sr in search_results:
+                        if sr.get("photo_url"):
+                            if not person:
+                                person = sr
+                            else:
+                                person["photo_url"] = sr["photo_url"]
+                            break
 
                 if not person:
                     await asyncio.sleep(0.3)
