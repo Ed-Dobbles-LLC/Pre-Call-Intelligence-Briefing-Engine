@@ -1661,6 +1661,18 @@
       return 'https://www.gravatar.com/avatar/' + hash + '?s=' + (size || 80) + '&d=404';
     }
 
+    function getCandidatePhoto(profile) {
+      // For pending_review profiles, show the recommended candidate's photo as preview
+      if (!profile || !profile.linkedin_candidates || !profile.linkedin_candidates.length) return '';
+      const rec = profile.linkedin_candidates.find(c => c.recommended);
+      if (rec && rec.photo_url) return rec.photo_url;
+      // Fall back to first candidate with a photo
+      for (const c of profile.linkedin_candidates) {
+        if (c.photo_url) return c.photo_url;
+      }
+      return '';
+    }
+
     function avatarHtml(name, email, size, photoUrl) {
       size = size || 40;
       const initials = getInitials(name);
@@ -1983,7 +1995,7 @@
         return `
         <div class="profile-card" onclick="openProfileModal(${i})">
           <div class="profile-card-top">
-            ${avatarHtml(p.name, p.email, 40, p.photo_url)}
+            ${avatarHtml(p.name, p.email, 40, p.photo_url || getCandidatePhoto(p))}
             <div class="profile-info">
               <div class="profile-name">${p.name}</div>
               <div class="profile-company">${p.title ? p.title + (p.company ? ' @ ' + p.company : '') : (p.company || p.email || 'Unknown')}</div>
@@ -2031,7 +2043,7 @@
       let html = `
         <div class="modal-section">
           <div style="display:flex;align-items:center;gap:16px;margin-bottom:20px">
-            ${avatarHtml(p.name, p.email, 56, p.photo_url)}
+            ${avatarHtml(p.name, p.email, 56, p.photo_url || getCandidatePhoto(p))}
             <div>
               <div style="font-size:20px;font-weight:700">${p.name}</div>
               ${p.title ? '<div style="color:var(--text-primary);font-size:14px">' + p.title + (p.company ? ' @ ' + p.company : '') + '</div>' : (p.company ? '<div style="color:var(--text-secondary)">' + p.company + '</div>' : '')}
@@ -2368,7 +2380,7 @@
 
         const headerHtml = `
           <div class="review-card-header">
-            ${avatarHtml(p.name, p.email, 48, p.photo_url)}
+            ${avatarHtml(p.name, p.email, 48, p.photo_url || getCandidatePhoto(p))}
             <div class="review-card-info">
               <div class="review-card-name">${p.name}</div>
               <div class="review-card-meta">

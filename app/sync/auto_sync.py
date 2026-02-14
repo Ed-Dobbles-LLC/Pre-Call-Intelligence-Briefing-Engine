@@ -972,14 +972,40 @@ async def _enrich_profiles_with_apollo() -> int:
                     continue
                 candidates.append(normalize_candidate(c))
 
-            if candidates:
+            if candidates and direct_match:
+                # Direct email match = high confidence → auto-confirm
+                profile_data["photo_url"] = direct_match.get("photo_url", "")
+                profile_data["linkedin_url"] = direct_match.get("linkedin_url", "")
+                profile_data["title"] = direct_match.get("title", "")
+                profile_data["headline"] = direct_match.get("headline", "")
+                profile_data["seniority"] = direct_match.get("seniority", "")
+                loc = ", ".join(filter(None, [
+                    direct_match.get("city", ""),
+                    direct_match.get("state", ""),
+                ]))
+                if loc:
+                    profile_data["location"] = loc
+                if direct_match.get("company_name") and not profile_data.get("company"):
+                    profile_data["company"] = direct_match["company_name"]
+                profile_data["company_industry"] = direct_match.get("company_industry", "")
+                profile_data["company_size"] = direct_match.get("company_size")
+                profile_data["company_linkedin"] = direct_match.get("company_linkedin", "")
+                profile_data["linkedin_status"] = "confirmed"
+                profile_data["linkedin_candidates"] = []
+                logger.info(
+                    "Apollo: auto-confirmed %s (direct email match, %d candidates)",
+                    entity.name,
+                    len(candidates),
+                )
+                enriched_count += 1
+            elif candidates:
+                # No direct match but have search candidates → needs review
                 profile_data["linkedin_status"] = "pending_review"
                 profile_data["linkedin_candidates"] = candidates
                 logger.info(
-                    "Apollo: %d candidates for %s – pending review%s",
+                    "Apollo: %d candidates for %s – pending review",
                     len(candidates),
                     entity.name,
-                    " (includes direct match)" if direct_match else "",
                 )
                 enriched_count += 1
             else:
@@ -990,7 +1016,7 @@ async def _enrich_profiles_with_apollo() -> int:
             entity.domains = json.dumps(profile_data)
 
         session.commit()
-        logger.info("Apollo enrichment: %d contacts queued for review", enriched_count)
+        logger.info("Apollo enrichment: %d contacts processed", enriched_count)
     except Exception:
         session.rollback()
         logger.exception("Apollo enrichment failed")
