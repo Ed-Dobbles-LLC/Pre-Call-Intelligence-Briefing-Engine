@@ -536,6 +536,15 @@
     .profile-tag.health-good { background: var(--success-bg); color: var(--success); }
     .profile-tag.health-neutral { background: var(--warning-bg); color: var(--warning); }
     .profile-tag.health-cold { background: var(--danger-bg); color: var(--danger); }
+    .profile-tag.verified { background: var(--success-bg); color: var(--success); display: inline-flex; align-items: center; gap: 3px; }
+    .verified-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 12px;
+      color: var(--success);
+      font-weight: 500;
+    }
     .profile-stats {
       display: flex;
       gap: 16px;
@@ -1896,7 +1905,7 @@
             ${!p.meeting_count && !p.email_count ? '<span class="profile-tag">New</span>' : ''}
             <span class="profile-tag ${healthClass}">${healthLabel}</span>
             ${p.linkedin_status === 'pending_review' ? '<span class="profile-tag" style="background:var(--warning-bg);color:var(--warning)">Needs Review</span>' : ''}
-            ${p.linkedin_url ? '<span class="profile-tag" style="background:var(--success-bg);color:var(--success)">LinkedIn</span>' : ''}
+            ${p.linkedin_status === 'confirmed' ? '<span class="profile-tag verified"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>Verified</span>' : (p.linkedin_url ? '<span class="profile-tag" style="background:var(--success-bg);color:var(--success)">LinkedIn</span>' : '')}
           </div>
           <div class="profile-stats">
             <div class="profile-stat">
@@ -1934,9 +1943,13 @@
             <div>
               <div style="font-size:20px;font-weight:700">${p.name}</div>
               ${p.title ? '<div style="color:var(--text-primary);font-size:14px">' + p.title + (p.company ? ' @ ' + p.company : '') + '</div>' : (p.company ? '<div style="color:var(--text-secondary)">' + p.company + '</div>' : '')}
+              ${p.headline && p.headline !== p.title ? '<div style="color:var(--text-muted);font-size:12px;font-style:italic">' + p.headline + '</div>' : ''}
               ${p.email ? '<div style="color:var(--text-muted);font-size:13px">' + p.email + '</div>' : ''}
               ${p.location ? '<div style="color:var(--text-muted);font-size:12px">' + p.location + '</div>' : ''}
-              ${contactLinksHtml(p.email, p.name, p.company, p.linkedin_url)}
+              <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+                ${contactLinksHtml(p.email, p.name, p.company, p.linkedin_url)}
+                ${p.linkedin_status === 'confirmed' ? '<span class="verified-badge"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg> Verified</span>' : ''}
+              </div>
             </div>
           </div>
           ${p.company_industry || p.company_size ? '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">' + (p.company_industry ? '<span class="profile-tag meetings">' + p.company_industry + '</span>' : '') + (p.company_size ? '<span class="profile-tag emails">' + p.company_size.toLocaleString() + ' employees</span>' : '') + '</div>' : ''}
