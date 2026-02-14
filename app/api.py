@@ -31,6 +31,7 @@ from app.sync.auto_sync import (
     async_sync_fireflies,
     get_all_profiles,
     get_dashboard_stats,
+    repair_linkedin_status,
     start_background_sync,
 )
 
@@ -49,6 +50,14 @@ async def lifespan(app: FastAPI):
         init_db()
     except Exception:
         logger.exception("Database init failed – running in degraded mode")
+    # Repair any linkedin_status fields wiped by the previous sync bug
+    try:
+        repaired = repair_linkedin_status()
+        if repaired:
+            logger.info("Repaired %d profiles with missing linkedin_status", repaired)
+    except Exception:
+        logger.exception("LinkedIn status repair failed")
+
     # Start background auto-sync for Fireflies transcripts
     if settings.fireflies_api_key:
         start_background_sync(interval_minutes=30)
