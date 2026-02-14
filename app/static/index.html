@@ -1151,6 +1151,39 @@
       transition: all 0.15s;
     }
     .btn-none:hover { color: var(--text-primary); border-color: var(--border-light); }
+    .search-row {
+      display: flex;
+      gap: 8px;
+      margin-top: 8px;
+    }
+    .search-row input {
+      flex: 1;
+      padding: 8px 12px;
+      background: var(--bg-input);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      color: var(--text-primary);
+      font-size: 13px;
+      font-family: inherit;
+    }
+    .search-row input::placeholder { color: var(--text-muted); }
+    .search-row input:focus { outline: none; border-color: var(--accent); }
+    .search-row button {
+      padding: 8px 16px;
+      background: var(--bg-card-hover);
+      color: var(--text-primary);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      font-size: 13px;
+      font-weight: 500;
+      font-family: inherit;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: all 0.15s;
+    }
+    .search-row button:hover { border-color: var(--accent); }
+    .search-row button:disabled { opacity: 0.4; cursor: not-allowed; }
+    .manual-or { color: var(--text-muted); font-size: 12px; margin-top: 12px; text-transform: uppercase; letter-spacing: 0.05em; }
     .review-empty {
       text-align: center;
       padding: 80px 16px;
@@ -1574,7 +1607,7 @@
           Email</a>`;
       }
       // Use real LinkedIn URL from Apollo if available, otherwise search
-      const liUrl = linkedinUrl || ('https://www.linkedin.com/search/results/all/?keywords=' + encodeURIComponent([name, company].filter(Boolean).join(' ')));
+      const liUrl = linkedinUrl || ('https://www.linkedin.com/search/results/people/?keywords=' + encodeURIComponent([name, company].filter(Boolean).join(' ')));
       if (name) {
         html += `<a class="contact-link" href="${liUrl}" target="_blank" rel="noopener" onclick="event.stopPropagation()" title="${linkedinUrl ? 'View LinkedIn profile' : 'Search on LinkedIn'}">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M20.5 2h-17A1.5 1.5 0 002 3.5v17A1.5 1.5 0 003.5 22h17a1.5 1.5 0 001.5-1.5v-17A1.5 1.5 0 0020.5 2zM8 19H5v-9h3zM6.5 8.25A1.75 1.75 0 118.3 6.5a1.78 1.78 0 01-1.8 1.75zM19 19h-3v-4.74c0-1.42-.6-1.93-1.38-1.93A1.74 1.74 0 0013 14.19V19h-3v-9h2.9v1.3a3.11 3.11 0 012.7-1.4c1.55 0 3.36.86 3.36 3.66z"/></svg>
@@ -2135,8 +2168,10 @@
       container.innerHTML = pendingReviews.map((p, pi) => {
         const candidates = p.linkedin_candidates || [];
         const selectedIdx = selectedCandidates[p.id];
-        return `
-        <div class="review-card" id="reviewCard${p.id}">
+        const isNoMatch = p.linkedin_status === 'no_match' || candidates.length === 0;
+        const defaultSearch = [p.name, p.company].filter(Boolean).join(' @ ');
+
+        const headerHtml = `
           <div class="review-card-header">
             ${avatarHtml(p.name, p.email, 48, p.photo_url)}
             <div class="review-card-info">
@@ -2146,7 +2181,9 @@
                 ${p.meeting_count ? ' &middot; ' + p.meeting_count + ' meeting' + (p.meeting_count > 1 ? 's' : '') : ''}
               </div>
             </div>
-          </div>
+          </div>`;
+
+        const candidatesHtml = candidates.length ? `
           <div class="review-label">Select the correct LinkedIn profile</div>
           <div class="candidates-grid">
             ${candidates.map((c, ci) => `
@@ -2157,7 +2194,7 @@
                     : '<div class="profile-avatar ' + avatarClass(c.name) + '" style="width:40px;height:40px;font-size:16px">' + getInitials(c.name) + '</div>'
                   }
                   <div>
-                    <div class="candidate-name">${c.name || 'Unknown'}</div>
+                    <div class="candidate-name">${c.name || 'Unknown'}${c.recommended ? ' <span class="profile-tag" style="background:var(--success-bg);color:var(--success);font-size:10px;margin-left:6px">Best match</span>' : ''}</div>
                     <div class="candidate-title">${c.title ? c.title + (c.company_name ? ' @ ' + c.company_name : '') : (c.company_name || '')}</div>
                   </div>
                 </div>
@@ -2175,7 +2212,27 @@
               Confirm Selection
             </button>
             <button class="btn-none" onclick="rejectLinkedIn(${p.id})">None of the above</button>
+          </div>` : `
+          <div class="review-label">No automatic matches found</div>`;
+
+        const searchHtml = `
+          <div class="${candidates.length ? 'manual-or' : ''}" style="margin-top:${candidates.length ? '12' : '4'}px;margin-bottom:8px;color:var(--text-muted);font-size:12px">${candidates.length ? 'Or search manually' : 'Search for this person'}</div>
+          <div class="search-row">
+            <input type="text" id="searchInput${p.id}" placeholder="Name @ Company (e.g. Jane Doe @ Acme)" value="${defaultSearch}" onkeydown="if(event.key==='Enter')searchLinkedIn(${p.id})" />
+            <button id="searchBtn${p.id}" onclick="searchLinkedIn(${p.id})">Search</button>
           </div>
+          <div class="manual-or" style="margin-bottom:8px">Or paste LinkedIn URL</div>
+          <div class="search-row">
+            <input type="text" id="manualUrl${p.id}" placeholder="https://www.linkedin.com/in/..." onkeydown="if(event.key==='Enter')setManualLinkedIn(${p.id})" />
+            <button onclick="setManualLinkedIn(${p.id})">Save</button>
+          </div>
+          ${isNoMatch ? '<div class="review-actions"><button class="btn-none" onclick="dismissProfile(' + p.id + ')">Skip this contact</button></div>' : ''}`;
+
+        return `
+        <div class="review-card" id="reviewCard${p.id}">
+          ${headerHtml}
+          ${candidatesHtml}
+          ${searchHtml}
         </div>`;
       }).join('');
     }
@@ -2222,6 +2279,87 @@
       }
     }
 
+    async function searchLinkedIn(profileId) {
+      const input = document.getElementById('searchInput' + profileId);
+      const btn = document.getElementById('searchBtn' + profileId);
+      const query = (input ? input.value : '').trim();
+      if (!query) { showToast('Enter a search query'); return; }
+      if (btn) { btn.disabled = true; btn.textContent = 'Searching...'; }
+      try {
+        const res = await fetch(API_BASE + '/profiles/' + profileId + '/search-linkedin', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ query: query }),
+        });
+        if (!res.ok) throw new Error('Search failed');
+        const data = await res.json();
+        if (!data.candidates || data.candidates.length === 0) {
+          showToast('No results found — try different terms');
+          if (btn) { btn.disabled = false; btn.textContent = 'Search'; }
+          return;
+        }
+        showToast(data.candidates.length + ' candidate(s) found', 'success');
+        // Update the local data and re-render
+        const profile = pendingReviews.find(p => p.id === profileId);
+        if (profile) {
+          profile.linkedin_candidates = data.candidates;
+          profile.linkedin_status = 'pending_review';
+        }
+        delete selectedCandidates[profileId];
+        renderPendingReviews();
+      } catch (e) {
+        showToast(e.message);
+        if (btn) { btn.disabled = false; btn.textContent = 'Search'; }
+      }
+    }
+
+    async function setManualLinkedIn(profileId) {
+      const input = document.getElementById('manualUrl' + profileId);
+      const url = (input ? input.value : '').trim();
+      if (!url) { showToast('Paste a LinkedIn URL'); return; }
+      if (!url.includes('linkedin.com')) { showToast('That doesn\'t look like a LinkedIn URL'); return; }
+      try {
+        const res = await fetch(API_BASE + '/profiles/' + profileId + '/set-linkedin', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ linkedin_url: url }),
+        });
+        if (!res.ok) throw new Error('Failed to save');
+        showToast('LinkedIn URL saved!', 'success');
+        pendingReviews = pendingReviews.filter(p => p.id !== profileId);
+        renderPendingReviews();
+        if (pendingReviews.length > 0) {
+          $('reviewBadge').textContent = pendingReviews.length;
+        } else {
+          $('reviewBadge').style.display = 'none';
+        }
+        loadProfiles();
+      } catch (e) {
+        showToast(e.message);
+      }
+    }
+
+    async function dismissProfile(profileId) {
+      try {
+        const res = await fetch(API_BASE + '/profiles/' + profileId + '/confirm-linkedin', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ candidate_index: -1 }),
+        });
+        if (!res.ok) throw new Error('Failed to update');
+        showToast('Contact skipped', 'success');
+        pendingReviews = pendingReviews.filter(p => p.id !== profileId);
+        renderPendingReviews();
+        if (pendingReviews.length > 0) {
+          $('reviewBadge').textContent = pendingReviews.length;
+        } else {
+          $('reviewBadge').style.display = 'none';
+        }
+      } catch (e) {
+        showToast(e.message);
+      }
+    }
+
     async function rejectLinkedIn(profileId) {
       try {
         const res = await fetch(API_BASE + '/profiles/' + profileId + '/confirm-linkedin', {
@@ -2232,7 +2370,12 @@
         if (!res.ok) throw new Error('Failed to update');
         showToast('Marked as no match', 'success');
         delete selectedCandidates[profileId];
-        pendingReviews = pendingReviews.filter(p => p.id !== profileId);
+        // Keep the profile in the list so user can search manually
+        const profile = pendingReviews.find(p => p.id === profileId);
+        if (profile) {
+          profile.linkedin_status = 'no_match';
+          profile.linkedin_candidates = [];
+        }
         renderPendingReviews();
         if (pendingReviews.length > 0) {
           $('reviewBadge').textContent = pendingReviews.length;

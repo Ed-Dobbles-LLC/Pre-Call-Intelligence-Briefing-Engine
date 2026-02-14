@@ -23,6 +23,7 @@ from app.brief.pipeline import run_pipeline
 from app.config import settings, validate_config
 from app.models import BriefOutput
 from app.store.database import BriefLog, EntityRecord, get_session, init_db
+from app.clients.apollo import ApolloClient, normalize_candidate
 from app.sync.auto_sync import (
     _extract_next_steps,
     async_sync_fireflies,
@@ -259,9 +260,15 @@ class ConfirmLinkedInRequest(BaseModel):
 
 @app.get("/profiles/pending-review", dependencies=[Depends(verify_api_key)])
 def profiles_pending_review():
-    """Return profiles that need LinkedIn disambiguation."""
+    """Return profiles that need LinkedIn disambiguation.
+
+    Includes both pending_review (have candidates) and no_match (need manual search).
+    """
     all_p = get_all_profiles()
-    return [p for p in all_p if p.get("linkedin_status") == "pending_review"]
+    return [
+        p for p in all_p
+        if p.get("linkedin_status") in ("pending_review", "no_match")
+    ]
 
 
 @app.post("/profiles/{profile_id}/confirm-linkedin", dependencies=[Depends(verify_api_key)])
@@ -318,6 +325,90 @@ def confirm_linkedin(profile_id: int, request: ConfirmLinkedInRequest):
     except Exception:
         session.rollback()
         logger.exception("Failed to confirm LinkedIn for profile %d", profile_id)
+        raise HTTPException(status_code=500, detail="Failed to update profile")
+    finally:
+        session.close()
+
+
+class SearchLinkedInRequest(BaseModel):
+    query: str = Field(..., min_length=1, description="Search terms (name, company, etc.)")
+
+
+@app.post("/profiles/{profile_id}/search-linkedin", dependencies=[Depends(verify_api_key)])
+async def search_linkedin(profile_id: int, request: SearchLinkedInRequest):
+    """Search Apollo for LinkedIn candidates using custom search terms.
+
+    Updates the profile with new candidates and sets status to pending_review.
+    """
+    session = get_session()
+    try:
+        entity = session.query(EntityRecord).get(profile_id)
+        if not entity:
+            raise HTTPException(status_code=404, detail="Profile not found")
+
+        client = ApolloClient()
+        if not client.api_key:
+            raise HTTPException(status_code=400, detail="Apollo API key not configured")
+
+        # Split query into name and optional company (separated by @)
+        parts = request.query.split("@", 1)
+        name = parts[0].strip()
+        company = parts[1].strip() if len(parts) > 1 else None
+
+        candidates_raw = await client.search_people(
+            name=name,
+            organization_name=company,
+            per_page=5,
+        )
+
+        candidates = [
+            normalize_candidate(c)
+            for c in candidates_raw
+            if c.get("linkedin_url") or c.get("photo_url")
+        ]
+
+        profile_data = json.loads(entity.domains or "{}")
+        profile_data["linkedin_candidates"] = candidates
+        profile_data["linkedin_status"] = "pending_review" if candidates else "no_match"
+        entity.domains = json.dumps(profile_data)
+        session.commit()
+
+        return {"status": "ok", "candidates": candidates}
+    except HTTPException:
+        raise
+    except Exception:
+        session.rollback()
+        logger.exception("LinkedIn search failed for profile %d", profile_id)
+        raise HTTPException(status_code=500, detail="Search failed")
+    finally:
+        session.close()
+
+
+class SetLinkedInRequest(BaseModel):
+    linkedin_url: str = Field(..., min_length=1, description="LinkedIn profile URL")
+
+
+@app.post("/profiles/{profile_id}/set-linkedin", dependencies=[Depends(verify_api_key)])
+def set_linkedin(profile_id: int, request: SetLinkedInRequest):
+    """Manually set a LinkedIn URL for a profile."""
+    session = get_session()
+    try:
+        entity = session.query(EntityRecord).get(profile_id)
+        if not entity:
+            raise HTTPException(status_code=404, detail="Profile not found")
+
+        profile_data = json.loads(entity.domains or "{}")
+        profile_data["linkedin_url"] = request.linkedin_url
+        profile_data["linkedin_status"] = "confirmed"
+        profile_data["linkedin_candidates"] = []
+        entity.domains = json.dumps(profile_data)
+        session.commit()
+        return {"status": "ok", "linkedin_status": "confirmed"}
+    except HTTPException:
+        raise
+    except Exception:
+        session.rollback()
+        logger.exception("Failed to set LinkedIn for profile %d", profile_id)
         raise HTTPException(status_code=500, detail="Failed to update profile")
     finally:
         session.close()
