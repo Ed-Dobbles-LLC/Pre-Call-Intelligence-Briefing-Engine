@@ -304,6 +304,14 @@ class TestSearchLinkedIn:
         assert response.status_code == 422
 
 
+class TestRefreshPhotos:
+    def test_refresh_requires_apollo_key(self):
+        """Without Apollo API key, should fail with 400."""
+        response = client.post("/profiles/refresh-photos")
+        assert response.status_code == 400
+        assert "Apollo" in response.json()["detail"]
+
+
 class TestRepairLinkedInStatus:
     def test_repair_confirmed_with_full_enrichment(self):
         """Profile with linkedin_url + photo + title → confirmed."""

@@ -376,6 +376,10 @@ async def async_sync_fireflies() -> dict:
         enriched = await _enrich_profiles_with_apollo()
         result["profiles_enriched"] = enriched
 
+        # Re-enrich confirmed profiles that are missing photos
+        re_enriched = await _re_enrich_confirmed_profiles()
+        result["photos_re_enriched"] = re_enriched
+
         return result
 
     except Exception as exc:
@@ -443,6 +447,12 @@ def sync_fireflies_transcripts() -> dict:
                 _enrich_profiles_with_apollo()
             )
             result["profiles_enriched"] = enriched
+
+            # Re-enrich confirmed profiles that are missing photos
+            re_enriched = enrich_loop.run_until_complete(
+                _re_enrich_confirmed_profiles()
+            )
+            result["photos_re_enriched"] = re_enriched
         finally:
             enrich_loop.close()
 
@@ -988,6 +998,125 @@ async def _enrich_profiles_with_apollo() -> int:
         session.close()
 
     return enriched_count
+
+
+async def _re_enrich_confirmed_profiles() -> int:
+    """Re-enrich confirmed profiles that are missing photo_url.
+
+    This targets profiles that were confirmed before the enrichment-on-confirm
+    logic was added, or where Apollo's search results didn't include a photo.
+    Uses the stored linkedin_url for a precise Apollo match.
+    """
+    if not settings.apollo_api_key:
+        return 0
+
+    session = get_session()
+    updated_count = 0
+    try:
+        entities = session.query(EntityRecord).filter(
+            EntityRecord.entity_type == "person",
+            EntityRecord.domains.isnot(None),
+        ).all()
+
+        to_enrich: list[tuple[EntityRecord, dict]] = []
+        for entity in entities:
+            try:
+                profile_data = json.loads(entity.domains or "{}")
+            except (json.JSONDecodeError, TypeError):
+                continue
+
+            # Only target confirmed profiles missing photos
+            if profile_data.get("linkedin_status") != "confirmed":
+                continue
+            if profile_data.get("photo_url"):
+                continue  # already has a photo
+            if not profile_data.get("linkedin_url"):
+                continue  # no LinkedIn URL to match against
+
+            to_enrich.append((entity, profile_data))
+
+        if not to_enrich:
+            return 0
+
+        logger.info(
+            "Photo re-enrichment: %d confirmed profiles missing photos",
+            len(to_enrich),
+        )
+
+        client = ApolloClient()
+
+        for entity, profile_data in to_enrich:
+            try:
+                emails = json.loads(entity.emails or "[]")
+                parts = entity.name.split(None, 1) if entity.name else []
+                first = parts[0] if parts else None
+                last = parts[1] if len(parts) > 1 else None
+
+                person = await client.enrich_person(
+                    email=emails[0] if emails else None,
+                    first_name=first,
+                    last_name=last,
+                    linkedin_url=profile_data.get("linkedin_url"),
+                    organization_name=profile_data.get("company"),
+                )
+
+                if not person:
+                    await asyncio.sleep(0.3)
+                    continue
+
+                changed = False
+                # Fill missing fields only
+                for key in (
+                    "photo_url", "title", "headline", "seniority",
+                    "company_industry", "company_size", "company_linkedin",
+                ):
+                    value = person.get(key) or (
+                        (person.get("organization") or {}).get(key)
+                        if key.startswith("company_") else None
+                    )
+                    if value and not profile_data.get(key):
+                        profile_data[key] = value
+                        changed = True
+
+                # Photo from top-level
+                if person.get("photo_url") and not profile_data.get("photo_url"):
+                    profile_data["photo_url"] = person["photo_url"]
+                    changed = True
+
+                # Location
+                if not profile_data.get("location"):
+                    loc = ", ".join(filter(None, [
+                        person.get("city", ""),
+                        person.get("state", ""),
+                    ]))
+                    if loc:
+                        profile_data["location"] = loc
+                        changed = True
+
+                if changed:
+                    entity.domains = json.dumps(profile_data)
+                    updated_count += 1
+                    logger.info(
+                        "Photo re-enrichment: updated %s (id=%d)%s",
+                        entity.name, entity.id,
+                        " with photo" if profile_data.get("photo_url") else "",
+                    )
+
+                await asyncio.sleep(0.5)
+            except Exception:
+                logger.exception("Photo re-enrichment failed for %s", entity.name)
+                continue
+
+        if updated_count:
+            session.commit()
+            logger.info("Photo re-enrichment: updated %d profiles", updated_count)
+    except Exception:
+        session.rollback()
+        logger.exception("Photo re-enrichment failed")
+    finally:
+        session.close()
+
+    return updated_count
 
 
 def get_all_profiles() -> list[dict]:

@@ -28,6 +28,7 @@ from app.store.database import BriefLog, EntityRecord, get_session, init_db
 from app.clients.apollo import ApolloClient, normalize_candidate, normalize_enrichment
 from app.sync.auto_sync import (
     _extract_next_steps,
+    _re_enrich_confirmed_profiles,
     async_sync_fireflies,
     get_all_profiles,
     get_dashboard_stats,
@@ -260,6 +261,20 @@ async def trigger_sync():
 def list_profiles():
     """Return all auto-generated contact profiles."""
     return get_all_profiles()
+
+
+@app.post("/profiles/refresh-photos", dependencies=[Depends(verify_api_key)])
+async def refresh_photos():
+    """Re-enrich confirmed profiles that are missing photos.
+
+    Targets verified contacts whose photo_url is empty and tries Apollo
+    enrichment using their stored linkedin_url for a precise match.
+    """
+    if not settings.apollo_api_key:
+        raise HTTPException(status_code=400, detail="Apollo API key not configured")
+
+    updated = await _re_enrich_confirmed_profiles()
+    return {"status": "ok", "profiles_updated": updated}
 
 
 async def _enrich_confirmed_profile(
