@@ -159,17 +159,32 @@ class BriefLog(Base):
 # Engine / session helpers
 # ---------------------------------------------------------------------------
 
+_engine_cache: dict[str, "Engine"] = {}
+
+
 def get_engine(url: str | None = None):
     url = url or settings.effective_database_url
+    if url in _engine_cache:
+        return _engine_cache[url]
     connect_args = {}
     if url.startswith("sqlite"):
         connect_args["check_same_thread"] = False
-    return create_engine(url, echo=False, connect_args=connect_args)
+    engine = create_engine(url, echo=False, connect_args=connect_args)
+    _engine_cache[url] = engine
+    return engine
+
+
+_session_factory_cache: dict[str, sessionmaker] = {}
 
 
 def get_session_factory(url: str | None = None) -> sessionmaker:
+    url = url or settings.effective_database_url
+    if url in _session_factory_cache:
+        return _session_factory_cache[url]
     engine = get_engine(url)
-    return sessionmaker(bind=engine)
+    factory = sessionmaker(bind=engine)
+    _session_factory_cache[url] = factory
+    return factory
 
 
 def init_db(url: str | None = None) -> None:
