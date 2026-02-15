@@ -330,13 +330,16 @@ class TestDisambiguationScorer:
         assert result.score == 0
         assert not result.is_locked
 
-    def test_linkedin_url_gives_20_points(self):
+    def test_linkedin_url_without_search_not_confirmed(self):
+        """LinkedIn URL alone (without public search results) is NOT confirmed."""
         result = score_disambiguation(
             name="Ben Titmus",
             linkedin_url="https://linkedin.com/in/bentitmus",
         )
-        assert result.score >= 20
-        assert result.linkedin_confirmed
+        # URL present but no search results to verify → 0 points, not confirmed
+        assert result.linkedin_url_present
+        assert not result.linkedin_confirmed
+        assert result.score == 0
 
     def test_name_in_linkedin_results(self):
         search_results = {
@@ -363,7 +366,7 @@ class TestDisambiguationScorer:
             search_results=search_results,
         )
         assert result.company_match
-        assert result.score >= 30  # 15 name + 15 company
+        assert result.score >= 25  # 15 name (no url) + 10 employer match
 
     def test_title_match_across_sources(self):
         search_results = {
@@ -405,7 +408,7 @@ class TestDisambiguationScorer:
             search_results=search_results,
         )
         assert result.location_match
-        assert result.score >= 5  # Location = 5 pts
+        assert result.score >= 10  # Location = 10 pts
 
     def test_high_confidence_locks_identity(self):
         search_results = {
@@ -431,13 +434,14 @@ class TestDisambiguationScorer:
         assert result.is_locked
         assert result.score >= 70
 
-    def test_meeting_data_gives_15_points(self):
+    def test_meeting_data_alone_gives_zero_lock_points(self):
+        """Meeting data without public cross-confirm gives 0 lock points."""
         result = score_disambiguation(
             name="Ben Titmus",
             has_meeting_data=True,
         )
         assert result.meeting_confirmed
-        assert result.score >= 15
+        assert result.score == 0  # No public cross-confirm available
 
     def test_multiple_sources_bonus(self):
         search_results = {
@@ -486,7 +490,9 @@ class TestDisambiguationScorer:
             linkedin_url="https://linkedin.com/in/bentitmus",
         )
         assert len(result.evidence) > 0
-        assert result.evidence[0]["weight"] == 25
+        # URL present but unverifiable → weight 0 for the first evidence entry
+        assert result.evidence[0]["weight"] == 0
+        assert "not verifiable" in result.evidence[0]["signal"]
 
 
 # ---------------------------------------------------------------------------

@@ -26,6 +26,7 @@ from app.brief.evidence_graph import (
     DossierMode,
     EvidenceGraph,
     build_failure_report,
+    build_meeting_prep_brief,
     compute_visibility_coverage_confidence,
     determine_dossier_mode,
     extract_highest_signal_artifacts,
@@ -549,13 +550,79 @@ async def set_linkedin(profile_id: int, request: SetLinkedInRequest):
         session.close()
 
 
+@app.post("/profiles/{profile_id}/meeting-prep", dependencies=[Depends(verify_api_key)])
+async def generate_meeting_prep(profile_id: int):
+    """Generate a Mode A Meeting-Prep Brief for any contact.
+
+    Mode A: fast, always available, no web required.
+    Uses only internal evidence (meetings, emails, stored profile data).
+    NO SerpAPI, NO visibility sweep, NO fail-closed gating.
+
+    Tags: [VERIFIED-MEETING], [INFERRED-L/M], [UNKNOWN]
+    """
+    session = get_session()
+    try:
+        entity = session.query(EntityRecord).get(profile_id)
+        if not entity:
+            raise HTTPException(status_code=404, detail="Profile not found")
+
+        profile_data = json.loads(entity.domains or "{}")
+        p_name = entity.name
+
+        # Build evidence graph from internal data only
+        graph = EvidenceGraph()
+        for interaction in profile_data.get("interactions", [])[:15]:
+            graph.add_meeting_node(
+                source=interaction.get("title", "meeting"),
+                snippet=(
+                    interaction.get("summary", "")[:200]
+                    or interaction.get("title", "")
+                ),
+                date=interaction.get("date", "UNKNOWN"),
+                ref=interaction.get("type", "meeting"),
+            )
+
+        # Generate the meeting-prep brief (no LLM needed)
+        brief_markdown = build_meeting_prep_brief(
+            person_name=p_name,
+            graph=graph,
+            profile_data=profile_data,
+        )
+
+        # Persist
+        generated_at = datetime.utcnow().isoformat()
+        profile_data["dossier_mode_a_markdown"] = brief_markdown
+        profile_data["dossier_mode_a_generated_at"] = generated_at
+        entity.domains = json.dumps(profile_data)
+        session.commit()
+
+        return {
+            "status": "ok",
+            "mode": DossierMode.MEETING_PREP,
+            "brief": brief_markdown,
+            "generated_at": generated_at,
+            "evidence_nodes": len(graph.nodes),
+        }
+    except HTTPException:
+        raise
+    except Exception:
+        session.rollback()
+        logger.exception("Meeting-prep brief failed for profile %d", profile_id)
+        raise HTTPException(
+            status_code=500, detail="Meeting-prep brief generation failed"
+        )
+    finally:
+        session.close()
+
+
 @app.post("/profiles/{profile_id}/deep-profile", dependencies=[Depends(verify_api_key)])
 async def generate_profile_research(profile_id: int):
-    """Generate a decision-grade intelligence dossier for a verified contact.
+    """Generate a Mode B Deep Research Dossier for a verified contact.
 
     Pipeline: Entity Lock → SerpAPI retrieval → LLM synthesis → QA gates.
     Returns the dossier, entity lock report, QA report, and search queries.
     Only works for profiles with linkedin_status == 'confirmed'.
+    Fail-closed: halts if visibility sweep or entity lock fails.
     """
     if not settings.openai_api_key:
         raise HTTPException(status_code=400, detail="OpenAI API key not configured")
@@ -743,16 +810,28 @@ async def generate_profile_research(profile_id: int):
 
             generated_at = datetime.utcnow().isoformat()
             profile_data["deep_profile"] = failure_report
+            profile_data["dossier_mode_b_markdown"] = failure_report
             profile_data["deep_profile_generated_at"] = generated_at
+            profile_data["deep_research_status"] = DossierMode.FAILED
             profile_data["entity_lock_score"] = entity_lock.score
+            profile_data["entity_lock_report"] = entity_lock_report
             profile_data["search_plan"] = search_plan
             profile_data["fail_closed_status"] = fail_closed_status
             profile_data["evidence_graph"] = graph.to_dict()
+            profile_data["retrieval_ledger"] = [
+                r.model_dump() for r in graph.ledger
+            ]
+            profile_data["visibility_ledger"] = [
+                r.model_dump() for r in graph.get_visibility_ledger_rows()
+            ]
             entity.domains = json.dumps(profile_data)
             session.commit()
 
             return {
                 "status": "halted",
+                "mode": DossierMode.DEEP_RESEARCH,
+                "dossier_mode": dossier_mode,
+                "deep_research_status": DossierMode.FAILED,
                 "deep_profile": failure_report,
                 "generated_at": generated_at,
                 "entity_lock": entity_lock_report,
@@ -858,9 +937,17 @@ async def generate_profile_research(profile_id: int):
 
         # --- Persist ---
         generated_at = datetime.utcnow().isoformat()
+        deep_research_status = (
+            DossierMode.SUCCEEDED if should_output else DossierMode.FAILED
+        )
         profile_data["deep_profile"] = result if should_output else fail_message
+        profile_data["dossier_mode_b_markdown"] = (
+            result if should_output else fail_message
+        )
         profile_data["deep_profile_generated_at"] = generated_at
+        profile_data["deep_research_status"] = deep_research_status
         profile_data["entity_lock_score"] = entity_lock.score
+        profile_data["entity_lock_report"] = entity_lock_report
         profile_data["qa_genericness_score"] = qa_report.genericness.genericness_score
         profile_data["qa_evidence_coverage_pct"] = round(
             qa_report.evidence_coverage.coverage_pct, 1
@@ -871,19 +958,32 @@ async def generate_profile_research(profile_id: int):
         profile_data["visibility_report"] = visibility_report
         profile_data["fail_closed_status"] = fail_closed_status
         profile_data["evidence_graph"] = graph.to_dict()
+        profile_data["retrieval_ledger"] = [
+            r.model_dump() for r in graph.ledger
+        ]
+        profile_data["visibility_ledger"] = [
+            r.model_dump() for r in graph.get_visibility_ledger_rows()
+        ]
+        profile_data["evidence_nodes"] = [
+            n.model_dump() for n in graph.nodes.values()
+        ]
         entity.domains = json.dumps(profile_data)
         session.commit()
 
         return {
             "status": "ok" if should_output else "halted",
+            "mode": DossierMode.DEEP_RESEARCH,
             "dossier_mode": dossier_mode,
+            "deep_research_status": deep_research_status,
             "deep_profile": result if should_output else fail_message,
             "generated_at": generated_at,
             "entity_lock": entity_lock_report,
             "qa_report": {
                 "passes_all": qa_report.passes_all,
                 "genericness_score": qa_report.genericness.genericness_score,
-                "evidence_coverage_pct": round(qa_report.evidence_coverage.coverage_pct, 1),
+                "evidence_coverage_pct": round(
+                    qa_report.evidence_coverage.coverage_pct, 1
+                ),
                 "person_level_pct": round(qa_report.person_level.person_pct, 1),
                 "contradictions": len(qa_report.contradictions),
                 "hallucination_risk_flags": qa_report.hallucination_risk_flags,

@@ -3,10 +3,18 @@
 This module implements:
 1. Evidence Graph construction from retrieval results + meeting data
 2. Retrieval Ledger with mandatory logging of every SerpAPI call
-3. Fail-closed gate checks that HALT output when gates fail
+3. Fail-closed gate checks that HALT output when gates fail (Mode B only)
 4. Evidence coverage computation per the formal definition
+5. Two-mode architecture:
+   - Mode A (Meeting-Prep Brief): fast, internal-only, no web required
+   - Mode B (Deep Research Dossier): web-required, fail-closed
 
-Fail-closed gates:
+Mode A (Meeting-Prep Brief):
+- NO SerpAPI required, NO visibility sweep, NO fail-closed gating
+- Tags: [VERIFIED-MEETING], [INFERRED-L/M], [UNKNOWN]
+- Sections: What we know, What to do next, Key risks, Missing intel
+
+Mode B (Deep Research Dossier):
 - VISIBILITY SWEEP NOT EXECUTED → halt
 - EVIDENCE COVERAGE < 85% → halt
 - ENTITY LOCK < 70 → constrain (no strong person-level claims)
@@ -609,15 +617,31 @@ def _infer_signal_value(priority: int) -> str:
 
 
 class DossierMode:
-    """Output mode determined by pre-synthesis gate results.
+    """Output mode for the intelligence system.
 
-    FULL (Mode C):        entity_lock >= 70 AND visibility executed.
-    CONSTRAINED (Mode B): entity_lock 50-69 AND visibility executed.
-    HALTED (Mode A):      pre-synthesis gate failure — do NOT call LLM.
+    Two product modes:
+    MEETING_PREP:  Mode A — fast, always available, internal-only, no web required.
+    DEEP_RESEARCH: Mode B — web-required, fail-closed, full dossier.
+
+    Deep Research sub-states:
+    FULL:        entity_lock >= 70 AND visibility executed — unrestricted output.
+    CONSTRAINED: entity_lock 50-69 — restrict inference strengths.
+    HALTED:      pre-synthesis gate failure — do NOT call LLM.
     """
+    # Product modes
+    MEETING_PREP = "meeting_prep"
+    DEEP_RESEARCH = "deep_research"
+
+    # Deep Research sub-states
     FULL = "full"
     CONSTRAINED = "constrained"
     HALTED = "halted"
+
+    # Deep research job status
+    NOT_STARTED = "NOT_STARTED"
+    RUNNING = "RUNNING"
+    FAILED = "FAILED"
+    SUCCEEDED = "SUCCEEDED"
 
 
 def determine_dossier_mode(
@@ -626,10 +650,11 @@ def determine_dossier_mode(
     has_public_results: bool,
     person_name: str = "",
 ) -> tuple[str, str]:
-    """Determine dossier output mode BEFORE calling LLM synthesis.
+    """Determine Deep Research (Mode B) output sub-state BEFORE calling LLM synthesis.
 
     Returns (mode, reason).
     If mode == HALTED, the caller must NOT proceed to synthesis.
+    This is used ONLY for Mode B (Deep Research). Mode A bypasses this entirely.
     """
     if not visibility_executed:
         queries = _get_required_visibility_queries(person_name or "<name>")
@@ -664,6 +689,183 @@ def determine_dossier_mode(
         "Restricting output to VERIFIED-MEETING facts and safe inferences only.\n"
         "Prioritize disambiguation retrieval before generating a full dossier."
     )
+
+
+# ---------------------------------------------------------------------------
+# Mode A: Meeting-Prep Brief Builder
+# ---------------------------------------------------------------------------
+
+
+def build_meeting_prep_brief(
+    person_name: str,
+    graph: EvidenceGraph,
+    profile_data: dict | None = None,
+) -> str:
+    """Build a Mode A Meeting-Prep Brief from internal evidence only.
+
+    No SerpAPI required. No visibility sweep. No fail-closed gating.
+    Tags: [VERIFIED-MEETING], [INFERRED-L/M], [UNKNOWN]
+
+    Sections:
+    1. What we know from our interactions
+    2. What to do next (3-5 targeted questions + prep checklist)
+    3. Key risks / watchouts
+    4. Missing intel worth fetching
+    """
+    profile_data = profile_data or {}
+    parts: list[str] = []
+
+    # Header
+    company = profile_data.get("company", "")
+    title = profile_data.get("title", "")
+    parts.append(f"# Meeting-Prep Brief: {person_name}")
+    parts.append("")
+    if title or company:
+        ident = title
+        if company:
+            ident = f"{title} @ {company}" if title else company
+        parts.append(f"**Role**: {ident}")
+    parts.append("**Mode**: Meeting-Prep (internal evidence only)")
+    parts.append("")
+
+    # Section 1: What we know from our interactions
+    parts.append("## 1. What We Know From Our Interactions")
+    parts.append("")
+
+    meeting_nodes = [n for n in graph.nodes.values() if n.type == "MEETING"]
+    if meeting_nodes:
+        for node in meeting_nodes:
+            date_str = f" ({node.date})" if node.date != "UNKNOWN" else ""
+            parts.append(
+                f"- {node.snippet} [VERIFIED-MEETING]{date_str}"
+            )
+    else:
+        parts.append("- No meeting or email history available. [UNKNOWN]")
+    parts.append("")
+
+    # Action items from profile data
+    action_items = profile_data.get("action_items", [])
+    if action_items:
+        parts.append("**Open Action Items:**")
+        for item in action_items[:10]:
+            parts.append(f"- {item} [VERIFIED-MEETING]")
+        parts.append("")
+
+    # Section 2: What to do next
+    parts.append("## 2. What To Do Next")
+    parts.append("")
+    parts.append("**Targeted Questions:**")
+
+    # Generate questions based on what we know / don't know
+    questions: list[str] = []
+    if not title:
+        questions.append(
+            "What is your current role and scope of responsibility? [UNKNOWN]"
+        )
+    if not profile_data.get("location"):
+        questions.append("Where are you based? [UNKNOWN]")
+
+    interactions = profile_data.get("interactions", [])
+    if interactions:
+        last = interactions[0] if interactions else {}
+        last_summary = last.get("summary", "")
+        if last_summary:
+            questions.append(
+                f"Following up on our last conversation: how has the situation "
+                f"evolved since we discussed \"{last_summary[:80]}\"? [INFERRED-L]"
+            )
+    if not questions:
+        questions.append(
+            "What are your top priorities for the next quarter? [UNKNOWN]"
+        )
+    questions.append(
+        "What would make this meeting most valuable for you? [UNKNOWN]"
+    )
+    questions.append(
+        "Are there any constraints or blockers I should know about? [UNKNOWN]"
+    )
+
+    for q in questions[:5]:
+        parts.append(f"- {q}")
+    parts.append("")
+
+    parts.append("**Prep Checklist:**")
+    parts.append("- [ ] Review last interaction notes")
+    parts.append("- [ ] Check for any pending action items")
+    if not profile_data.get("linkedin_url"):
+        parts.append("- [ ] Find and review LinkedIn profile")
+    parts.append("- [ ] Prepare agenda with 2-3 key discussion points")
+    if not profile_data.get("deep_profile"):
+        parts.append("- [ ] Consider running Deep Research for full dossier")
+    parts.append("")
+
+    # Section 3: Key risks / watchouts
+    parts.append("## 3. Key Risks / Watchouts")
+    parts.append("")
+
+    risks: list[str] = []
+    if not meeting_nodes:
+        risks.append(
+            "No prior interaction history — first meeting risk. "
+            "Prepare broader discovery questions. [UNKNOWN]"
+        )
+    elif len(meeting_nodes) == 1:
+        risks.append(
+            "Only one prior interaction — limited context. "
+            "Avoid assumptions based on single data point. [INFERRED-L]"
+        )
+
+    if action_items:
+        risks.append(
+            f"{len(action_items)} open action item(s) — ensure none are overdue "
+            f"before the meeting. [VERIFIED-MEETING]"
+        )
+
+    if not company:
+        risks.append(
+            "Company not confirmed — verify organization context "
+            "before discussing specifics. [UNKNOWN]"
+        )
+
+    if not risks:
+        risks.append(
+            "No significant risks identified from available meeting data. [INFERRED-L]"
+        )
+
+    for risk in risks:
+        parts.append(f"- {risk}")
+    parts.append("")
+
+    # Section 4: Missing intel worth fetching
+    parts.append("## 4. Missing Intel Worth Fetching")
+    parts.append("")
+    parts.append(
+        "The following information would significantly improve preparation. "
+        "**Recommend running Deep Research** to gather:"
+    )
+    parts.append("")
+
+    missing: list[str] = []
+    if not profile_data.get("linkedin_url"):
+        missing.append("LinkedIn profile — career history, connections, endorsements")
+    if not title:
+        missing.append("Current title and scope of authority")
+    if not company:
+        missing.append("Company details — size, industry, recent news")
+    missing.append("Public speaking history (TED, conferences, podcasts)")
+    missing.append("Recent press mentions or published content")
+    missing.append("Organizational structure and reporting lines")
+
+    for item in missing:
+        parts.append(f"- {item}")
+    parts.append("")
+    parts.append(
+        "> **To get this intelligence, click 'Run Deep Research' in the "
+        "contact profile.**"
+    )
+    parts.append("")
+
+    return "\n".join(parts)
 
 
 def filter_prose_by_mode(dossier_text: str, mode: str, entity_lock_score: int) -> str:
@@ -769,9 +971,12 @@ def build_failure_report(
         parts.append("2. Get at least 1 public retrieval result to compute Entity Lock")
     elif entity_lock_score < 70:
         parts.append("2. Increase Entity Lock by confirming:")
-        parts.append("   - LinkedIn URL → +40pts")
+        parts.append("   - Public LinkedIn evidence → +30pts")
         parts.append("   - Employer in public source → +20pts")
+        parts.append("   - Multiple independent domains agree → +20pts")
         parts.append("   - Title in public source → +10pts")
+        parts.append("   - Location in public source → +10pts")
+        parts.append("   - Meeting ↔ public cross-confirm → +10pts")
 
     parts.append("")
     parts.append("--- WHAT WILL CHANGE AFTER FIX ---")

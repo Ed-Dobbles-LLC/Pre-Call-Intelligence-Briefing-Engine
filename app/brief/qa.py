@@ -267,22 +267,27 @@ class DisambiguationResult:
     """Result of identity lock scoring.
 
     Weights (100 total):
-    - LinkedIn confirmed: 40 points
-    - Employer match: 20 points
-    - Meeting cross-confirmation: 15 points
-    - Title match: 10 points
-    - Secondary source match: 10 points
-    - Location match: 5 points
+    - Public evidence: LinkedIn profile resolved: 30 points
+    - Employer confirmed by public source: 20 points
+    - Multiple independent domains agree: 20 points
+    - Title confirmed by public source: 10 points
+    - Location confirmed by public source: 10 points
+    - Meeting <> public cross-confirmation: 10 points
 
     Lock thresholds:
     - >= 70: LOCKED
     - 50-69: PARTIAL LOCK
     - < 50: NOT LOCKED
+
+    LinkedIn is only "confirmed" if we can retrieve at least a page title
+    or snippet from a public result. If auth-blocked, it becomes
+    "LinkedIn URL present but not verifiable without auth."
     """
     score: int = 0  # 0-100
     evidence: list[dict] = field(default_factory=list)
     # Each dict: {"signal": str, "weight": int, "source": str}
     linkedin_confirmed: bool = False
+    linkedin_url_present: bool = False  # URL exists but may not be verified
     employer_match: bool = False
     meeting_confirmed: bool = False
     title_match: bool = False
@@ -326,13 +331,17 @@ def score_disambiguation(
 ) -> DisambiguationResult:
     """Score identity lock confidence from 0-100.
 
-    Weights:
-    +40 LinkedIn confirmed (URL provided and matches name/company in search)
-    +20 Employer match (company found across multiple sources)
-    +15 Meeting cross-confirmation (internal meeting data references this person)
-    +10 Title match (title confirmed in secondary sources)
-    +10 Secondary source match (news, registry, or authored content)
-    +5  Location match (geographic location confirmed)
+    New weights (100 total):
+    +30 Public evidence: LinkedIn profile resolved (must have public snippet/title)
+    +20 Employer confirmed by public source
+    +10 Title confirmed by public source
+    +10 Location confirmed by public source
+    +20 Multiple independent domains agree
+    +10 Meeting <> public cross-confirmation
+
+    LinkedIn is only "confirmed" if at least a page title or snippet
+    is retrievable from a public result. Auth-blocked URLs get
+    "linkedin_url_present" but not "linkedin_confirmed".
     """
     result = DisambiguationResult()
     search_results = search_results or {}
@@ -341,42 +350,60 @@ def score_disambiguation(
     name_lower = name.lower()
     company_lower = company.lower() if company else ""
 
-    # LinkedIn confirmed (40 pts) — URL exists + name appears in LinkedIn results
-    if linkedin_url and linkedin_url.startswith("http"):
-        result.linkedin_confirmed = True
-        pts = 25  # base points for having a URL
-        result.evidence.append({
-            "signal": f"LinkedIn URL provided: {linkedin_url}",
-            "weight": 25,
-            "source": "user_input",
-        })
+    # Track independent confirming domains for multi-domain bonus
+    confirming_domains: set[str] = set()
 
-        # Additional points if LinkedIn search results confirm the name
+    # LinkedIn confirmation (30 pts) — requires public evidence node
+    if linkedin_url and linkedin_url.startswith("http"):
+        result.linkedin_url_present = True
+
+        # Check if we can retrieve any public evidence from LinkedIn search
         linkedin_results = search_results.get("linkedin", [])
+        linkedin_verified = False
         for lr in linkedin_results:
-            lr_text = f"{lr.get('title', '')} {lr.get('snippet', '')}".lower()
-            if name_lower in lr_text:
+            lr_title = lr.get("title", "")
+            lr_snippet = lr.get("snippet", "")
+            lr_text = f"{lr_title} {lr_snippet}".lower()
+            if name_lower in lr_text and (lr_title or lr_snippet):
+                linkedin_verified = True
+                result.linkedin_confirmed = True
                 result.name_match = True
-                pts += 15
+                result.score += 30
+                confirming_domains.add("linkedin")
                 result.evidence.append({
-                    "signal": f"Name confirmed in LinkedIn search: {lr.get('title', '')[:80]}",
-                    "weight": 15,
+                    "signal": (
+                        f"LinkedIn profile resolved: {lr_title[:80]}"
+                    ),
+                    "weight": 30,
                     "source": lr.get("link", "LinkedIn"),
                 })
                 break
 
-        result.score += min(40, pts)
+        if not linkedin_verified:
+            # URL present but not verifiable — no points
+            result.evidence.append({
+                "signal": (
+                    "LinkedIn URL present but not verifiable without auth. "
+                    f"URL: {linkedin_url}"
+                ),
+                "weight": 0,
+                "source": "user_input",
+            })
     else:
-        # No URL — check if LinkedIn search alone finds them
+        # No URL — check if LinkedIn search finds them (reduced points)
         linkedin_results = search_results.get("linkedin", [])
         for lr in linkedin_results:
             lr_text = f"{lr.get('title', '')} {lr.get('snippet', '')}".lower()
             if name_lower in lr_text:
                 result.name_match = True
-                result.score += 20
+                result.score += 15  # Partial credit for search-only match
+                confirming_domains.add("linkedin")
                 result.evidence.append({
-                    "signal": f"Name found in LinkedIn result (no URL): {lr.get('title', '')[:80]}",
-                    "weight": 20,
+                    "signal": (
+                        f"Name found in LinkedIn result (no URL): "
+                        f"{lr.get('title', '')[:80]}"
+                    ),
+                    "weight": 15,
                     "source": lr.get("link", "LinkedIn"),
                 })
                 break
@@ -389,6 +416,7 @@ def score_disambiguation(
                 r_text = f"{r.get('title', '')} {r.get('snippet', '')}".lower()
                 if company_lower in r_text and name_lower in r_text:
                     employer_sources += 1
+                    confirming_domains.add(category)
                     break
 
         if employer_sources >= 1:
@@ -397,34 +425,34 @@ def score_disambiguation(
             pts = min(20, employer_sources * 10)
             result.score += pts
             result.evidence.append({
-                "signal": f"Employer '{company}' confirmed in {employer_sources} source(s)",
+                "signal": (
+                    f"Employer '{company}' confirmed in "
+                    f"{employer_sources} source(s)"
+                ),
                 "weight": pts,
                 "source": "cross-reference",
             })
 
         # Apollo as employer source
         if apollo_data and apollo_data.get("title"):
-            apollo_company = (apollo_data.get("organization", {}).get("name", "") or "").lower()
-            if company_lower and (company_lower in apollo_company or apollo_company in company_lower):
+            apollo_company = (
+                apollo_data.get("organization", {}).get("name", "") or ""
+            ).lower()
+            if company_lower and (
+                company_lower in apollo_company or apollo_company in company_lower
+            ):
+                confirming_domains.add("apollo")
                 if not result.employer_match:
                     result.employer_match = True
                     result.company_match = True
                     result.score += 10
                     result.evidence.append({
-                        "signal": f"Employer confirmed via Apollo enrichment: {company}",
+                        "signal": (
+                            f"Employer confirmed via Apollo enrichment: {company}"
+                        ),
                         "weight": 10,
                         "source": "apollo",
                     })
-
-    # Meeting cross-confirmation (15 pts)
-    if has_meeting_data:
-        result.meeting_confirmed = True
-        result.score += 15
-        result.evidence.append({
-            "signal": "Person appears in internal meeting/email records",
-            "weight": 15,
-            "source": "internal_data",
-        })
 
     # Title match (10 pts) — title confirmed in non-LinkedIn sources
     if title:
@@ -432,13 +460,16 @@ def score_disambiguation(
         for category in ["general", "news", "company_site"]:
             for r in search_results.get(category, []):
                 r_text = f"{r.get('title', '')} {r.get('snippet', '')}".lower()
-                # Check for title keywords (words > 3 chars)
                 title_words = [w for w in title_lower.split() if len(w) >= 3]
                 if title_words and any(w in r_text for w in title_words):
                     result.title_match = True
                     result.score += 10
+                    confirming_domains.add(category)
                     result.evidence.append({
-                        "signal": f"Title '{title}' matched in {category}: {r.get('title', '')[:80]}",
+                        "signal": (
+                            f"Title '{title}' matched in {category}: "
+                            f"{r.get('title', '')[:80]}"
+                        ),
                         "weight": 10,
                         "source": r.get("link", category),
                     })
@@ -446,53 +477,101 @@ def score_disambiguation(
             if result.title_match:
                 break
 
-    # Secondary source match (10 pts) — news, registry, or authored content
-    secondary_categories = ["news", "registry", "talks", "authored", "registry_us"]
-    for category in secondary_categories:
-        for r in search_results.get(category, []):
-            r_text = f"{r.get('title', '')} {r.get('snippet', '')}".lower()
-            if name_lower in r_text:
-                result.secondary_source_match = True
-                result.score += 10
-                result.evidence.append({
-                    "signal": f"Secondary source ({category}): {r.get('title', '')[:80]}",
-                    "weight": 10,
-                    "source": r.get("link", category),
-                })
-                break
-        if result.secondary_source_match:
-            break
-
-    # Location match (5 pts)
+    # Location match (10 pts)
     if location:
         location_lower = location.lower()
         for category in search_results:
             for r in search_results.get(category, []):
                 if location_lower in (r.get("snippet") or "").lower():
                     result.location_match = True
-                    result.score += 5
+                    result.score += 10
+                    confirming_domains.add(category)
                     result.evidence.append({
-                        "signal": f"Location '{location}' found in search results",
-                        "weight": 5,
+                        "signal": (
+                            f"Location '{location}' found in search results"
+                        ),
+                        "weight": 10,
                         "source": r.get("link", category),
                     })
                     break
             if result.location_match:
                 break
 
+    # Multiple independent domains agree (20 pts)
+    # Requires 3+ confirming domains (e.g. linkedin + news + company_site)
+    if len(confirming_domains) >= 3:
+        result.multiple_sources_agree = True
+        result.score += 20
+        result.evidence.append({
+            "signal": (
+                f"Multiple independent domains agree "
+                f"({len(confirming_domains)} domains: "
+                f"{', '.join(sorted(confirming_domains))})"
+            ),
+            "weight": 20,
+            "source": "cross-reference",
+        })
+    elif len(confirming_domains) >= 2:
+        # Partial credit for 2 domains
+        result.multiple_sources_agree = True
+        result.score += 10
+        result.evidence.append({
+            "signal": (
+                f"Two independent domains agree "
+                f"({', '.join(sorted(confirming_domains))})"
+            ),
+            "weight": 10,
+            "source": "cross-reference",
+        })
+
+    # Meeting <> public cross-confirmation (10 pts)
+    # Only awarded if BOTH meeting data AND at least one public signal exist
+    if has_meeting_data:
+        result.meeting_confirmed = True
+        has_public_signal = bool(confirming_domains)
+        if has_public_signal:
+            result.score += 10
+            result.evidence.append({
+                "signal": (
+                    "Meeting data cross-confirms with public evidence"
+                ),
+                "weight": 10,
+                "source": "cross-reference",
+            })
+        else:
+            # Meeting data alone — informational only, no lock points
+            result.evidence.append({
+                "signal": (
+                    "Person appears in internal meeting/email records "
+                    "(no public cross-confirmation)"
+                ),
+                "weight": 0,
+                "source": "internal_data",
+            })
+
     # Photo available (informational, no points)
     if apollo_data and apollo_data.get("photo_url"):
         result.photo_available = True
 
-    # Multiple sources agree (informational flag)
-    source_count = sum([
-        result.linkedin_confirmed,
-        result.employer_match,
-        result.title_match,
-        result.secondary_source_match,
-    ])
-    if source_count >= 3:
-        result.multiple_sources_agree = True
+    # Secondary source match (informational flag, counted via multi-domain)
+    secondary_categories = ["news", "registry", "talks", "authored", "registry_us"]
+    for category in secondary_categories:
+        for r in search_results.get(category, []):
+            r_text = f"{r.get('title', '')} {r.get('snippet', '')}".lower()
+            if name_lower in r_text:
+                result.secondary_source_match = True
+                confirming_domains.add(category)
+                result.evidence.append({
+                    "signal": (
+                        f"Secondary source ({category}): "
+                        f"{r.get('title', '')[:80]}"
+                    ),
+                    "weight": 0,
+                    "source": r.get("link", category),
+                })
+                break
+        if result.secondary_source_match:
+            break
 
     # Cap at 100
     result.score = min(100, result.score)
@@ -1150,13 +1229,20 @@ def enforce_fail_closed_gates(
             "Verify the person name and re-run retrieval."
         )
 
-    # Gate 1: Visibility sweep must have been executed
+    # Gate 1: Visibility sweep must have been executed (>= 12 queries)
     if visibility_ledger_count == 0:
         failures.append(
             "FAIL: VISIBILITY SWEEP NOT EXECUTED\n"
             "The retrieval ledger contains 0 visibility-intent rows.\n"
             "The dossier cannot be produced without executing the visibility sweep.\n"
             f'Run the full 16-query battery for "{person_name}" and log each result.'
+        )
+    elif visibility_ledger_count < 12:
+        failures.append(
+            f"FAIL: INSUFFICIENT VISIBILITY QUERIES ({visibility_ledger_count}/12)\n"
+            f"Only {visibility_ledger_count} visibility queries logged. "
+            "Cannot claim 'none found' unless at least 12 queries executed.\n"
+            f'Run remaining queries for "{person_name}" and log each result.'
         )
 
     # Gate 2: Evidence coverage must be >= 85%

@@ -2032,6 +2032,7 @@
             <span class="profile-tag ${healthClass}">${healthLabel}</span>
             ${p.linkedin_status === 'pending_review' ? '<span class="profile-tag" style="background:var(--warning-bg);color:var(--warning)">Needs Review</span>' : ''}
             ${p.linkedin_status === 'confirmed' ? '<span class="profile-tag verified"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>Verified</span>' : (p.linkedin_url ? '<span class="profile-tag" style="background:var(--success-bg);color:var(--success)">LinkedIn</span>' : '')}
+            ${p.deep_research_status === 'SUCCEEDED' ? '<span class="profile-tag" style="background:var(--success-bg);color:var(--success)">Prepared</span>' : p.dossier_mode_a_markdown ? '<span class="profile-tag" style="background:var(--info-bg);color:var(--info)">Brief Ready</span>' : (!p.deep_profile && p.entity_lock_score < 70) ? '<span class="profile-tag" style="background:var(--warning-bg);color:var(--warning)">Research Needed</span>' : ''}
             ${p.deep_profile ? '<span class="profile-tag" style="background:var(--accent-glow);color:var(--accent-light)">Researched</span>' : ''}
           </div>
           <div class="profile-stats">
@@ -2080,7 +2081,13 @@
             </div>
           </div>
           ${p.company_industry || p.company_size ? '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">' + (p.company_industry ? '<span class="profile-tag meetings">' + p.company_industry + '</span>' : '') + (p.company_size ? '<span class="profile-tag emails">' + p.company_size.toLocaleString() + ' employees</span>' : '') + '</div>' : ''}
-          ${p.linkedin_status === 'confirmed' ? '<div style="margin-top:14px"><button class="btn-research" onclick="' + (p.deep_profile ? 'scrollToDeepProfile(' + p.id + ')' : 'generateDeepProfile(' + p.id + ')') + '"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/><path d="M11 8v6M8 11h6"/></svg>' + (p.deep_profile ? 'View Intelligence Dossier' : 'Run Deep Research') + '</button></div>' : ''}
+          <div style="margin-top:14px;display:flex;gap:8px;flex-wrap:wrap">
+            <button class="btn-research" onclick="${p.dossier_mode_a_markdown ? 'scrollToMeetingPrep(' + p.id + ')' : 'generateMeetingPrep(' + p.id + ')'}">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+              ${p.dossier_mode_a_markdown ? 'View Meeting Prep' : 'Meeting Prep'}
+            </button>
+            ${p.linkedin_status === 'confirmed' ? '<button class="btn-research-secondary" onclick="' + (p.deep_profile ? 'scrollToDeepProfile(' + p.id + ')' : 'generateDeepProfile(' + p.id + ')') + '"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/><path d="M11 8v6M8 11h6"/></svg>' + (p.deep_profile ? 'View Deep Research' : 'Run Deep Research') + '</button>' : ''}
+          </div>
         </div>`;
 
       if (p.interactions && p.interactions.length) {
@@ -2113,10 +2120,40 @@
         html += '</div>';
       }
 
-      // Deep Profile section for verified contacts
+      // Meeting-Prep Brief section (Mode A) — available for ALL contacts
+      html += `<div class="modal-section" id="meetingPrepSection${p.id}">
+        <h4>Meeting-Prep Brief <span style="font-size:10px;color:var(--info);margin-left:6px;font-weight:400">MODE A — Always Available</span></h4>`;
+      if (p.dossier_mode_a_markdown) {
+        html += `
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+            <span style="font-size:12px;color:var(--text-muted)">Generated ${formatRelative(p.dossier_mode_a_generated_at)}</span>
+            <button class="btn-research-secondary" onclick="generateMeetingPrep(${p.id})">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/></svg>
+              Refresh
+            </button>
+          </div>
+          <div class="deep-profile-content">${marked.parse(p.dossier_mode_a_markdown)}</div>`;
+      } else {
+        html += `
+          <div style="text-align:center;padding:24px">
+            <div style="color:var(--text-muted);font-size:13px;margin-bottom:16px">
+              Generate a quick meeting-prep brief from your interaction history.<br>No web search required — always available instantly.
+            </div>
+            <button class="btn-research" onclick="generateMeetingPrep(${p.id})">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+              Generate Meeting Prep
+            </button>
+          </div>`;
+      }
+      html += '</div>';
+
+      // Deep Research Dossier section (Mode B) — verified contacts only
       if (p.linkedin_status === 'confirmed') {
+        const drStatus = p.deep_research_status || 'NOT_STARTED';
+        const drColor = drStatus === 'SUCCEEDED' ? 'var(--success)' : drStatus === 'FAILED' ? 'var(--danger)' : 'var(--text-muted)';
         html += `<div class="modal-section" id="deepProfileSection${p.id}">
-          <h4>Intelligence Dossier</h4>`;
+          <h4>Deep Research Dossier <span style="font-size:10px;color:var(--accent-light);margin-left:6px;font-weight:400">MODE B — Web Required</span>
+          <span style="font-size:10px;color:${drColor};margin-left:8px;font-weight:600">${drStatus}</span></h4>`;
         if (p.deep_profile) {
           const lockScore = p.entity_lock_score;
           const qaPass = p.qa_passes_all;
@@ -2143,7 +2180,7 @@
           html += `
             <div style="text-align:center;padding:24px">
               <div style="color:var(--text-muted);font-size:13px;margin-bottom:16px">
-                Generate an AI-powered intelligence dossier with career analysis,<br>strategic patterns, conversation playbook, and risk signals.
+                Run a full web research dossier with career analysis, public visibility<br>sweep, strategic patterns, conversation playbook, and risk signals.
               </div>
               <button class="btn-research" id="researchBtn${p.id}" onclick="generateDeepProfile(${p.id})">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/><path d="M11 8v6M8 11h6"/></svg>
@@ -2175,7 +2212,61 @@
       if (e.target === $('profileModal')) closeProfileModal();
     });
 
-    // ── Deep Profile Research ──
+    // ── Meeting Prep (Mode A) ──
+    function scrollToMeetingPrep(profileId) {
+      const section = document.getElementById('meetingPrepSection' + profileId);
+      if (section) section.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+
+    async function generateMeetingPrep(profileId) {
+      const section = document.getElementById('meetingPrepSection' + profileId);
+      if (!section) return;
+
+      section.innerHTML = `<h4>Meeting-Prep Brief <span style="font-size:10px;color:var(--info);margin-left:6px;font-weight:400">MODE A</span></h4>
+        <div style="text-align:center;padding:24px">
+          <div class="loading-spinner" style="margin:0 auto 12px"></div>
+          <div style="color:var(--text-secondary);font-size:14px">Generating meeting-prep brief...</div>
+          <div style="color:var(--text-muted);font-size:12px;margin-top:4px">Uses internal evidence only — no web search needed</div>
+        </div>`;
+
+      try {
+        const res = await fetch(API_BASE + '/profiles/' + profileId + '/meeting-prep', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.detail || 'Meeting prep generation failed');
+        }
+        const data = await res.json();
+        showToast('Meeting-prep brief generated!', 'success');
+
+        const profile = allProfiles.find(p => p.id === profileId);
+        if (profile) {
+          profile.dossier_mode_a_markdown = data.brief;
+          profile.dossier_mode_a_generated_at = data.generated_at;
+        }
+
+        section.innerHTML = `<h4>Meeting-Prep Brief <span style="font-size:10px;color:var(--info);margin-left:6px;font-weight:400">MODE A</span></h4>
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+            <span style="font-size:12px;color:var(--text-muted)">Generated just now</span>
+            <button class="btn-research-secondary" onclick="generateMeetingPrep(${profileId})">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/></svg>
+              Refresh
+            </button>
+          </div>
+          <div class="deep-profile-content">${marked.parse(data.brief)}</div>`;
+      } catch (e) {
+        showToast(e.message);
+        section.innerHTML = `<h4>Meeting-Prep Brief <span style="font-size:10px;color:var(--info);margin-left:6px;font-weight:400">MODE A</span></h4>
+          <div style="text-align:center;padding:24px">
+            <div style="color:var(--danger);font-size:13px;margin-bottom:12px">${e.message}</div>
+            <button class="btn-research" onclick="generateMeetingPrep(${profileId})">Try Again</button>
+          </div>`;
+      }
+    }
+
+    // ── Deep Profile Research (Mode B) ──
     function scrollToDeepProfile(profileId) {
       const section = document.getElementById('deepProfileSection' + profileId);
       if (section) section.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -2327,6 +2418,7 @@
         if (profile) {
           profile.deep_profile = data.deep_profile;
           profile.deep_profile_generated_at = data.generated_at;
+          profile.deep_research_status = data.deep_research_status || (data.status === 'ok' ? 'SUCCEEDED' : 'FAILED');
           profile.entity_lock_score = (data.entity_lock || {}).entity_lock_score;
           profile.qa_passes_all = (data.qa_report || {}).passes_all;
           profile.qa_report_data = data.qa_report;
