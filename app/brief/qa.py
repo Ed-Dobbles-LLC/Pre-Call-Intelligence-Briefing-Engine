@@ -1131,6 +1131,7 @@ def enforce_fail_closed_gates(
     visibility_ledger_count: int,
     evidence_coverage_pct: float,
     person_name: str = "",
+    has_public_results: bool = True,
 ) -> tuple[bool, str]:
     """Enforce fail-closed gates and return (should_output, message).
 
@@ -1139,6 +1140,15 @@ def enforce_fail_closed_gates(
         (False, failure_text) if any hard gate fails — output the failure text INSTEAD.
     """
     failures: list[str] = []
+
+    # Gate 0: Must have at least one public retrieval result
+    if not has_public_results:
+        failures.append(
+            "FAIL: NO PUBLIC RETRIEVAL RESULTS\n"
+            f'SerpAPI returned 0 results for "{person_name}".\n'
+            "Entity Lock cannot be computed without public evidence.\n"
+            "Verify the person name and re-run retrieval."
+        )
 
     # Gate 1: Visibility sweep must have been executed
     if visibility_ledger_count == 0:
