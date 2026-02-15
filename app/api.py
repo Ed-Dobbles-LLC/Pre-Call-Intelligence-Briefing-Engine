@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
@@ -74,13 +75,17 @@ async def lifespan(app: FastAPI):
         init_db()
     except Exception:
         logger.exception("Database init failed – running in degraded mode")
-    # Repair any linkedin_status fields wiped by the previous sync bug
-    try:
-        repaired = repair_linkedin_status()
-        if repaired:
-            logger.info("Repaired %d profiles with missing linkedin_status", repaired)
-    except Exception:
-        logger.exception("LinkedIn status repair failed")
+    # Repair linkedin_status in a background thread so it doesn't block
+    # the lifespan from yielding (which blocks the health-check).
+    def _deferred_repair():
+        try:
+            repaired = repair_linkedin_status()
+            if repaired:
+                logger.info("Repaired %d profiles with missing linkedin_status", repaired)
+        except Exception:
+            logger.exception("LinkedIn status repair failed")
+
+    threading.Thread(target=_deferred_repair, daemon=True).start()
 
     # Start background auto-sync for Fireflies transcripts
     if settings.fireflies_api_key:
