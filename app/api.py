@@ -613,6 +613,7 @@ async def generate_profile_research(profile_id: int):
             location=p_location,
             search_results=search_results,
             apollo_data=apollo_data,
+            has_meeting_data=bool(profile_data.get("interactions")),
         )
 
         entity_lock_report = {
@@ -622,10 +623,11 @@ async def generate_profile_research(profile_id: int):
             "location": p_location or None,
             "linkedin_url": p_linkedin or None,
             "entity_lock_score": entity_lock.score,
+            "lock_status": entity_lock.lock_status,
             "is_locked": entity_lock.is_locked,
             "disambiguation_risks": (
                 [] if entity_lock.is_locked
-                else ["IDENTITY NOT FULLY LOCKED — review evidence before acting on dossier"]
+                else [f"IDENTITY {entity_lock.lock_status} — review evidence before acting"]
             ),
             "evidence": entity_lock.evidence,
             "signals": {
@@ -636,6 +638,9 @@ async def generate_profile_research(profile_id: int):
                 "location_match": entity_lock.location_match,
                 "photo_available": entity_lock.photo_available,
                 "multiple_sources_agree": entity_lock.multiple_sources_agree,
+                "employer_match": entity_lock.employer_match,
+                "meeting_confirmed": entity_lock.meeting_confirmed,
+                "secondary_source_match": entity_lock.secondary_source_match,
             },
         }
 
@@ -656,6 +661,7 @@ async def generate_profile_research(profile_id: int):
         qa_report = generate_qa_report(
             dossier_text=result,
             disambiguation=entity_lock,
+            person_name=p_name,
         )
         qa_markdown = render_qa_report_markdown(qa_report)
 
@@ -694,6 +700,7 @@ async def generate_profile_research(profile_id: int):
                 "passes_all": qa_report.passes_all,
                 "genericness_score": qa_report.genericness.genericness_score,
                 "evidence_coverage_pct": round(qa_report.evidence_coverage.coverage_pct, 1),
+                "person_level_pct": round(qa_report.person_level.person_pct, 1),
                 "contradictions": len(qa_report.contradictions),
                 "hallucination_risk_flags": qa_report.hallucination_risk_flags,
                 "markdown": qa_markdown,

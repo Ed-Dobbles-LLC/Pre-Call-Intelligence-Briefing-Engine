@@ -14,8 +14,14 @@ from app.brief.qa import (
     DisambiguationResult,
     EvidenceCoverageResult,
     GenericFillerResult,
+    InferredHAudit,
+    PersonLevelResult,
     QAReport,
+    SnapshotValidation,
+    audit_inferred_h,
     check_evidence_coverage,
+    check_person_level_ratio,
+    check_snapshot_person_focus,
     detect_contradictions,
     generate_qa_report,
     lint_generic_filler,
@@ -182,12 +188,21 @@ class TestEvidenceCoverage:
         assert result.passes
         assert result.coverage_pct == 100.0
 
-    def test_coverage_threshold_is_80(self):
-        # 4 out of 5 tagged = 80% = pass
+    def test_coverage_threshold_is_85(self):
+        # 5 out of 5 tagged = 100% = pass (well above 85%)
         lines = []
-        for i in range(4):
+        for i in range(5):
             lines.append(f"Claim {i} about something specific and detailed [VERIFIED-PUBLIC] per sources.")
-        lines.append("This claim has no evidence tag or citation at all.")
+        result = check_evidence_coverage("\n".join(lines))
+        assert result.passes
+
+    def test_coverage_at_85_passes(self):
+        # 17 out of 20 tagged = 85% = pass
+        lines = []
+        for i in range(17):
+            lines.append(f"Claim {i} about something specific and detailed [VERIFIED-PUBLIC] per sources.")
+        for i in range(3):
+            lines.append(f"Untagged claim {i} about something else entirely here.")
         result = check_evidence_coverage("\n".join(lines))
         assert result.passes
 
@@ -362,14 +377,21 @@ class TestDisambiguationScorer:
             search_results=search_results,
         )
         assert result.title_match
-        assert result.score >= 15
+        assert result.score >= 10  # Title match = 10 pts
 
-    def test_apollo_data_gives_15_points(self):
+    def test_apollo_employer_gives_points(self):
+        """Apollo data with matching org name adds to employer score."""
         result = score_disambiguation(
             name="Ben Titmus",
-            apollo_data={"name": "Ben Titmus", "title": "CTO"},
+            company="Acme Corp",
+            apollo_data={
+                "name": "Ben Titmus",
+                "title": "CTO",
+                "organization": {"name": "Acme Corp"},
+            },
         )
-        assert result.score >= 15
+        assert result.employer_match
+        assert result.score >= 10
 
     def test_location_match(self):
         search_results = {
@@ -383,7 +405,7 @@ class TestDisambiguationScorer:
             search_results=search_results,
         )
         assert result.location_match
-        assert result.score >= 10
+        assert result.score >= 5  # Location = 5 pts
 
     def test_high_confidence_locks_identity(self):
         search_results = {
@@ -393,6 +415,9 @@ class TestDisambiguationScorer:
             "general": [
                 {"title": "CTO profile", "snippet": "Ben Titmus is CTO at Acme in London", "link": "https://example.com"}
             ],
+            "news": [
+                {"title": "Acme CTO speaks at conf", "snippet": "Ben Titmus from Acme", "link": "https://news.example.com"}
+            ],
         }
         result = score_disambiguation(
             name="Ben Titmus",
@@ -401,10 +426,18 @@ class TestDisambiguationScorer:
             linkedin_url="https://linkedin.com/in/bentitmus",
             location="London",
             search_results=search_results,
-            apollo_data={"name": "Ben Titmus", "title": "CTO"},
+            has_meeting_data=True,
         )
         assert result.is_locked
         assert result.score >= 70
+
+    def test_meeting_data_gives_15_points(self):
+        result = score_disambiguation(
+            name="Ben Titmus",
+            has_meeting_data=True,
+        )
+        assert result.meeting_confirmed
+        assert result.score >= 15
 
     def test_multiple_sources_bonus(self):
         search_results = {
@@ -414,13 +447,16 @@ class TestDisambiguationScorer:
             "general": [
                 {"title": "Ben Titmus CTO article", "snippet": "CTO of Acme", "link": "https://example.com"}
             ],
+            "news": [
+                {"title": "Acme CTO Ben Titmus", "snippet": "Ben Titmus leads", "link": "https://news.example.com"}
+            ],
         }
         result = score_disambiguation(
             name="Ben Titmus",
+            company="Acme",
             title="CTO",
             linkedin_url="https://linkedin.com/in/bentitmus",
             search_results=search_results,
-            apollo_data={"name": "Ben Titmus"},
         )
         assert result.multiple_sources_agree
 
@@ -450,7 +486,7 @@ class TestDisambiguationScorer:
             linkedin_url="https://linkedin.com/in/bentitmus",
         )
         assert len(result.evidence) > 0
-        assert result.evidence[0]["weight"] == 20
+        assert result.evidence[0]["weight"] == 25
 
 
 # ---------------------------------------------------------------------------
@@ -588,3 +624,293 @@ class TestRenderQAReport:
         md = render_qa_report_markdown(report)
         assert "Revenue claim" in md
         assert "Team size" in md
+
+    def test_renders_person_level_ratio(self):
+        report = QAReport()
+        report.person_level = PersonLevelResult(
+            total_lines=10, person_lines=4, company_lines=6, person_pct=40.0
+        )
+        md = render_qa_report_markdown(report)
+        assert "Person-Level Ratio" in md
+        assert "40%" in md
+        assert "FAIL" in md
+
+    def test_renders_snapshot_validation(self):
+        report = QAReport()
+        report.snapshot_validation = SnapshotValidation(
+            total_bullets=5,
+            person_bullets=2,
+            non_person_bullets=["- Generic bullet one", "- Generic bullet two", "- Generic three"],
+        )
+        md = render_qa_report_markdown(report)
+        assert "Snapshot Focus" in md
+        assert "2/5" in md
+        assert "FAIL" in md
+
+    def test_renders_inferred_h_audit(self):
+        report = QAReport()
+        report.inferred_h_audit = InferredHAudit(
+            total_inferred_h=3,
+            with_upstream=2,
+            without_upstream=[{"sentence": "Some claim [INFERRED-H]", "line": 5}],
+        )
+        md = render_qa_report_markdown(report)
+        assert "INFERRED-H Audit" in md
+        assert "2/3" in md
+
+
+# ---------------------------------------------------------------------------
+# Person-Level Ratio
+# ---------------------------------------------------------------------------
+
+
+class TestPersonLevelRatio:
+    def test_person_focused_text_passes(self):
+        text = (
+            "Ben Titmus serves as CTO at Acme Corp. [VERIFIED-PUBLIC]\n"
+            "He oversees a team of 45 engineers in London. [VERIFIED-MEETING]\n"
+            "Ben led the platform migration in Q3 2025. [VERIFIED-PUBLIC]\n"
+            "His primary metric is engineering throughput. [INFERRED-M]\n"
+            "Titmus reports directly to the CEO. [INFERRED-H]"
+        )
+        result = check_person_level_ratio(text, "Ben Titmus")
+        assert result.passes
+        assert result.person_pct >= 80
+
+    def test_company_heavy_text_fails(self):
+        text = (
+            "The company has 200 employees across three offices.\n"
+            "The organization focuses on enterprise SaaS delivery.\n"
+            "Corporate strategy emphasizes market expansion.\n"
+            "The firm recently raised a Series B round.\n"
+            "The business targets mid-market verticals.\n"
+            "Company revenue grew 40% year-over-year.\n"
+            "Industry trends suggest consolidation ahead.\n"
+            "Ben Titmus is the CTO. [VERIFIED-PUBLIC]\n"
+            "He joined in 2023. [VERIFIED-MEETING]"
+        )
+        result = check_person_level_ratio(text, "Ben Titmus")
+        assert not result.passes
+        assert result.company_lines >= 5
+
+    def test_empty_text_passes(self):
+        result = check_person_level_ratio("", "Test Person")
+        assert result.passes
+        assert result.person_pct == 100.0
+
+    def test_pronoun_detection(self):
+        text = (
+            "He was promoted to VP in 2024. [VERIFIED-PUBLIC]\n"
+            "She manages the EMEA region. [VERIFIED-MEETING]\n"
+            "Their focus is on operational efficiency. [INFERRED-M]"
+        )
+        result = check_person_level_ratio(text, "Someone Else")
+        assert result.person_lines == 3
+        assert result.passes
+
+    def test_skips_headers_and_short_lines(self):
+        text = (
+            "### Strategic Snapshot\n"
+            "Short.\n"
+            "---\n"
+            "He leads the engineering team across all products. [VERIFIED-MEETING]"
+        )
+        result = check_person_level_ratio(text, "Test Person")
+        assert result.total_lines == 1
+
+
+# ---------------------------------------------------------------------------
+# Strategic Snapshot Validator
+# ---------------------------------------------------------------------------
+
+
+class TestSnapshotValidator:
+    def test_all_person_bullets_pass(self):
+        text = (
+            "### 1. Strategic Identity Snapshot\n"
+            "- Ben operates as a builder/scaler hybrid. [INFERRED-H]\n"
+            "- He creates value through platform consolidation. [VERIFIED-MEETING]\n"
+            "- Ben emphasizes technical credibility in public talks. [VERIFIED-PUBLIC]\n"
+            "### 2. Verified Fact Table\n"
+            "Other content here."
+        )
+        result = check_snapshot_person_focus(text, "Ben Titmus")
+        assert result.passes
+        assert result.total_bullets == 3
+        assert result.person_bullets == 3
+
+    def test_too_many_non_person_bullets_fail(self):
+        text = (
+            "### 1. Strategic Identity Snapshot\n"
+            "- The company focuses on enterprise SaaS.\n"
+            "- Revenue growth driven by market expansion.\n"
+            "- Industry consolidation creates opportunity.\n"
+            "- Ben leads the engineering team. [VERIFIED-MEETING]\n"
+            "### 2. Verified Fact Table\n"
+        )
+        result = check_snapshot_person_focus(text, "Ben Titmus")
+        assert not result.passes
+        assert len(result.non_person_bullets) == 3
+
+    def test_two_non_person_bullets_still_passes(self):
+        text = (
+            "### 1. Strategic Identity Snapshot\n"
+            "- The company has 200 employees.\n"
+            "- Revenue is approximately $20M.\n"
+            "- Ben operates as an optimizer. [VERIFIED-MEETING]\n"
+            "- He focuses on platform stability. [INFERRED-M]\n"
+            "### 2. Verified Fact Table\n"
+        )
+        result = check_snapshot_person_focus(text, "Ben Titmus")
+        assert result.passes
+        assert len(result.non_person_bullets) == 2
+
+    def test_no_snapshot_section(self):
+        text = "### Some other section\n- Bullet point here."
+        result = check_snapshot_person_focus(text, "Ben Titmus")
+        assert result.passes  # No snapshot = nothing to fail
+        assert result.total_bullets == 0
+
+    def test_empty_text(self):
+        result = check_snapshot_person_focus("", "Ben Titmus")
+        assert result.passes
+        assert result.total_bullets == 0
+
+
+# ---------------------------------------------------------------------------
+# INFERRED-H Auditor
+# ---------------------------------------------------------------------------
+
+
+class TestInferredHAudit:
+    def test_all_inferred_h_have_upstream(self):
+        text = (
+            "Revenue likely exceeds $10M based on headcount signals [INFERRED-H]\n"
+            "He is a builder because meeting transcripts show iterative approach [INFERRED-H]\n"
+        )
+        result = audit_inferred_h(text)
+        assert result.passes
+        assert result.total_inferred_h == 2
+        assert result.with_upstream == 2
+
+    def test_inferred_h_without_upstream_fails(self):
+        text = (
+            "Revenue likely exceeds $10M [INFERRED-H]\n"
+            "He is probably a builder type [INFERRED-H]\n"
+        )
+        result = audit_inferred_h(text)
+        assert not result.passes
+        assert result.total_inferred_h == 2
+        assert len(result.without_upstream) == 2
+
+    def test_mixed_inferred_h(self):
+        text = (
+            "Revenue likely exceeds $10M based on headcount [INFERRED-H]\n"
+            "He is probably a builder type [INFERRED-H]\n"
+            "Decision rights include budget from meeting evidence [INFERRED-H]\n"
+        )
+        result = audit_inferred_h(text)
+        assert not result.passes
+        assert result.with_upstream == 2
+        assert len(result.without_upstream) == 1
+
+    def test_no_inferred_h_passes(self):
+        text = (
+            "He is CTO at Acme Corp. [VERIFIED-PUBLIC]\n"
+            "Revenue grew 32%. [VERIFIED-MEETING]\n"
+        )
+        result = audit_inferred_h(text)
+        assert result.passes
+        assert result.total_inferred_h == 0
+
+    def test_inferred_h_with_dash_variant(self):
+        text = "Revenue data suggests growth based on filings [INFERRED–H]\n"
+        result = audit_inferred_h(text)
+        assert result.total_inferred_h == 1
+        assert result.passes
+
+    def test_inferred_high_variant(self):
+        text = "He is a builder [INFERRED-HIGH]\n"
+        result = audit_inferred_h(text)
+        assert result.total_inferred_h == 1
+        assert not result.passes  # No upstream signal words
+
+
+# ---------------------------------------------------------------------------
+# QA Report with new gates
+# ---------------------------------------------------------------------------
+
+
+class TestQAReportNewGates:
+    def test_passes_all_requires_person_level(self):
+        report = QAReport()
+        report.genericness = GenericFillerResult(total_sentences=10, generic_count=0)
+        report.evidence_coverage = EvidenceCoverageResult(total_substantive=10, tagged_count=10)
+        report.contradictions = []
+        report.person_level = PersonLevelResult(
+            total_lines=10, person_lines=3, company_lines=7, person_pct=30.0
+        )
+        assert not report.passes_all
+
+    def test_passes_all_with_good_person_level(self):
+        report = QAReport()
+        report.genericness = GenericFillerResult(total_sentences=10, generic_count=0)
+        report.evidence_coverage = EvidenceCoverageResult(total_substantive=10, tagged_count=10)
+        report.contradictions = []
+        report.person_level = PersonLevelResult(
+            total_lines=10, person_lines=8, company_lines=2, person_pct=80.0
+        )
+        assert report.passes_all
+
+    def test_generate_qa_report_includes_person_level(self):
+        text = (
+            "Ben Titmus is CTO at Acme Corp. [VERIFIED-PUBLIC]\n"
+            "He oversees engineering. [VERIFIED-MEETING]\n"
+            "Ben led the platform migration. [VERIFIED-PUBLIC]"
+        )
+        report = generate_qa_report(text, person_name="Ben Titmus")
+        assert report.person_level.total_lines > 0
+        assert report.person_level.passes
+
+    def test_generate_qa_report_includes_snapshot_validation(self):
+        text = (
+            "### 1. Strategic Identity Snapshot\n"
+            "- Ben operates as a builder. [INFERRED-H]\n"
+            "- He creates value through consolidation. [VERIFIED-MEETING]\n"
+            "### 2. Verified Fact Table\n"
+            "Ben is CTO. [VERIFIED-PUBLIC]"
+        )
+        report = generate_qa_report(text, person_name="Ben Titmus")
+        assert report.snapshot_validation.total_bullets == 2
+        assert report.snapshot_validation.passes
+
+    def test_generate_qa_report_includes_inferred_h_audit(self):
+        text = (
+            "Revenue likely exceeds $10M based on headcount [INFERRED-H]\n"
+            "He is a builder type [INFERRED-H]\n"
+        )
+        report = generate_qa_report(text, person_name="Ben Titmus")
+        assert report.inferred_h_audit.total_inferred_h == 2
+
+    def test_hallucination_flags_company_heavy(self):
+        text = (
+            "The company has 200 employees across three offices.\n"
+            "The organization focuses on enterprise SaaS delivery.\n"
+            "Corporate strategy emphasizes market expansion.\n"
+            "The firm recently raised a Series B round.\n"
+            "The business targets mid-market verticals.\n"
+            "Company revenue grew 40% year-over-year.\n"
+            "Industry trends suggest consolidation ahead.\n"
+            "Ben is CTO. [VERIFIED-PUBLIC]"
+        )
+        report = generate_qa_report(text, person_name="Ben Titmus")
+        assert any("company" in f.lower() for f in report.hallucination_risk_flags)
+
+    def test_hallucination_flags_inferred_h_missing_upstream(self):
+        text = (
+            "Revenue likely exceeds $10M [INFERRED-H]\n"
+            "He is a builder [INFERRED-H]\n"
+            "Ben is CTO. [VERIFIED-PUBLIC]"
+        )
+        report = generate_qa_report(text, person_name="Ben Titmus")
+        assert any("INFERRED-H" in f for f in report.hallucination_risk_flags)
