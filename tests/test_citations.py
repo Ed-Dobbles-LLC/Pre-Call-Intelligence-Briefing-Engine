@@ -1,28 +1,33 @@
-"""Tests for citation enforcement and the no-hallucination guarantee.
+"""Tests for citation enforcement, evidence discipline, and the no-hallucination guarantee.
 
 These tests verify that:
 1. Every claim-bearing section in a brief carries citations
 2. When there's no evidence, the brief outputs "Unknown" rather than fabricating data
 3. Citation objects are well-formed
+4. Evidence tags are correctly parsed and applied
+5. Strategic Operating Model sections are properly structured
 """
 
 from __future__ import annotations
 
-import hashlib
 import json
 from datetime import datetime
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 from app.brief.generator import (
     _compute_snippet_hash,
     _parse_citation,
     _parse_citations,
+    _parse_evidence_tag,
+    _parse_tagged_claim,
+    _parse_tagged_claims,
     generate_brief,
 )
 from app.models import (
-    BriefOutput,
     Citation,
+    EvidenceTag,
     SourceType,
+    TaggedClaim,
 )
 from app.retrieve.retriever import RetrievedEvidence
 
@@ -260,3 +265,266 @@ class TestCitationEnforcement:
         assert "header" in parsed
         assert "relationship_context" in parsed
         assert "open_loops" in parsed
+
+    def test_brief_output_has_strategic_sections(self):
+        """BriefOutput must include all Strategic Operating Model sections."""
+        evidence = RetrievedEvidence()
+        brief = generate_brief(
+            person="Test",
+            company=None,
+            topic=None,
+            meeting_datetime=None,
+            evidence=evidence,
+        )
+
+        json_str = brief.model_dump_json()
+        parsed = json.loads(json_str)
+        assert "strategic_positioning" in parsed
+        assert "power_map" in parsed
+        assert "incentive_structure" in parsed
+        assert "cognitive_patterns" in parsed
+        assert "strategic_tensions" in parsed
+        assert "behavioral_forecasts" in parsed
+        assert "information_gaps" in parsed
+        assert "conversation_strategy" in parsed
+        assert "meeting_delta" in parsed
+        assert "engine_improvements" in parsed
+
+    def test_fallback_brief_has_information_gaps(self):
+        """Fallback brief should flag gaps and improvement recommendations."""
+        from app.brief.generator import _build_fallback_brief
+        from app.models import HeaderSection
+
+        evidence = self._make_evidence_with_data()
+        header = HeaderSection(person="Test", confidence_score=0.0)
+
+        brief = _build_fallback_brief(header, evidence)
+
+        assert len(brief.information_gaps) > 0
+        assert brief.information_gaps[0].gap != ""
+        assert brief.information_gaps[0].strategic_impact != ""
+
+    def test_fallback_brief_has_engine_improvements(self):
+        """Fallback brief should include engine improvement recommendations."""
+        from app.brief.generator import _build_fallback_brief
+        from app.models import HeaderSection
+
+        evidence = self._make_evidence_with_data()
+        header = HeaderSection(person="Test", confidence_score=0.0)
+
+        brief = _build_fallback_brief(header, evidence)
+
+        assert len(brief.engine_improvements.missing_signals) > 0
+        assert len(brief.engine_improvements.recommended_data_sources) > 0
+
+
+class TestEvidenceTagParsing:
+    """Test evidence discipline tag parsing."""
+
+    def test_parse_verified_meeting(self):
+        assert _parse_evidence_tag("VERIFIED_MEETING") == EvidenceTag.verified_meeting
+
+    def test_parse_verified_public(self):
+        assert _parse_evidence_tag("VERIFIED_PUBLIC") == EvidenceTag.verified_public
+
+    def test_parse_inferred_high(self):
+        assert _parse_evidence_tag("INFERRED_HIGH") == EvidenceTag.inferred_high
+
+    def test_parse_inferred_low(self):
+        assert _parse_evidence_tag("INFERRED_LOW") == EvidenceTag.inferred_low
+
+    def test_parse_unknown(self):
+        assert _parse_evidence_tag("UNKNOWN") == EvidenceTag.unknown
+
+    def test_parse_none_defaults_to_unknown(self):
+        assert _parse_evidence_tag(None) == EvidenceTag.unknown
+
+    def test_parse_empty_defaults_to_unknown(self):
+        assert _parse_evidence_tag("") == EvidenceTag.unknown
+
+    def test_parse_handles_dashes(self):
+        """LLM might use dashes or en-dashes instead of underscores."""
+        assert _parse_evidence_tag("VERIFIED-MEETING") == EvidenceTag.verified_meeting
+        assert _parse_evidence_tag("INFERRED-HIGH") == EvidenceTag.inferred_high
+
+    def test_parse_handles_spaces(self):
+        assert _parse_evidence_tag("VERIFIED MEETING") == EvidenceTag.verified_meeting
+
+    def test_parse_case_insensitive(self):
+        assert _parse_evidence_tag("verified_meeting") == EvidenceTag.verified_meeting
+        assert _parse_evidence_tag("Inferred_High") == EvidenceTag.inferred_high
+
+    def test_parse_garbage_defaults_to_unknown(self):
+        assert _parse_evidence_tag("TOTALLY_INVALID") == EvidenceTag.unknown
+
+
+class TestTaggedClaimParsing:
+    """Test tagged claim parsing from LLM output."""
+
+    def test_parse_tagged_claim_basic(self):
+        raw = {
+            "claim": "Subject controls Q1 revenue pipeline",
+            "evidence_tag": "VERIFIED_MEETING",
+            "citations": [],
+        }
+        claim = _parse_tagged_claim(raw)
+        assert claim is not None
+        assert claim.claim == "Subject controls Q1 revenue pipeline"
+        assert claim.evidence_tag == EvidenceTag.verified_meeting
+
+    def test_parse_tagged_claim_none(self):
+        assert _parse_tagged_claim(None) is None
+
+    def test_parse_tagged_claim_empty_dict(self):
+        """Empty dict is falsy — treated same as None."""
+        assert _parse_tagged_claim({}) is None
+
+    def test_parse_tagged_claim_minimal(self):
+        """Dict with at least one key parses with defaults."""
+        claim = _parse_tagged_claim({"claim": "Some observation"})
+        assert claim is not None
+        assert claim.claim == "Some observation"
+        assert claim.evidence_tag == EvidenceTag.unknown
+
+    def test_parse_tagged_claim_with_citations(self):
+        raw = {
+            "claim": "Budget authority up to $500K",
+            "evidence_tag": "VERIFIED_MEETING",
+            "citations": [
+                {
+                    "source_type": "fireflies",
+                    "source_id": "ff-001",
+                    "timestamp": "2026-01-15T10:00:00",
+                    "excerpt": "I can approve up to 500K",
+                    "snippet_hash": "abc123",
+                }
+            ],
+        }
+        claim = _parse_tagged_claim(raw)
+        assert claim is not None
+        assert len(claim.citations) == 1
+        assert claim.citations[0].source_id == "ff-001"
+
+    def test_parse_tagged_claims_list(self):
+        raw_list = [
+            {"claim": "First claim", "evidence_tag": "VERIFIED_MEETING"},
+            {"claim": "Second claim", "evidence_tag": "INFERRED_HIGH"},
+        ]
+        claims = _parse_tagged_claims(raw_list)
+        assert len(claims) == 2
+        assert claims[0].claim == "First claim"
+        assert claims[1].evidence_tag == EvidenceTag.inferred_high
+
+    def test_parse_tagged_claims_empty(self):
+        assert _parse_tagged_claims(None) == []
+        assert _parse_tagged_claims([]) == []
+
+
+class TestNoEvidenceStrategicSections:
+    """Test that no-evidence briefs populate strategic sections correctly."""
+
+    def test_no_evidence_has_information_gaps(self):
+        evidence = RetrievedEvidence()
+        brief = generate_brief(
+            person="Nobody",
+            company=None,
+            topic=None,
+            meeting_datetime=None,
+            evidence=evidence,
+        )
+
+        assert len(brief.information_gaps) > 0
+        # Gap should be strategically meaningful, not generic
+        assert any("interact" in g.gap.lower() or "transcript" in g.gap.lower()
+                    for g in brief.information_gaps)
+
+    def test_no_evidence_has_engine_improvements(self):
+        evidence = RetrievedEvidence()
+        brief = generate_brief(
+            person="Nobody",
+            company=None,
+            topic=None,
+            meeting_datetime=None,
+            evidence=evidence,
+        )
+
+        ei = brief.engine_improvements
+        assert len(ei.missing_signals) > 0
+        assert len(ei.recommended_data_sources) > 0
+        assert len(ei.capture_fields) > 0
+
+    def test_no_evidence_empty_strategic_sections(self):
+        evidence = RetrievedEvidence()
+        brief = generate_brief(
+            person="Nobody",
+            company=None,
+            topic=None,
+            meeting_datetime=None,
+            evidence=evidence,
+        )
+
+        assert len(brief.strategic_positioning) == 0
+        assert len(brief.cognitive_patterns) == 0
+        assert len(brief.strategic_tensions) == 0
+        assert len(brief.behavioral_forecasts) == 0
+
+
+class TestMarkdownRendering:
+    """Test that the renderer produces the Strategic Intelligence format."""
+
+    def test_renders_strategic_title(self):
+        from app.brief.renderer import render_markdown
+
+        evidence = RetrievedEvidence()
+        brief = generate_brief(
+            person="Test",
+            company=None,
+            topic=None,
+            meeting_datetime=None,
+            evidence=evidence,
+        )
+
+        md = render_markdown(brief)
+        assert "Strategic Intelligence Brief" in md
+
+    def test_renders_all_strategic_sections(self):
+        from app.brief.renderer import render_markdown
+
+        evidence = RetrievedEvidence()
+        brief = generate_brief(
+            person="Test",
+            company="TestCo",
+            topic=None,
+            meeting_datetime=None,
+            evidence=evidence,
+        )
+
+        md = render_markdown(brief)
+        assert "Strategic Positioning Snapshot" in md
+        assert "Power & Influence Map" in md
+        assert "Incentive Structure Analysis" in md
+        assert "Cognitive & Rhetorical Patterns" in md
+        assert "Strategic Tensions" in md
+        assert "Behavioral Forecast" in md
+        assert "Information Gaps That Matter" in md
+        assert "Executive Conversation Strategy" in md
+        assert "Meeting Delta Analysis" in md
+        assert "Engine Improvement Recommendations" in md
+
+    def test_renders_evidence_tags(self):
+        from app.brief.renderer import _tag
+
+        assert "VERIFIED" in _tag(EvidenceTag.verified_meeting)
+        assert "MEETING" in _tag(EvidenceTag.verified_meeting)
+        assert "UNKNOWN" in _tag(EvidenceTag.unknown)
+
+    def test_renders_tagged_claims(self):
+        from app.brief.renderer import _render_tagged_claim
+
+        claim = TaggedClaim(
+            claim="Subject owns P&L for consulting division",
+            evidence_tag=EvidenceTag.verified_meeting,
+        )
+        rendered = _render_tagged_claim(claim)
+        assert "VERIFIED" in rendered
+        assert "P&L for consulting division" in rendered
