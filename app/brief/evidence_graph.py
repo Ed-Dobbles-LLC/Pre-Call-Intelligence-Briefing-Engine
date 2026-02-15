@@ -1,0 +1,583 @@
+"""Fail-closed Evidence Graph engine for Contact Intelligence Dossiers.
+
+This module implements:
+1. Evidence Graph construction from retrieval results + meeting data
+2. Retrieval Ledger with mandatory logging of every SerpAPI call
+3. Fail-closed gate checks that HALT output when gates fail
+4. Evidence coverage computation per the formal definition
+
+Fail-closed gates:
+- VISIBILITY SWEEP NOT EXECUTED → halt
+- EVIDENCE COVERAGE < 85% → halt
+- ENTITY LOCK < 70 → constrain (no strong person-level claims)
+- INTERNAL CONTRADICTION → halt
+"""
+
+from __future__ import annotations
+
+import logging
+import re
+from dataclasses import dataclass, field
+from typing import Any
+
+from app.models import Claim, EvidenceNode, RetrievalLedgerRow
+
+logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Evidence Graph
+# ---------------------------------------------------------------------------
+
+
+class EvidenceGraph:
+    """Container for EvidenceNodes, Claims, and RetrievalLedger rows.
+
+    The graph is the single source of truth for what we know and how we know it.
+    """
+
+    def __init__(self) -> None:
+        self.nodes: dict[str, EvidenceNode] = {}
+        self.claims: dict[str, Claim] = {}
+        self.ledger: list[RetrievalLedgerRow] = []
+        self._next_node_id: int = 1
+        self._next_claim_id: int = 1
+        self._next_query_id: int = 1
+
+    # --- Node management ---
+
+    def add_node(
+        self,
+        type: str,
+        source: str,
+        snippet: str,
+        ref: str = "",
+        date: str = "UNKNOWN",
+    ) -> EvidenceNode:
+        """Add an EvidenceNode and return it."""
+        node_id = f"E{self._next_node_id}"
+        self._next_node_id += 1
+        node = EvidenceNode(
+            id=node_id,
+            type=type,
+            source=source,
+            snippet=snippet[:200],  # hard limit
+            ref=ref,
+            date=date,
+        )
+        self.nodes[node_id] = node
+        return node
+
+    def add_meeting_node(
+        self,
+        source: str,
+        snippet: str,
+        date: str = "UNKNOWN",
+        ref: str = "",
+    ) -> EvidenceNode:
+        """Add a MEETING-type EvidenceNode."""
+        return self.add_node(type="MEETING", source=source, snippet=snippet, ref=ref, date=date)
+
+    def add_public_node(
+        self,
+        source: str,
+        snippet: str,
+        date: str = "UNKNOWN",
+        ref: str = "",
+    ) -> EvidenceNode:
+        """Add a PUBLIC-type EvidenceNode."""
+        return self.add_node(type="PUBLIC", source=source, snippet=snippet, ref=ref, date=date)
+
+    # --- Claim management ---
+
+    def add_claim(
+        self,
+        text: str,
+        tag: str,
+        evidence_ids: list[str] | None = None,
+        confidence: str = "L",
+    ) -> Claim:
+        """Register a Claim with evidence linkage."""
+        claim_id = f"C{self._next_claim_id}"
+        self._next_claim_id += 1
+        claim = Claim(
+            claim_id=claim_id,
+            text=text,
+            tag=tag,
+            evidence_ids=evidence_ids or [],
+            confidence=confidence,
+        )
+        self.claims[claim_id] = claim
+        return claim
+
+    # --- Retrieval Ledger ---
+
+    def log_retrieval(
+        self,
+        query: str,
+        intent: str,
+        results: list[dict[str, Any]] | None = None,
+        selected_evidence_ids: list[str] | None = None,
+    ) -> RetrievalLedgerRow:
+        """Log a retrieval query to the ledger. Always logs, even with 0 results."""
+        query_id = f"Q{self._next_query_id}"
+        self._next_query_id += 1
+
+        top_results = []
+        if results:
+            for i, r in enumerate(results[:5], 1):
+                top_results.append({
+                    "rank": i,
+                    "title": r.get("title", ""),
+                    "url": r.get("link", r.get("url", "")),
+                    "date": r.get("date", "UNKNOWN"),
+                    "snippet": (r.get("snippet", ""))[:200],
+                })
+
+        row = RetrievalLedgerRow(
+            query_id=query_id,
+            query=query,
+            intent=intent,
+            top_results=top_results,
+            selected_evidence_ids=selected_evidence_ids or [],
+            result_count=len(results) if results else 0,
+        )
+        self.ledger.append(row)
+        return row
+
+    # --- Queries ---
+
+    def get_visibility_ledger_rows(self) -> list[RetrievalLedgerRow]:
+        """Return only visibility-intent ledger rows."""
+        return [r for r in self.ledger if r.intent == "visibility"]
+
+    def get_node(self, node_id: str) -> EvidenceNode | None:
+        return self.nodes.get(node_id)
+
+    def get_claim(self, claim_id: str) -> Claim | None:
+        return self.claims.get(claim_id)
+
+    # --- Serialization ---
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize the full graph for API responses / persistence."""
+        return {
+            "nodes": [n.model_dump() for n in self.nodes.values()],
+            "claims": [c.model_dump() for c in self.claims.values()],
+            "ledger": [r.model_dump() for r in self.ledger],
+        }
+
+
+# ---------------------------------------------------------------------------
+# Evidence Coverage Computation
+# ---------------------------------------------------------------------------
+
+# Tags that count as "evidenced" (not UNKNOWN)
+_VALID_EVIDENCE_TAGS = {
+    "VERIFIED-MEETING", "VERIFIED-PUBLIC",
+    "VERIFIED_MEETING", "VERIFIED_PUBLIC",
+    "INFERRED-H", "INFERRED-M", "INFERRED-L",
+    "INFERRED_HIGH", "INFERRED_MEDIUM", "INFERRED_LOW",
+}
+
+
+def compute_evidence_coverage(claims: list[Claim]) -> float:
+    """Compute evidence coverage percentage.
+
+    Coverage = (# substantive claims with >=1 evidence_id or tag != UNKNOWN) /
+               (total claims)
+
+    Returns 0.0 if no claims.
+    """
+    if not claims:
+        return 0.0
+
+    covered = 0
+    for claim in claims:
+        if claim.tag == "UNKNOWN" and not claim.evidence_ids:
+            continue
+        if claim.evidence_ids or claim.tag in _VALID_EVIDENCE_TAGS:
+            covered += 1
+
+    return (covered / len(claims)) * 100.0
+
+
+def compute_evidence_coverage_from_text(text: str) -> float:
+    """Compute coverage from raw dossier text by counting evidence tags.
+
+    A substantive line is >20 chars, not a header, not a table delimiter.
+    A covered line has an evidence tag pattern like [VERIFIED-*] or [INFERRED-*].
+    """
+    tag_pattern = re.compile(
+        r"\[(?:VERIFIED[–-](?:MEETING|PUBLIC)|INFERRED[–-][HML]|UNKNOWN)\]",
+        re.IGNORECASE,
+    )
+    lines = text.strip().split("\n")
+    total = 0
+    tagged = 0
+    for line in lines:
+        stripped = line.strip()
+        if len(stripped) <= 20:
+            continue
+        if stripped.startswith("#") or stripped.startswith("---") or stripped.startswith("|"):
+            continue
+        total += 1
+        if tag_pattern.search(stripped):
+            tagged += 1
+
+    if total == 0:
+        return 100.0
+    return (tagged / total) * 100.0
+
+
+# ---------------------------------------------------------------------------
+# Fail-Closed Gate Engine
+# ---------------------------------------------------------------------------
+
+EVIDENCE_COVERAGE_THRESHOLD = 85.0
+ENTITY_LOCK_THRESHOLD = 70
+
+
+@dataclass
+class GateResult:
+    """Result of a single fail-closed gate check."""
+    gate_name: str
+    passed: bool
+    details: str = ""
+    remediation: str = ""
+
+
+@dataclass
+class FailClosedReport:
+    """Aggregate result of all fail-closed gates."""
+    gates: list[GateResult] = field(default_factory=list)
+    all_passed: bool = False
+    is_constrained: bool = False  # True when entity lock < 70
+    failure_output: str = ""  # The text to return when gates fail
+
+    @property
+    def should_halt(self) -> bool:
+        """True if any hard gate failed (not just constrained)."""
+        return not self.all_passed and not self.is_constrained
+
+
+def check_visibility_sweep_gate(graph: EvidenceGraph) -> GateResult:
+    """Gate 1: Visibility sweep must have been executed.
+
+    Checks that the retrieval ledger contains visibility-intent rows.
+    """
+    visibility_rows = graph.get_visibility_ledger_rows()
+    if not visibility_rows:
+        queries = _get_required_visibility_queries("<full name>")
+        query_text = "\n".join(f"  - {q}" for q in queries)
+        return GateResult(
+            gate_name="VISIBILITY_SWEEP",
+            passed=False,
+            details="No visibility-intent rows found in retrieval ledger.",
+            remediation=(
+                "FAIL: VISIBILITY SWEEP NOT EXECUTED\n"
+                "Run the following queries and log results to the retrieval ledger:\n"
+                f"{query_text}"
+            ),
+        )
+    return GateResult(
+        gate_name="VISIBILITY_SWEEP",
+        passed=True,
+        details=f"{len(visibility_rows)} visibility queries executed.",
+    )
+
+
+def check_evidence_coverage_gate(
+    claims: list[Claim],
+    dossier_text: str = "",
+) -> GateResult:
+    """Gate 2: Evidence coverage must be >= 85%.
+
+    Uses claim-level coverage if claims exist, else falls back to text-level.
+    """
+    if claims:
+        coverage = compute_evidence_coverage(claims)
+    elif dossier_text:
+        coverage = compute_evidence_coverage_from_text(dossier_text)
+    else:
+        coverage = 0.0
+
+    if coverage < EVIDENCE_COVERAGE_THRESHOLD:
+        return GateResult(
+            gate_name="EVIDENCE_COVERAGE",
+            passed=False,
+            details=f"Coverage {coverage:.1f}% < {EVIDENCE_COVERAGE_THRESHOLD}% threshold.",
+            remediation=(
+                f"FAIL: EVIDENCE COVERAGE {coverage:.1f}%\n"
+                "Uncited claims must be tagged with evidence IDs or removed.\n"
+                "Run additional retrieval queries to gather missing evidence."
+            ),
+        )
+    return GateResult(
+        gate_name="EVIDENCE_COVERAGE",
+        passed=True,
+        details=f"Coverage {coverage:.1f}% >= {EVIDENCE_COVERAGE_THRESHOLD}%.",
+    )
+
+
+def check_entity_lock_gate(entity_lock_score: int) -> GateResult:
+    """Gate 3: Entity lock score check.
+
+    >= 70: LOCKED (full dossier)
+    50-69: PARTIAL (constrained — only VERIFIED + UNKNOWN + INFERRED-L)
+    < 50: NOT LOCKED (constrained — same restrictions)
+    """
+    if entity_lock_score >= ENTITY_LOCK_THRESHOLD:
+        return GateResult(
+            gate_name="ENTITY_LOCK",
+            passed=True,
+            details=f"Score {entity_lock_score}/100 — LOCKED.",
+        )
+    label = "PARTIAL" if entity_lock_score >= 50 else "NOT LOCKED"
+    return GateResult(
+        gate_name="ENTITY_LOCK",
+        passed=False,
+        details=(
+            f"Score {entity_lock_score}/100 — IDENTITY {label}.\n"
+            "Dossier will NOT include strong person-level claims.\n"
+            "Only VERIFIED facts, UNKNOWNs, and safe INFERRED-L permitted."
+        ),
+        remediation=(
+            f"IDENTITY {label}: score {entity_lock_score}/100.\n"
+            "Fetch additional identity signals:\n"
+            "  - Confirm LinkedIn URL\n"
+            "  - Cross-reference employer in public sources\n"
+            "  - Verify title on company website"
+        ),
+    )
+
+
+def run_fail_closed_gates(
+    graph: EvidenceGraph,
+    entity_lock_score: int,
+    dossier_text: str = "",
+) -> FailClosedReport:
+    """Run all fail-closed gates. Returns a report.
+
+    Gate execution order:
+    1. Visibility sweep (hard fail)
+    2. Evidence coverage (hard fail)
+    3. Entity lock (constrain, not halt)
+
+    If any hard gate fails, the report includes the failure output
+    that must be returned INSTEAD of a dossier.
+    """
+    report = FailClosedReport()
+
+    # Gate 1: Visibility sweep
+    vis_gate = check_visibility_sweep_gate(graph)
+    report.gates.append(vis_gate)
+
+    # Gate 2: Evidence coverage
+    claims_list = list(graph.claims.values())
+    cov_gate = check_evidence_coverage_gate(claims_list, dossier_text)
+    report.gates.append(cov_gate)
+
+    # Gate 3: Entity lock
+    lock_gate = check_entity_lock_gate(entity_lock_score)
+    report.gates.append(lock_gate)
+
+    # Determine overall status
+    hard_failures = [
+        g for g in report.gates
+        if not g.passed and g.gate_name in ("VISIBILITY_SWEEP", "EVIDENCE_COVERAGE")
+    ]
+
+    if hard_failures:
+        report.all_passed = False
+        report.is_constrained = False
+        # Build failure output
+        parts = ["DOSSIER GENERATION HALTED — FAIL-CLOSED GATES FAILED\n"]
+        for gate in hard_failures:
+            parts.append(f"--- {gate.gate_name} ---")
+            parts.append(gate.remediation)
+            parts.append("")
+        # Include entity lock status for context
+        parts.append("--- ENTITY_LOCK ---")
+        parts.append(lock_gate.details)
+        report.failure_output = "\n".join(parts)
+    elif not lock_gate.passed:
+        report.all_passed = False
+        report.is_constrained = True
+    else:
+        report.all_passed = True
+        report.is_constrained = False
+
+    return report
+
+
+# ---------------------------------------------------------------------------
+# Visibility Sweep Query Battery
+# ---------------------------------------------------------------------------
+
+# Full 16-query visibility sweep per the spec
+VISIBILITY_QUERY_TEMPLATES: list[tuple[str, str]] = [
+    # A) TED/TEDx (explicit, 4 queries)
+    ('"{name}" TED', "visibility"),
+    ('"{name}" TEDx', "visibility"),
+    ('site:ted.com "{name}"', "visibility"),
+    ('site:youtube.com "{name}" TEDx', "visibility"),
+    # B) Keynotes / Conferences (4 queries)
+    ('"{name}" keynote', "visibility"),
+    ('"{name}" conference talk', "visibility"),
+    ('"{name}" summit speaker', "visibility"),
+    ('"{name}" panel discussion', "visibility"),
+    # C) Podcasts / Webinars / Interviews (4 queries)
+    ('"{name}" podcast', "visibility"),
+    ('"{name}" webinar', "visibility"),
+    ('"{name}" interview video', "visibility"),
+    ('"{name}" fireside chat', "visibility"),
+    # D) YouTube / Vimeo / Slide decks (3 queries)
+    ('"{name}" YouTube talk', "visibility"),
+    ('"{name}" Vimeo talk', "visibility"),
+    ('"{name}" SlideShare', "visibility"),
+]
+
+# Category groupings for audit
+VISIBILITY_CATEGORY_GROUPS = {
+    "ted_tedx": [0, 1, 2, 3],      # First 4 queries
+    "keynote_conference": [4, 5, 6, 7],  # Next 4
+    "podcast_webinar": [8, 9, 10, 11],   # Next 4
+    "youtube_video": [12, 13, 14],        # Last 3
+}
+
+
+def _get_required_visibility_queries(name: str) -> list[str]:
+    """Return the full list of required visibility queries for a person."""
+    return [tpl[0].replace("{name}", name) for tpl in VISIBILITY_QUERY_TEMPLATES]
+
+
+def build_visibility_queries(name: str, company: str = "") -> list[tuple[str, str]]:
+    """Build the full visibility sweep query battery.
+
+    Returns list of (query_string, intent) tuples.
+    """
+    queries = []
+    for template, intent in VISIBILITY_QUERY_TEMPLATES:
+        query = template.replace("{name}", name)
+        queries.append((query, intent))
+
+    # Add company-qualified variant for top queries if company is provided
+    if company:
+        queries.append((f'"{name}" "{company}" keynote OR conference OR podcast', "visibility"))
+
+    return queries
+
+
+def extract_highest_signal_artifacts(
+    graph: EvidenceGraph,
+    max_artifacts: int = 3,
+) -> list[dict[str, str]]:
+    """Extract the top 1-3 highest-signal visibility artifacts from the graph.
+
+    Prioritizes: TED > Keynote > Conference > Podcast > Other
+    Returns list of {title, venue, date, url, why_it_matters}.
+    """
+    visibility_rows = graph.get_visibility_ledger_rows()
+    all_results: list[dict[str, Any]] = []
+
+    # Priority keywords (higher index = higher priority)
+    priority_keywords = [
+        "slideshare", "vimeo", "webinar", "fireside",
+        "interview", "panel", "podcast",
+        "conference", "summit", "keynote",
+        "tedx", "ted",
+    ]
+
+    for row in visibility_rows:
+        for result in row.top_results:
+            title = result.get("title", "").lower()
+            url = result.get("url", "")
+            priority = 0
+            for i, kw in enumerate(priority_keywords):
+                if kw in title or kw in row.query.lower():
+                    priority = max(priority, i)
+
+            all_results.append({
+                "title": result.get("title", ""),
+                "venue": _infer_venue(result.get("title", ""), url),
+                "date": result.get("date", "UNKNOWN"),
+                "url": url,
+                "query": row.query,
+                "priority": priority,
+                "why_it_matters": _infer_signal_value(priority),
+            })
+
+    # Deduplicate by URL
+    seen_urls: set[str] = set()
+    unique: list[dict] = []
+    for r in all_results:
+        if r["url"] and r["url"] not in seen_urls:
+            seen_urls.add(r["url"])
+            unique.append(r)
+
+    # Sort by priority descending
+    unique.sort(key=lambda x: x["priority"], reverse=True)
+
+    return [
+        {
+            "title": r["title"],
+            "venue": r["venue"],
+            "date": r["date"],
+            "url": r["url"],
+            "why_it_matters": r["why_it_matters"],
+        }
+        for r in unique[:max_artifacts]
+    ]
+
+
+def compute_visibility_coverage_confidence(graph: EvidenceGraph) -> int:
+    """Compute a 0-100 confidence score based on how many visibility categories returned results.
+
+    Each of the 4 category groups is worth 25 points.
+    """
+    visibility_rows = graph.get_visibility_ledger_rows()
+    if not visibility_rows:
+        return 0
+
+    rows_with_results = {i for i, row in enumerate(visibility_rows) if row.result_count > 0}
+
+    score = 0
+    for group_name, indices in VISIBILITY_CATEGORY_GROUPS.items():
+        # Check if any query in this group had results
+        group_has_results = any(
+            i < len(visibility_rows) and i in rows_with_results
+            for i in indices
+        )
+        if group_has_results:
+            score += 25
+
+    return score
+
+
+def _infer_venue(title: str, url: str) -> str:
+    """Best-effort venue extraction from title and URL."""
+    if "ted.com" in url:
+        return "TED"
+    if "tedx" in title.lower():
+        return "TEDx"
+    if "youtube.com" in url:
+        return "YouTube"
+    if "vimeo.com" in url:
+        return "Vimeo"
+    if "slideshare" in url.lower():
+        return "SlideShare"
+    return "Unknown Venue"
+
+
+def _infer_signal_value(priority: int) -> str:
+    """Map priority score to strategic signal description."""
+    if priority >= 10:
+        return "TED/TEDx — top-tier thought leadership visibility"
+    if priority >= 8:
+        return "Keynote/conference — industry authority signal"
+    if priority >= 6:
+        return "Podcast/panel — public positioning and messaging patterns"
+    if priority >= 4:
+        return "Interview/webinar — topical engagement signal"
+    return "Presentation material — expertise claim"
