@@ -280,6 +280,141 @@ async def trigger_sync():
     return result
 
 
+# ---------------------------------------------------------------------------
+# Calendar + Photo Resolution Endpoints
+# ---------------------------------------------------------------------------
+
+
+@app.post("/sync/calendar", dependencies=[Depends(verify_api_key)])
+async def trigger_calendar_sync():
+    """Trigger a manual Google Calendar ingest for next 7 days.
+
+    Fetches upcoming events, matches attendees to contacts,
+    creates stubs for unknowns, and stores meeting associations.
+    """
+    if not settings.google_client_id or not settings.google_refresh_token:
+        raise HTTPException(
+            status_code=400,
+            detail="Google Calendar requires GOOGLE_CLIENT_ID + GOOGLE_REFRESH_TOKEN",
+        )
+
+    from app.ingest.calendar_ingest import run_calendar_ingest
+    result = run_calendar_ingest(days=7)
+    return result.to_dict()
+
+
+@app.post("/sync/calendar/enrich", dependencies=[Depends(verify_api_key)])
+async def trigger_meeting_enrichment():
+    """Run Gmail context enrichment for all upcoming meetings.
+
+    For each upcoming meeting attendee, fetches recent email threads
+    and extracts summaries, last contact dates, and open commitments.
+    """
+    from app.ingest.gmail_meeting_enrichment import enrich_all_upcoming_meetings
+    enrichments = enrich_all_upcoming_meetings()
+    return {"status": "ok", "enrichments": len(enrichments), "results": enrichments}
+
+
+@app.post("/profiles/resolve-photos", dependencies=[Depends(verify_api_key)])
+async def resolve_all_photos():
+    """Run PhotoResolutionService on all contacts.
+
+    Applies the decision tree: uploaded → cached → provider → gravatar → logo → initials.
+    Blocks LinkedIn CDN URLs and tracks photo_status per contact.
+    """
+    from app.services.photo_resolution import PhotoResolutionService
+    session = get_session()
+    service = PhotoResolutionService()
+    updated = 0
+    try:
+        entities = session.query(EntityRecord).filter(
+            EntityRecord.entity_type == "person"
+        ).all()
+
+        for entity in entities:
+            profile_data = json.loads(entity.domains or "{}")
+            emails = entity.get_emails()
+            result = service.resolve(
+                contact_id=entity.id,
+                contact_name=entity.name,
+                email=emails[0] if emails else "",
+                linkedin_url=profile_data.get("linkedin_url", ""),
+                company_domain=profile_data.get("company_domain", ""),
+                existing_photo_url=profile_data.get("photo_url", ""),
+                existing_photo_source=profile_data.get("photo_source", ""),
+            )
+            profile_data["photo_url"] = result.photo_url
+            profile_data["photo_source"] = result.photo_source
+            profile_data["photo_status"] = result.photo_status
+            profile_data["photo_last_checked_at"] = result.resolved_at
+            if result.error:
+                profile_data["photo_last_error"] = result.error
+            entity.domains = json.dumps(profile_data)
+            updated += 1
+
+        session.commit()
+    except Exception:
+        session.rollback()
+        logger.exception("Photo resolution failed")
+        raise HTTPException(status_code=500, detail="Photo resolution failed")
+    finally:
+        session.close()
+
+    return {
+        "status": "ok",
+        "contacts_processed": updated,
+        "resolution_logs": [
+            {"contact": log.contact_name, "source": log.resolved_source, "error": log.error}
+            for log in service.resolution_logs
+        ],
+    }
+
+
+@app.get("/debug/photos")
+def debug_photos():
+    """Debug endpoint: photo resolution status across all contacts."""
+    from app.services.photo_resolution import PhotoResolutionService
+    profiles = get_all_profiles()
+    service = PhotoResolutionService()
+    return service.get_debug_stats(profiles)
+
+
+@app.get("/debug/calendar")
+def debug_calendar():
+    """Debug endpoint: calendar integration status across all contacts."""
+    profiles = get_all_profiles()
+    events_count = 0
+    matched = 0
+    stubs = 0
+    unmatched = []
+
+    for p in profiles:
+        upcoming = p.get("upcoming_meetings", [])
+        events_count += len(upcoming)
+        for m in upcoming:
+            if m.get("match_reason") == "new_stub":
+                stubs += 1
+            elif m.get("match_reason"):
+                matched += 1
+
+        if p.get("source") == "calendar_ingest" and p.get("research_status") == "QUEUED":
+            unmatched.append({
+                "name": p.get("name"),
+                "email": p.get("email"),
+                "reason": "created_as_stub",
+            })
+
+    return {
+        "events_attached": events_count,
+        "matched_contacts": matched,
+        "created_stubs": stubs,
+        "unmatched_attendees": unmatched,
+        "calendar_configured": bool(
+            settings.google_client_id and settings.google_refresh_token
+        ),
+    }
+
+
 @app.get("/profiles", dependencies=[Depends(verify_api_key)])
 def list_profiles():
     """Return all auto-generated contact profiles."""

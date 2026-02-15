@@ -1687,20 +1687,36 @@
       }
     }
 
+    function isBlockedPhotoUrl(url) {
+      if (!url) return false;
+      const blocked = ['media.licdn.com', 'media-exp1.licdn.com', 'static.licdn.com', 'platform-lookaside.fbsbx.com'];
+      const lower = url.toLowerCase();
+      return blocked.some(p => lower.includes(p));
+    }
+
     function avatarHtml(name, email, size, photoUrl, linkedinUrl) {
       size = size || 40;
       const initials = getInitials(name);
       const colorCls = avatarClass(name);
-      // Fallback chain: Apollo photo → LinkedIn via unavatar → email via unavatar → Gravatar → initials
+      // Photo Resolution Decision Tree:
+      // 1. Non-blocked photo_url (uploaded, cached, or safe enrichment provider)
+      // 2. Gravatar (email hash)
+      // 3. Clearbit company logo (domain fallback)
+      // 4. Initials (always works)
+      // BLOCKED: LinkedIn CDN URLs (expire/auth-wall), unavatar.io/linkedin (scrapes)
       const sources = [];
-      if (photoUrl) sources.push(photoUrl);
-      if (linkedinUrl) {
-        const m = linkedinUrl.match(/linkedin\.com\/in\/([^/?#]+)/);
-        if (m) sources.push('https://unavatar.io/linkedin/' + m[1] + '?fallback=false');
-      }
-      if (email) sources.push('https://unavatar.io/' + encodeURIComponent(email.trim().toLowerCase()) + '?fallback=false');
+      if (photoUrl && !isBlockedPhotoUrl(photoUrl)) sources.push(photoUrl);
+      // Gravatar: reliable, privacy-respecting, always available
       const gravatar = getGravatarUrl(email, size * 2);
       if (gravatar) sources.push(gravatar);
+      // Clearbit company logo as domain fallback
+      if (email && email.includes('@')) {
+        const domain = email.split('@')[1].toLowerCase();
+        const freeProviders = ['gmail.com','yahoo.com','hotmail.com','outlook.com','live.com','icloud.com','aol.com','protonmail.com'];
+        if (!freeProviders.includes(domain)) {
+          sources.push('https://logo.clearbit.com/' + domain + '?size=' + (size * 2));
+        }
+      }
       if (sources.length) {
         const fallbacks = sources.slice(1).join('|');
         return `<div class="profile-avatar ${colorCls}" style="width:${size}px;height:${size}px;font-size:${Math.round(size*0.4)}px">
@@ -2030,6 +2046,7 @@
             ${p.email_count ? '<span class="profile-tag emails">' + p.email_count + ' email' + (p.email_count > 1 ? 's' : '') + '</span>' : ''}
             ${!p.meeting_count && !p.email_count ? '<span class="profile-tag">New</span>' : ''}
             <span class="profile-tag ${healthClass}">${healthLabel}</span>
+            ${p.has_upcoming_meeting ? '<span class="profile-tag" style="background:#3b82f620;color:#60a5fa;font-weight:600">Meeting This Week</span>' : ''}
             ${p.linkedin_status === 'pending_review' ? '<span class="profile-tag" style="background:var(--warning-bg);color:var(--warning)">Needs Review</span>' : ''}
             ${p.linkedin_status === 'confirmed' ? '<span class="profile-tag verified"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>Verified</span>' : (p.linkedin_url ? '<span class="profile-tag" style="background:var(--success-bg);color:var(--success)">LinkedIn</span>' : '')}
             ${p.deep_research_status === 'SUCCEEDED' ? '<span class="profile-tag" style="background:var(--success-bg);color:var(--success)">Prepared</span>' : p.dossier_mode_a_markdown ? '<span class="profile-tag" style="background:var(--info-bg);color:var(--info)">Brief Ready</span>' : (!p.deep_profile && p.entity_lock_score < 70) ? '<span class="profile-tag" style="background:var(--warning-bg);color:var(--warning)">Research Needed</span>' : ''}
@@ -2116,6 +2133,28 @@
         html += `<div class="modal-section"><h4>Open Action Items</h4>`;
         p.action_items.forEach(item => {
           html += `<div class="interaction-item"><div class="interaction-item-title">${item}</div></div>`;
+        });
+        html += '</div>';
+      }
+
+      // Upcoming Meetings section (from Calendar integration)
+      if (p.upcoming_meetings && p.upcoming_meetings.length) {
+        html += `<div class="modal-section"><h4>Upcoming Meetings <span style="font-size:10px;color:#60a5fa;margin-left:6px;font-weight:600">${p.upcoming_meetings.length} THIS WEEK</span></h4>`;
+        p.upcoming_meetings.forEach(m => {
+          const mTime = m.start_time ? new Date(m.start_time).toLocaleString() : '';
+          const enrichment = m.enrichment || {};
+          html += `
+            <div class="interaction-item" style="border-left:3px solid #60a5fa">
+              <div style="display:flex;align-items:center;gap:8px">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#60a5fa" stroke-width="2" style="flex-shrink:0"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+                <div class="interaction-item-title" style="flex:1">${m.title || 'Meeting'}</div>
+                <span style="color:#60a5fa;font-size:11px;font-weight:600">UPCOMING</span>
+              </div>
+              <div class="interaction-item-meta">${mTime}${m.conference_link ? ' &middot; <a href="' + m.conference_link + '" target="_blank" style="color:var(--accent-light)">Join</a>' : ''}</div>
+              ${enrichment.snippet ? '<div class="interaction-item-summary" style="margin-top:8px"><strong style="font-size:11px;color:var(--text-muted)">MEETING CONTEXT:</strong><br>' + enrichment.snippet + '</div>' : ''}
+              ${enrichment.open_commitments && enrichment.open_commitments.length ? '<div style="margin-top:6px;font-size:12px;color:var(--warning)"><strong>Open commitments:</strong> ' + enrichment.open_commitments.join('; ') + '</div>' : ''}
+              ${enrichment.last_contact_date ? '<div style="font-size:11px;color:var(--text-muted);margin-top:4px">Last email: ' + enrichment.last_contact_date + '</div>' : ''}
+            </div>`;
         });
         html += '</div>';
       }
