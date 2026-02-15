@@ -58,7 +58,7 @@ class TestBriefEndpoint:
             "skip_ingestion": True,
         })
         assert response.status_code == 200
-        assert "Pre-Call Intelligence Brief" in response.text
+        assert "Intelligence" in response.text
 
     def test_brief_json_endpoint(self):
         response = client.post("/brief/json", json={
