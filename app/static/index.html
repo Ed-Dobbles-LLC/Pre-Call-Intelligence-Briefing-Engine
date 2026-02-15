@@ -566,6 +566,10 @@
     .deep-profile-content strong { color: var(--text-primary); }
     .deep-profile-content p { margin: 8px 0; }
     .deep-profile-content code { background: var(--bg-input); padding: 2px 6px; border-radius: 4px; font-size: 13px; }
+    .deep-profile-content table { width: 100%; border-collapse: collapse; margin: 10px 0; font-size: 13px; }
+    .deep-profile-content th, .deep-profile-content td { border: 1px solid var(--border); padding: 6px 10px; text-align: left; }
+    .deep-profile-content th { background: var(--bg-input); font-weight: 600; color: var(--text-primary); }
+    .hidden { display: none !important; }
     .btn-research {
       display: inline-flex;
       align-items: center;
@@ -2114,9 +2118,21 @@
         html += `<div class="modal-section" id="deepProfileSection${p.id}">
           <h4>Intelligence Dossier</h4>`;
         if (p.deep_profile) {
+          const lockScore = p.entity_lock_score;
+          const qaPass = p.qa_passes_all;
+          let badges = '';
+          if (typeof lockScore === 'number') {
+            const lc = lockScore >= 70 ? 'var(--success)' : 'var(--danger)';
+            badges += `<span style="font-size:11px;color:${lc};margin-left:8px">\uD83D\uDD12 ${lockScore}/100</span>`;
+          }
+          if (typeof qaPass === 'boolean') {
+            const qc = qaPass ? 'var(--success)' : 'var(--danger)';
+            const ql = qaPass ? 'QA PASS' : 'QA FAIL';
+            badges += `<span style="font-size:11px;color:${qc};margin-left:8px">${ql}</span>`;
+          }
           html += `
             <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
-              <span style="font-size:12px;color:var(--text-muted)">Generated ${formatRelative(p.deep_profile_generated_at)}</span>
+              <span style="font-size:12px;color:var(--text-muted)">Generated ${formatRelative(p.deep_profile_generated_at)}${badges}</span>
               <button class="btn-research-secondary" onclick="generateDeepProfile(${p.id}, true)">
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/></svg>
                 Regenerate
@@ -2165,6 +2181,86 @@
       if (section) section.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
 
+    function renderEntityLockHtml(lock) {
+      if (!lock) return '';
+      const score = lock.entity_lock_score || 0;
+      const locked = lock.is_locked;
+      const color = locked ? 'var(--success)' : score >= 50 ? 'var(--warning, #f0ad4e)' : 'var(--danger)';
+      const label = locked ? 'LOCKED' : 'NOT LOCKED';
+      let html = `<div style="border:1px solid ${color};border-radius:8px;padding:12px;margin-bottom:12px;background:rgba(0,0,0,0.2)">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+          <strong style="font-size:13px">Entity Lock</strong>
+          <span style="font-size:12px;font-weight:600;color:${color};padding:2px 8px;border:1px solid ${color};border-radius:4px">${score}/100 ${label}</span>
+        </div>`;
+      if (lock.disambiguation_risks && lock.disambiguation_risks.length > 0) {
+        html += `<div style="color:var(--danger);font-size:12px;margin-bottom:6px">${lock.disambiguation_risks[0]}</div>`;
+      }
+      const signals = lock.signals || {};
+      const checks = [
+        ['Name match', signals.name_match],
+        ['Company match', signals.company_match],
+        ['Title match', signals.title_match],
+        ['LinkedIn confirmed', signals.linkedin_confirmed],
+        ['Location match', signals.location_match],
+        ['Multiple sources agree', signals.multiple_sources_agree],
+      ];
+      html += '<div style="display:flex;flex-wrap:wrap;gap:6px">';
+      for (const [lbl, ok] of checks) {
+        const ic = ok ? '\u2713' : '\u2717';
+        const c = ok ? 'var(--success)' : 'var(--text-muted)';
+        html += `<span style="font-size:11px;color:${c}">${ic} ${lbl}</span>`;
+      }
+      html += '</div></div>';
+      return html;
+    }
+
+    function renderQaReportHtml(qa) {
+      if (!qa) return '';
+      const passesAll = qa.passes_all;
+      const borderColor = passesAll ? 'var(--success)' : 'var(--danger)';
+      const statusLabel = passesAll ? 'ALL GATES PASS' : 'GATES FAILED';
+      let html = `<div style="border:1px solid ${borderColor};border-radius:8px;padding:12px;margin-bottom:12px;background:rgba(0,0,0,0.2)">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;cursor:pointer" onclick="this.parentElement.querySelector('.qa-details').classList.toggle('hidden')">
+          <strong style="font-size:13px">QA Report</strong>
+          <span style="font-size:12px;font-weight:600;color:${borderColor};padding:2px 8px;border:1px solid ${borderColor};border-radius:4px">${statusLabel}</span>
+        </div>
+        <div style="display:flex;gap:16px;font-size:12px;margin-bottom:8px">
+          <span>Genericness: <strong>${qa.genericness_score}/100</strong></span>
+          <span>Evidence: <strong>${qa.evidence_coverage_pct}%</strong></span>
+          <span>Contradictions: <strong>${qa.contradictions}</strong></span>
+        </div>`;
+      if (qa.hallucination_risk_flags && qa.hallucination_risk_flags.length > 0) {
+        html += '<div style="font-size:11px;color:var(--danger);margin-bottom:4px">';
+        for (const f of qa.hallucination_risk_flags) {
+          html += `<div>\u26A0 ${f}</div>`;
+        }
+        html += '</div>';
+      }
+      if (qa.markdown) {
+        html += `<div class="qa-details hidden" style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border);font-size:12px">${marked.parse(qa.markdown)}</div>`;
+      }
+      html += '</div>';
+      return html;
+    }
+
+    function renderSearchPlanHtml(plan) {
+      if (!plan || plan.length === 0) return '';
+      let html = `<div style="border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:12px;background:rgba(0,0,0,0.2)">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;cursor:pointer" onclick="this.parentElement.querySelector('.plan-details').classList.toggle('hidden')">
+          <strong style="font-size:13px">Search Queries (${plan.length})</strong>
+          <span style="font-size:11px;color:var(--text-muted)">click to expand</span>
+        </div>
+        <div class="plan-details hidden" style="font-size:12px">`;
+      for (const q of plan) {
+        html += `<div style="margin-bottom:8px;padding:6px;background:rgba(0,0,0,0.3);border-radius:4px">
+          <div style="font-family:monospace;font-size:11px;color:var(--accent-light);word-break:break-all">${q.query}</div>
+          <div style="color:var(--text-muted);font-size:11px;margin-top:2px">${q.category} \u2014 ${q.rationale}</div>
+        </div>`;
+      }
+      html += '</div></div>';
+      return html;
+    }
+
     async function generateDeepProfile(profileId, regenerate) {
       const section = document.getElementById('deepProfileSection' + profileId);
       if (!section) return;
@@ -2174,7 +2270,8 @@
         <div style="text-align:center;padding:40px">
           <div class="loading-spinner" style="margin:0 auto 16px"></div>
           <div style="color:var(--text-secondary);font-size:14px;font-weight:500">Generating intelligence dossier...</div>
-          <div style="color:var(--text-muted);font-size:12px;margin-top:6px">This may take 30–60 seconds</div>
+          <div style="color:var(--text-muted);font-size:12px;margin-top:6px">Entity lock \u2192 SerpAPI retrieval \u2192 LLM synthesis \u2192 QA gates</div>
+          <div style="color:var(--text-muted);font-size:12px;margin-top:2px">This may take 30\u201360 seconds</div>
         </div>`;
 
       try {
@@ -2194,9 +2291,14 @@
         if (profile) {
           profile.deep_profile = data.deep_profile;
           profile.deep_profile_generated_at = data.generated_at;
+          profile.entity_lock_score = (data.entity_lock || {}).entity_lock_score;
+          profile.qa_passes_all = (data.qa_report || {}).passes_all;
+          profile.qa_report_data = data.qa_report;
+          profile.entity_lock_data = data.entity_lock;
+          profile.search_plan = data.search_plan;
         }
 
-        // Render the result
+        // Render the result with entity lock + QA + search plan + dossier
         section.innerHTML = `<h4>Intelligence Dossier</h4>
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
             <span style="font-size:12px;color:var(--text-muted)">Generated just now</span>
@@ -2205,6 +2307,9 @@
               Regenerate
             </button>
           </div>
+          ${renderEntityLockHtml(data.entity_lock)}
+          ${renderQaReportHtml(data.qa_report)}
+          ${renderSearchPlanHtml(data.search_plan)}
           <div class="deep-profile-content">${marked.parse(data.deep_profile)}</div>`;
       } catch (e) {
         showToast(e.message);
