@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-import json
 
 from app.retrieve.retriever import RetrievedEvidence, retrieve_for_entity
-from app.store.database import EntityRecord, SourceRecord, get_session
 
 
 class TestRetrieval:
