@@ -61,7 +61,10 @@ def run_migrations() -> None:
     connect_args = {}
     if not is_sqlite:
         connect_args["connect_timeout"] = 10
-        connect_args["options"] = "-c statement_timeout=30000"  # 30s per statement
+        # Use lock_timeout (not statement_timeout) so only lock-wait is bounded.
+        # If another process holds a lock on the table, we give up after 5s
+        # rather than blocking the entire health-check window.
+        connect_args["options"] = "-c lock_timeout=5000"
     engine = create_engine(url, connect_args=connect_args)
 
     # Verify the connection actually works before running migrations
@@ -84,23 +87,25 @@ def run_migrations() -> None:
             continue
 
         logger.info("Applying %s …", filename)
-        # Split on semicolons to execute each statement individually
+        # Split on semicolons to execute each statement individually.
+        # Each statement gets its own transaction so a lock-timeout on one
+        # ALTER TABLE doesn't cascade (InFailedSqlTransaction) to the rest.
         statements = [s.strip() for s in sql.split(";") if s.strip()]
-        with engine.begin() as conn:
-            for stmt in statements:
-                # Skip comment-only blocks
-                code_lines = [ln for ln in stmt.splitlines() if not ln.strip().startswith("--")]
-                if not "".join(code_lines).strip():
-                    continue
-                try:
+        for stmt in statements:
+            # Skip comment-only blocks
+            code_lines = [ln for ln in stmt.splitlines() if not ln.strip().startswith("--")]
+            if not "".join(code_lines).strip():
+                continue
+            try:
+                with engine.begin() as conn:
                     conn.execute(text(stmt))
-                except Exception as exc:
-                    # On SQLite, IF NOT EXISTS isn't supported for ADD COLUMN —
-                    # a "duplicate column" error is expected and harmless.
-                    if is_sqlite and "duplicate column" in str(exc).lower():
-                        pass
-                    else:
-                        logger.warning("  Statement skipped (%s): %s", exc, stmt[:80])
+            except Exception as exc:
+                # On SQLite, IF NOT EXISTS isn't supported for ADD COLUMN —
+                # a "duplicate column" error is expected and harmless.
+                if is_sqlite and "duplicate column" in str(exc).lower():
+                    pass
+                else:
+                    logger.warning("  Statement skipped (%s): %s", exc, stmt[:80])
         logger.info("  ✓ %s applied", filename)
 
     # Verification (Postgres only)
