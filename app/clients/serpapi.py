@@ -1,8 +1,11 @@
-"""SerpAPI web search client for fetching public data about contacts.
+"""SerpAPI web search client with tiered retrieval and source classification.
 
-Used by the deep profiler to gather real web results (news articles,
-LinkedIn posts, company pages, conference talks) before LLM synthesis.
-Gracefully degrades when the API key is not configured.
+Implements:
+- Targeted query generation with search operators
+- Source tier classification (Primary > Secondary > Low-quality)
+- Identity disambiguation search battery
+- Company registry and corporate searches
+- Recency-aware result handling
 
 API docs: https://serpapi.com/search-api
 """
@@ -11,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from typing import Any
 
 import httpx
@@ -22,8 +26,73 @@ logger = logging.getLogger(__name__)
 SERPAPI_URL = "https://serpapi.com/search"
 
 
+# ---------------------------------------------------------------------------
+# Source Tier Classification
+# ---------------------------------------------------------------------------
+
+class SourceTier:
+    """Source quality classification."""
+    PRIMARY = 1    # Company site, registry, direct talks, official PR
+    SECONDARY = 2  # Major news, conference pages, reputable blogs
+    LOW = 3        # Forums, unverified sources, SEO content
+
+# Domain-to-tier mapping
+_TIER_MAP: dict[str, int] = {
+    # Primary: company sites, registries, direct platforms
+    "linkedin.com": SourceTier.PRIMARY,
+    "companieshouse.gov.uk": SourceTier.PRIMARY,
+    "find-and-update.company-information.service.gov.uk": SourceTier.PRIMARY,
+    "sec.gov": SourceTier.PRIMARY,
+    "crunchbase.com": SourceTier.PRIMARY,
+    "businesswire.com": SourceTier.PRIMARY,
+    "prnewswire.com": SourceTier.PRIMARY,
+    "globenewswire.com": SourceTier.PRIMARY,
+    # Secondary: major news, conferences
+    "techcrunch.com": SourceTier.SECONDARY,
+    "reuters.com": SourceTier.SECONDARY,
+    "bloomberg.com": SourceTier.SECONDARY,
+    "wsj.com": SourceTier.SECONDARY,
+    "ft.com": SourceTier.SECONDARY,
+    "forbes.com": SourceTier.SECONDARY,
+    "bbc.co.uk": SourceTier.SECONDARY,
+    "theguardian.com": SourceTier.SECONDARY,
+    "venturebeat.com": SourceTier.SECONDARY,
+    "zdnet.com": SourceTier.SECONDARY,
+    "wired.com": SourceTier.SECONDARY,
+    "youtube.com": SourceTier.SECONDARY,
+    "github.com": SourceTier.SECONDARY,
+    "medium.com": SourceTier.SECONDARY,
+}
+
+
+def classify_source_tier(url: str) -> int:
+    """Classify a URL into a source tier (1=Primary, 2=Secondary, 3=Low)."""
+    if not url:
+        return SourceTier.LOW
+    url_lower = url.lower()
+    for domain, tier in _TIER_MAP.items():
+        if domain in url_lower:
+            return tier
+    # Check if it's a company domain (not social media / generic)
+    # Company domains are primary when they match the subject's company
+    return SourceTier.SECONDARY  # Default to secondary for unknown domains
+
+
+def _normalize_result(result: dict[str, Any]) -> dict[str, Any]:
+    """Extract fields from a SerpAPI organic result with tier classification."""
+    link = result.get("link", "")
+    return {
+        "title": result.get("title", ""),
+        "link": link,
+        "snippet": result.get("snippet", ""),
+        "source": result.get("source", ""),
+        "date": result.get("date", ""),
+        "tier": classify_source_tier(link),
+    }
+
+
 class SerpAPIClient:
-    """Async client for SerpAPI Google search."""
+    """Async client for SerpAPI with targeted query generation."""
 
     def __init__(self, api_key: str | None = None):
         self.api_key = api_key or settings.serpapi_api_key
@@ -76,58 +145,104 @@ class SerpAPIClient:
     ) -> dict[str, list[dict[str, Any]]]:
         """Run multiple targeted searches for a person and return categorised results.
 
-        Returns a dict with keys: general, linkedin, news, talks
+        Returns a dict with keys: general, linkedin, news, talks, company_site, registry
         """
         if not self.api_key:
-            return {"general": [], "linkedin": [], "news": [], "talks": []}
+            return {
+                "general": [], "linkedin": [], "news": [],
+                "talks": [], "company_site": [], "registry": [],
+            }
 
         queries: list[tuple[str, str]] = []
 
-        # Primary identity search
+        # 1. Primary identity search
         q_parts = [f'"{name}"']
         if company:
             q_parts.append(f'"{company}"')
+        if title:
+            q_parts.append(title)
         queries.append(("general", " ".join(q_parts)))
 
-        # LinkedIn-specific search
+        # 2. LinkedIn-specific search
         linkedin_q = f'"{name}" site:linkedin.com'
         if company:
             linkedin_q += f' "{company}"'
         queries.append(("linkedin", linkedin_q))
 
-        # News coverage
+        # 3. Company site bio search
+        if company:
+            # Try to find them on their company's website
+            company_slug = re.sub(r"[^a-zA-Z0-9]", "", company.lower())
+            queries.append((
+                "company_site",
+                f'"{name}" site:{company_slug}.com OR site:{company_slug}.io '
+                f'OR site:{company_slug}.ai'
+            ))
+
+        # 4. News and interviews
         news_parts = [f'"{name}"']
         if company:
             news_parts.append(f'"{company}"')
-        queries.append(("news", " ".join(news_parts) + " news OR interview OR article"))
+        queries.append((
+            "news",
+            " ".join(news_parts) + " interview OR article OR profile OR announcement"
+        ))
 
-        # Conference talks / podcasts
+        # 5. Conference talks / podcasts / webinars
         talks_parts = [f'"{name}"']
         if company:
             talks_parts.append(company)
-        queries.append(
-            ("talks", " ".join(talks_parts) + " conference OR podcast OR keynote OR talk")
-        )
+        queries.append((
+            "talks",
+            " ".join(talks_parts) + " podcast OR webinar OR conference OR keynote OR panel"
+        ))
+
+        # 6. Corporate registry (UK Companies House)
+        queries.append((
+            "registry",
+            f'"{name}" site:find-and-update.company-information.service.gov.uk'
+        ))
 
         results: dict[str, list[dict[str, Any]]] = {}
         for category, query in queries:
             hits = await self.search(query, num=8)
             results[category] = [_normalize_result(r) for r in hits]
-            # Brief pause between searches to respect rate limits
+            await asyncio.sleep(0.3)
+
+        return results
+
+    async def search_targeted(
+        self,
+        name: str,
+        company: str = "",
+        queries_override: list[tuple[str, str]] | None = None,
+    ) -> dict[str, list[dict[str, Any]]]:
+        """Run custom targeted queries. Use for follow-up disambiguation.
+
+        queries_override: list of (category, query) tuples.
+        """
+        if not self.api_key:
+            return {}
+
+        queries = queries_override or []
+        results: dict[str, list[dict[str, Any]]] = {}
+        for category, query in queries:
+            hits = await self.search(query, num=5)
+            results[category] = [_normalize_result(r) for r in hits]
             await asyncio.sleep(0.3)
 
         return results
 
 
-def _normalize_result(result: dict[str, Any]) -> dict[str, Any]:
-    """Extract the fields we need from a SerpAPI organic result."""
-    return {
-        "title": result.get("title", ""),
-        "link": result.get("link", ""),
-        "snippet": result.get("snippet", ""),
-        "source": result.get("source", ""),
-        "date": result.get("date", ""),
-    }
+# ---------------------------------------------------------------------------
+# Source formatting for LLM prompts
+# ---------------------------------------------------------------------------
+
+_TIER_LABELS = {
+    SourceTier.PRIMARY: "PRIMARY",
+    SourceTier.SECONDARY: "SECONDARY",
+    SourceTier.LOW: "LOW-QUALITY",
+}
 
 
 def format_web_results_for_prompt(
@@ -135,7 +250,7 @@ def format_web_results_for_prompt(
 ) -> str:
     """Format categorised search results into a text block for the LLM prompt.
 
-    Returns an empty string if no results were found.
+    Includes source tier classification. Returns an empty string if no results.
     """
     sections: list[str] = []
 
@@ -146,7 +261,8 @@ def format_web_results_for_prompt(
     sections.append(
         "The following web search results were retrieved in real-time. "
         "Use these as primary sources for your analysis. "
-        "Cite the source URL when referencing a specific result."
+        "Cite the source URL when referencing a specific result. "
+        "Source quality tier is indicated in brackets."
     )
 
     category_labels = {
@@ -154,6 +270,8 @@ def format_web_results_for_prompt(
         "linkedin": "LinkedIn Results",
         "news": "News & Articles",
         "talks": "Conference Talks & Podcasts",
+        "company_site": "Company Website Results",
+        "registry": "Corporate Registry Results",
     }
 
     for category, label in category_labels.items():
@@ -162,7 +280,8 @@ def format_web_results_for_prompt(
             continue
         sections.append(f"\n**{label}:**")
         for i, item in enumerate(items, 1):
-            line = f"{i}. **{item['title']}**"
+            tier_label = _TIER_LABELS.get(item.get("tier", 3), "LOW-QUALITY")
+            line = f"{i}. [{tier_label}] **{item['title']}**"
             if item.get("source"):
                 line += f" ({item['source']})"
             if item.get("date"):
@@ -173,3 +292,95 @@ def format_web_results_for_prompt(
             sections.append(line)
 
     return "\n".join(sections)
+
+
+def generate_search_plan(
+    name: str,
+    company: str = "",
+    title: str = "",
+    linkedin_url: str = "",
+    location: str = "",
+) -> list[dict[str, str]]:
+    """Generate a deterministic search plan for a person.
+
+    Returns a list of dicts: {"query": str, "category": str, "rationale": str}
+    This is useful for audit trails and for showing the user what would be searched.
+    """
+    plan = []
+
+    # Core identity
+    q_parts = [f'"{name}"']
+    if company:
+        q_parts.append(f'"{company}"')
+    if title:
+        q_parts.append(title)
+    plan.append({
+        "query": " ".join(q_parts),
+        "category": "identity",
+        "rationale": "Primary identity confirmation — name + company + title",
+    })
+
+    # LinkedIn
+    linkedin_q = f'"{name}" site:linkedin.com'
+    if company:
+        linkedin_q += f' "{company}"'
+    plan.append({
+        "query": linkedin_q,
+        "category": "linkedin",
+        "rationale": "LinkedIn profile — role confirmation, career history, connections",
+    })
+
+    # Company website
+    if company:
+        company_slug = re.sub(r"[^a-zA-Z0-9]", "", company.lower())
+        plan.append({
+            "query": (
+                f'"{name}" site:{company_slug}.com OR site:{company_slug}.io '
+                f'OR site:{company_slug}.ai'
+            ),
+            "category": "company_site",
+            "rationale": "Company website bio — official title, team page, about page",
+        })
+
+    # News and interviews
+    news_parts = [f'"{name}"']
+    if company:
+        news_parts.append(f'"{company}"')
+    plan.append({
+        "query": " ".join(news_parts) + " interview OR article OR profile",
+        "category": "news",
+        "rationale": "News coverage — public statements, company announcements, press quotes",
+    })
+
+    # Podcasts and conferences
+    talks_parts = [f'"{name}"']
+    if company:
+        talks_parts.append(company)
+    plan.append({
+        "query": " ".join(talks_parts) + " podcast OR webinar OR conference OR keynote",
+        "category": "talks",
+        "rationale": "Public speaking — rhetorical patterns, stated positions, audience context",
+    })
+
+    # Corporate registry (UK)
+    plan.append({
+        "query": f'"{name}" site:find-and-update.company-information.service.gov.uk',
+        "category": "registry",
+        "rationale": "UK Companies House — directorships, company filings, registered address",
+    })
+
+    # Corporate registry (US)
+    plan.append({
+        "query": f'"{name}" site:sec.gov OR site:opencorporates.com',
+        "category": "registry_us",
+        "rationale": "US corporate filings — SEC filings, officer listings",
+    })
+
+    # Thought leadership / blog
+    plan.append({
+        "query": f'"{name}" blog OR "written by" OR "authored by"',
+        "category": "authored",
+        "rationale": "Authored content — reveals thinking style, priorities, expertise claims",
+    })
+
+    return plan

@@ -1,4 +1,4 @@
-"""Tests for the deep profile generation module."""
+"""Tests for the decision-grade intelligence dossier module."""
 
 from __future__ import annotations
 
@@ -177,30 +177,31 @@ class TestGenerateDeepProfile:
     @patch("app.brief.profiler.LLMClient")
     def test_returns_string(self, MockLLM):
         mock_instance = MagicMock()
-        mock_instance.chat.return_value = "## Executive Snapshot\n- Career arc..."
+        mock_instance.chat.return_value = "## Strategic Snapshot\n- Career arc..."
         MockLLM.return_value = mock_instance
 
         result = generate_deep_profile(name="Return Test")
         assert isinstance(result, str)
-        assert "Executive Snapshot" in result
+        assert "Strategic Snapshot" in result
 
 
 class TestPromptTemplates:
     def test_system_prompt_has_rules(self):
-        assert "CRITICAL RULES" in SYSTEM_PROMPT
-        assert "senior executive intelligence analyst" in SYSTEM_PROMPT
+        assert "ABSOLUTE RULES" in SYSTEM_PROMPT
+        assert "Strategic Intelligence Analyst" in SYSTEM_PROMPT
 
     def test_system_prompt_requires_evidence_tagging(self):
-        assert "[FACT]" in SYSTEM_PROMPT
-        assert "[INFERENCE]" in SYSTEM_PROMPT
-        assert "[INTERNAL]" in SYSTEM_PROMPT
+        assert "[VERIFIED-MEETING]" in SYSTEM_PROMPT
+        assert "[VERIFIED-PUBLIC]" in SYSTEM_PROMPT
+        assert "[INFERRED-HIGH]" in SYSTEM_PROMPT
+        assert "[UNKNOWN]" in SYSTEM_PROMPT
 
     def test_system_prompt_requires_gap_flagging(self):
-        assert "No public evidence found" in SYSTEM_PROMPT
+        assert "No evidence available" in SYSTEM_PROMPT
 
     def test_system_prompt_bans_fluff(self):
-        assert "generic executive fluff" in SYSTEM_PROMPT
-        assert "banned" in SYSTEM_PROMPT
+        assert "BANNED phrases" in SYSTEM_PROMPT
+        assert "strategic leader" in SYSTEM_PROMPT
 
     def test_system_prompt_requires_disambiguation(self):
         assert "Disambiguation" in SYSTEM_PROMPT
@@ -208,28 +209,32 @@ class TestPromptTemplates:
     def test_system_prompt_supports_web_citations(self):
         assert "URL" in SYSTEM_PROMPT
 
+    def test_system_prompt_requires_source_tiers(self):
+        assert "source tiers" in SYSTEM_PROMPT.lower() or "primary sources" in SYSTEM_PROMPT.lower()
+
+    def test_system_prompt_requires_recency(self):
+        assert "24 months" in SYSTEM_PROMPT
+
     def test_user_prompt_template_has_all_sections(self):
         assert "SUBJECT IDENTIFIERS" in USER_PROMPT_TEMPLATE
         assert "INTERNAL CONTEXT" in USER_PROMPT_TEMPLATE
-        assert "Executive Summary" in USER_PROMPT_TEMPLATE
-        assert "Identity & Disambiguation" in USER_PROMPT_TEMPLATE
-        assert "Career Timeline" in USER_PROMPT_TEMPLATE
-        assert "Public Statements & Positions" in USER_PROMPT_TEMPLATE
-        assert "Rhetorical & Cognitive Patterns" in USER_PROMPT_TEMPLATE
-        assert "Tone & Behavioral Forecast" in USER_PROMPT_TEMPLATE
-        assert "Cross-Topic Position Map" in USER_PROMPT_TEMPLATE
-        assert "Gaps, Risks & Inconsistencies" in USER_PROMPT_TEMPLATE
-        assert "Targeted Interview Questions" in USER_PROMPT_TEMPLATE
-        assert "Conversation Strategy" in USER_PROMPT_TEMPLATE
+        assert "Strategic Snapshot" in USER_PROMPT_TEMPLATE
+        assert "Verified Facts Table" in USER_PROMPT_TEMPLATE
+        assert "Power & Influence Map" in USER_PROMPT_TEMPLATE
+        assert "Incentive & Scorecard" in USER_PROMPT_TEMPLATE
+        assert "Strategic Tensions" in USER_PROMPT_TEMPLATE
+        assert "Cognitive & Rhetorical Patterns" in USER_PROMPT_TEMPLATE
+        assert "Behavioral Forecast" in USER_PROMPT_TEMPLATE
+        assert "Conversation & Negotiation Playbook" in USER_PROMPT_TEMPLATE
+        assert "Delta" in USER_PROMPT_TEMPLATE
+        assert "Unknowns That Matter" in USER_PROMPT_TEMPLATE
+        assert "Engine Improvement" in USER_PROMPT_TEMPLATE
 
-    def test_user_prompt_requires_tables(self):
-        assert "| Date/Period |" in USER_PROMPT_TEMPLATE
-        assert "| Topic Area |" in USER_PROMPT_TEMPLATE
+    def test_user_prompt_requires_verified_facts_table(self):
+        assert "| # | Fact | Tag | Source |" in USER_PROMPT_TEMPLATE
 
-    def test_user_prompt_requires_question_rationale(self):
-        """Each interview question must explain why it's being asked."""
-        assert "Why this question" in USER_PROMPT_TEMPLATE
-        assert "tied to a specific claim" in USER_PROMPT_TEMPLATE
+    def test_user_prompt_requires_scenario_forecasts(self):
+        assert "If [specific scenario]" in USER_PROMPT_TEMPLATE
 
     def test_user_prompt_template_format_fields(self):
         """Ensure all format placeholders can be filled."""
@@ -252,3 +257,11 @@ class TestPromptTemplates:
     def test_user_prompt_has_web_research_section(self):
         assert "WEB RESEARCH" in USER_PROMPT_TEMPLATE
         assert "{web_research}" in USER_PROMPT_TEMPLATE
+
+    def test_user_prompt_bans_generic_gaps(self):
+        """Unknowns section should exclude generic gaps."""
+        assert "education history unknown" in USER_PROMPT_TEMPLATE.lower()
+
+    def test_user_prompt_requires_incentive_mapping(self):
+        """Conversation playbook must map to incentive structure."""
+        assert "incentive" in USER_PROMPT_TEMPLATE.lower()
