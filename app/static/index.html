@@ -2261,6 +2261,42 @@
       return html;
     }
 
+    function renderVisibilityReportHtml(vis) {
+      if (!vis) return '';
+      const executed = vis.sweep_executed;
+      const borderColor = executed ? 'var(--info)' : 'var(--danger)';
+      const statusLabel = executed ? `SWEEP EXECUTED (${vis.total_results} results)` : 'SWEEP NOT EXECUTED';
+      let html = `<div style="border:1px solid ${borderColor};border-radius:8px;padding:12px;margin-bottom:12px;background:rgba(0,0,0,0.2)">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;cursor:pointer" onclick="this.parentElement.querySelector('.vis-details').classList.toggle('hidden')">
+          <strong style="font-size:13px">Public Visibility Sweep</strong>
+          <span style="font-size:12px;font-weight:600;color:${borderColor};padding:2px 8px;border:1px solid ${borderColor};border-radius:4px">${statusLabel}</span>
+        </div>
+        <div style="display:flex;gap:12px;font-size:12px;margin-bottom:8px;flex-wrap:wrap">`;
+      const checks = [
+        ['TED/TEDx', vis.ted_tedx_found],
+        ['Podcast/Webinar', vis.podcast_webinar_found],
+        ['Conference/Keynote', vis.conference_keynote_found],
+      ];
+      for (const [lbl, found] of checks) {
+        const c = found ? 'var(--success)' : 'var(--text-muted)';
+        const ic = found ? '\u2713' : '\u2717';
+        html += `<span style="font-size:11px;color:${c}">${ic} ${lbl}</span>`;
+      }
+      html += '</div>';
+      if (vis.results_by_category) {
+        html += '<div class="vis-details hidden" style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border);font-size:12px">';
+        const catLabels = {ted:'TED',tedx:'TEDx',keynote:'Keynote',conference:'Conference',summit:'Summit',podcast:'Podcast',webinar:'Webinar',youtube_talk:'YouTube Talk',panel:'Panel',interview_video:'Interview Video'};
+        for (const [cat, count] of Object.entries(vis.results_by_category)) {
+          const lbl = catLabels[cat] || cat;
+          const c = count > 0 ? 'var(--success)' : 'var(--text-muted)';
+          html += `<div style="display:flex;justify-content:space-between;padding:2px 0"><span>${lbl}</span><span style="color:${c};font-weight:600">${count} results</span></div>`;
+        }
+        html += '</div>';
+      }
+      html += '</div>';
+      return html;
+    }
+
     async function generateDeepProfile(profileId, regenerate) {
       const section = document.getElementById('deepProfileSection' + profileId);
       if (!section) return;
@@ -2270,7 +2306,7 @@
         <div style="text-align:center;padding:40px">
           <div class="loading-spinner" style="margin:0 auto 16px"></div>
           <div style="color:var(--text-secondary);font-size:14px;font-weight:500">Generating intelligence dossier...</div>
-          <div style="color:var(--text-muted);font-size:12px;margin-top:6px">Entity lock \u2192 SerpAPI retrieval \u2192 LLM synthesis \u2192 QA gates</div>
+          <div style="color:var(--text-muted);font-size:12px;margin-top:6px">Entity lock \u2192 Web search \u2192 Visibility sweep \u2192 LLM synthesis \u2192 QA gates</div>
           <div style="color:var(--text-muted);font-size:12px;margin-top:2px">This may take 30\u201360 seconds</div>
         </div>`;
 
@@ -2296,9 +2332,10 @@
           profile.qa_report_data = data.qa_report;
           profile.entity_lock_data = data.entity_lock;
           profile.search_plan = data.search_plan;
+          profile.visibility_report = data.visibility_report;
         }
 
-        // Render the result with entity lock + QA + search plan + dossier
+        // Render the result with entity lock + QA + visibility + search plan + dossier
         section.innerHTML = `<h4>Intelligence Dossier</h4>
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
             <span style="font-size:12px;color:var(--text-muted)">Generated just now</span>
@@ -2308,6 +2345,7 @@
             </button>
           </div>
           ${renderEntityLockHtml(data.entity_lock)}
+          ${renderVisibilityReportHtml(data.visibility_report)}
           ${renderQaReportHtml(data.qa_report)}
           ${renderSearchPlanHtml(data.search_plan)}
           <div class="deep-profile-content">${marked.parse(data.deep_profile)}</div>`;

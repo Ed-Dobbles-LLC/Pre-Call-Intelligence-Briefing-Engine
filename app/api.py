@@ -22,9 +22,15 @@ from pydantic import BaseModel, Field
 
 from app.brief.pipeline import run_pipeline
 from app.brief.profiler import build_interactions_summary, generate_deep_profile
-from app.brief.qa import generate_qa_report, render_qa_report_markdown, score_disambiguation
+from app.brief.qa import (
+    generate_dossier_qa_report,
+    render_qa_report_markdown,
+    score_disambiguation,
+)
 from app.clients.serpapi import (
     SerpAPIClient,
+    VISIBILITY_CATEGORIES,
+    format_visibility_results_for_prompt,
     format_web_results_for_prompt,
     generate_search_plan,
 )
@@ -577,7 +583,10 @@ async def generate_profile_research(profile_id: int):
 
         # --- STEP 1: Fetch web data via SerpAPI ---
         web_research = ""
+        visibility_research = ""
         search_results: dict = {}
+        visibility_results: dict = {}
+        visibility_sweep_executed = False
         if settings.serpapi_api_key:
             try:
                 serp = SerpAPIClient()
@@ -595,6 +604,28 @@ async def generate_profile_research(profile_id: int):
                 )
             except Exception:
                 logger.exception("Web search failed for '%s', proceeding without", p_name)
+
+            # --- STEP 1b: Public Visibility Sweep (MANDATORY) ---
+            try:
+                if not serp.api_key:
+                    serp = SerpAPIClient()
+                visibility_results = await serp.search_public_visibility(
+                    name=p_name,
+                    company=p_company,
+                )
+                visibility_research = format_visibility_results_for_prompt(
+                    visibility_results
+                )
+                visibility_sweep_executed = True
+                logger.info(
+                    "Visibility sweep for '%s' returned %d total results",
+                    p_name,
+                    sum(len(v) for v in visibility_results.values()),
+                )
+            except Exception:
+                logger.exception(
+                    "Visibility sweep failed for '%s', proceeding without", p_name
+                )
 
         # --- STEP 2: Entity Lock (disambiguation scoring) ---
         apollo_data = {}
@@ -655,13 +686,20 @@ async def generate_profile_research(profile_id: int):
             company_size=profile_data.get("company_size"),
             interactions_summary=interactions_summary,
             web_research=web_research,
+            visibility_research=visibility_research,
         )
 
-        # --- STEP 4: QA gates ---
-        qa_report = generate_qa_report(
+        # --- STEP 4: QA gates (with visibility sweep audit) ---
+        visibility_categories_searched = [
+            cat for cat in VISIBILITY_CATEGORIES
+            if visibility_results.get(cat) is not None
+        ]
+        qa_report = generate_dossier_qa_report(
             dossier_text=result,
             disambiguation=entity_lock,
             person_name=p_name,
+            visibility_categories=visibility_categories_searched,
+            visibility_sweep_executed=visibility_sweep_executed,
         )
         qa_markdown = render_qa_report_markdown(qa_report)
 
@@ -676,6 +714,27 @@ async def generate_profile_research(profile_id: int):
                 len(qa_report.contradictions),
             )
 
+        # --- Build visibility report summary ---
+        visibility_report = {
+            "sweep_executed": visibility_sweep_executed,
+            "categories_searched": visibility_categories_searched,
+            "total_results": sum(len(v) for v in visibility_results.values()),
+            "ted_tedx_found": any(
+                len(visibility_results.get(c, [])) > 0 for c in ("ted", "tedx")
+            ),
+            "podcast_webinar_found": any(
+                len(visibility_results.get(c, [])) > 0 for c in ("podcast", "webinar")
+            ),
+            "conference_keynote_found": any(
+                len(visibility_results.get(c, [])) > 0
+                for c in ("conference", "keynote", "summit")
+            ),
+            "results_by_category": {
+                cat: len(visibility_results.get(cat, []))
+                for cat in VISIBILITY_CATEGORIES
+            },
+        }
+
         # --- Persist ---
         generated_at = datetime.utcnow().isoformat()
         profile_data["deep_profile"] = result
@@ -688,6 +747,7 @@ async def generate_profile_research(profile_id: int):
         profile_data["qa_passes_all"] = qa_report.passes_all
         profile_data["qa_report_markdown"] = qa_markdown
         profile_data["search_plan"] = search_plan
+        profile_data["visibility_report"] = visibility_report
         entity.domains = json.dumps(profile_data)
         session.commit()
 
@@ -706,6 +766,7 @@ async def generate_profile_research(profile_id: int):
                 "markdown": qa_markdown,
             },
             "search_plan": search_plan,
+            "visibility_report": visibility_report,
         }
     except HTTPException:
         raise

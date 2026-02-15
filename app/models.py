@@ -291,6 +291,67 @@ class VerifyFirstItem(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Public Visibility Report
+# ---------------------------------------------------------------------------
+
+class VisibilityEntry(BaseModel):
+    """A single public visibility finding (talk, podcast, etc.)."""
+    category: str = Field(..., description="ted|tedx|keynote|conference|summit|podcast|webinar|youtube_talk|panel|interview_video")
+    title: str = ""
+    url: str = ""
+    date: str = ""
+    snippet: str = ""
+    tier: int = 3  # 1=primary, 2=secondary, 3=low
+
+
+class PublicVisibilityReport(BaseModel):
+    """Results of the 10-query public visibility sweep."""
+    sweep_executed: bool = False
+    categories_searched: list[str] = Field(default_factory=list)
+    entries: list[VisibilityEntry] = Field(default_factory=list)
+    total_results: int = 0
+    ted_tedx_found: bool = False
+    podcast_webinar_found: bool = False
+    conference_keynote_found: bool = False
+
+
+# ---------------------------------------------------------------------------
+# Deal Probability Score
+# ---------------------------------------------------------------------------
+
+class DealProbabilityFactor(BaseModel):
+    """A single weighted factor in the deal probability calculation."""
+    factor: str
+    weight_range: str = Field(..., description="e.g. '0-20', '-0-15'")
+    score: float = 0.0
+    reasoning: str = ""
+
+
+class DealProbabilityScore(BaseModel):
+    """Weighted 0-100 deal probability with factor breakdown."""
+    total_score: float = Field(0.0, ge=0.0, le=100.0)
+    factors: list[DealProbabilityFactor] = Field(default_factory=list)
+    positive_total: float = 0.0
+    negative_total: float = 0.0
+    confidence_level: str = "low"  # low | medium | high
+
+
+# ---------------------------------------------------------------------------
+# Influence Strategy Recommendation
+# ---------------------------------------------------------------------------
+
+class InfluenceStrategy(BaseModel):
+    """Structured influence strategy recommendation."""
+    primary_leverage: Optional[str] = None
+    secondary_leverage: Optional[str] = None
+    message_framing: Optional[str] = None
+    psychological_tempo: Optional[str] = None
+    pressure_points: list[str] = Field(default_factory=list)
+    avoidance_points: list[str] = Field(default_factory=list)
+    early_warning_signs: list[str] = Field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
 # Canonical Brief Output
 # ---------------------------------------------------------------------------
 
@@ -342,7 +403,7 @@ class BriefOutput(BaseModel):
     # --- Identity verification (when lock score < 70) ---
     verify_first: list[VerifyFirstItem] = Field(default_factory=list)
 
-    # --- Strategic Operating Model (for deep-profile backward compat) ---
+    # --- Strategic Operating Model (for deep-profile) ---
     strategic_positioning: list[TaggedClaim] = Field(default_factory=list)
     power_map: PowerInfluenceMap = Field(default_factory=PowerInfluenceMap)
     incentive_structure: IncentiveStructure = Field(default_factory=IncentiveStructure)
@@ -352,6 +413,17 @@ class BriefOutput(BaseModel):
     conversation_strategy: ConversationStrategy = Field(default_factory=ConversationStrategy)
     meeting_delta: MeetingDelta = Field(default_factory=MeetingDelta)
     engine_improvements: EngineImprovement = Field(default_factory=EngineImprovement)
+
+    # --- Deep-profile new sections ---
+    public_visibility: PublicVisibilityReport = Field(
+        default_factory=PublicVisibilityReport
+    )
+    deal_probability: DealProbabilityScore = Field(
+        default_factory=DealProbabilityScore
+    )
+    influence_strategy: InfluenceStrategy = Field(
+        default_factory=InfluenceStrategy
+    )
 
 
 # ---------------------------------------------------------------------------

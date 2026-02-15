@@ -221,12 +221,13 @@ class TestPromptTemplates:
         assert "INTERNAL CONTEXT" in USER_PROMPT_TEMPLATE
         assert "Strategic Identity Snapshot" in USER_PROMPT_TEMPLATE
         assert "Verified Fact Table" in USER_PROMPT_TEMPLATE
+        assert "Public Visibility Report" in USER_PROMPT_TEMPLATE
+        assert "Incentive & Pressure Model" in USER_PROMPT_TEMPLATE
         assert "Power & Decision Rights Map" in USER_PROMPT_TEMPLATE
-        assert "Incentive & Scorecard Model" in USER_PROMPT_TEMPLATE
-        assert "Structural Pressure Model" in USER_PROMPT_TEMPLATE
         assert "Strategic Tensions" in USER_PROMPT_TEMPLATE
         assert "Decision Consequence Forecast" in USER_PROMPT_TEMPLATE
-        assert "Conversation Leverage Map" in USER_PROMPT_TEMPLATE
+        assert "Deal Probability Score" in USER_PROMPT_TEMPLATE
+        assert "Influence Strategy Recommendation" in USER_PROMPT_TEMPLATE
         assert "Unknowns That Matter" in USER_PROMPT_TEMPLATE
         assert "QA Report" in USER_PROMPT_TEMPLATE
 
@@ -251,6 +252,7 @@ class TestPromptTemplates:
             company_size="Test",
             internal_context="Test",
             web_research="Test",
+            visibility_research="Test",
         )
         assert "{" not in result  # no unfilled placeholders
 

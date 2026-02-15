@@ -25,6 +25,12 @@ logger = logging.getLogger(__name__)
 
 SERPAPI_URL = "https://serpapi.com/search"
 
+# The 10 mandatory public visibility categories for the sweep
+VISIBILITY_CATEGORIES: list[str] = [
+    "ted", "tedx", "keynote", "conference", "summit",
+    "podcast", "webinar", "youtube_talk", "panel", "interview_video",
+]
+
 
 # ---------------------------------------------------------------------------
 # Source Tier Classification
@@ -211,6 +217,45 @@ class SerpAPIClient:
 
         return results
 
+    async def search_public_visibility(
+        self,
+        name: str,
+        company: str = "",
+    ) -> dict[str, list[dict[str, Any]]]:
+        """Run 10 targeted searches for public speaking/visibility artifacts.
+
+        Returns a dict keyed by visibility category:
+        ted, tedx, keynote, conference, summit, podcast, webinar,
+        youtube_talk, panel, interview_video
+        """
+        if not self.api_key:
+            return {cat: [] for cat in VISIBILITY_CATEGORIES}
+
+        base = f'"{name}"'
+        if company:
+            base += f' "{company}"'
+
+        queries: list[tuple[str, str]] = [
+            ("ted", f'{base} site:ted.com OR "TED talk"'),
+            ("tedx", f'{base} "TEDx" OR site:tedx.com'),
+            ("keynote", f'{base} "keynote" "speaker" OR "keynote address"'),
+            ("conference", f'{base} "conference" "speaker" OR "spoke at" OR "presented at"'),
+            ("summit", f'{base} "summit" "speaker" OR "summit keynote"'),
+            ("podcast", f'{base} "podcast" "guest" OR "episode" OR "hosted by"'),
+            ("webinar", f'{base} "webinar" OR "virtual event" "speaker"'),
+            ("youtube_talk", f'{base} site:youtube.com "talk" OR "presentation" OR "keynote"'),
+            ("panel", f'{base} "panel discussion" OR "panelist" OR "panel moderator"'),
+            ("interview_video", f'{base} "interview" "video" OR site:youtube.com "interview"'),
+        ]
+
+        results: dict[str, list[dict[str, Any]]] = {}
+        for category, query in queries:
+            hits = await self.search(query, num=5)
+            results[category] = [_normalize_result(r) for r in hits]
+            await asyncio.sleep(0.3)
+
+        return results
+
     async def search_targeted(
         self,
         name: str,
@@ -291,6 +336,59 @@ def format_web_results_for_prompt(
                 line += f"\n   > {item['snippet']}"
             sections.append(line)
 
+    return "\n".join(sections)
+
+
+# Visibility category labels for prompt formatting
+_VISIBILITY_LABELS: dict[str, str] = {
+    "ted": "TED Talks",
+    "tedx": "TEDx Talks",
+    "keynote": "Keynote Speeches",
+    "conference": "Conference Presentations",
+    "summit": "Summit Appearances",
+    "podcast": "Podcast Appearances",
+    "webinar": "Webinars",
+    "youtube_talk": "YouTube Talks/Presentations",
+    "panel": "Panel Discussions",
+    "interview_video": "Video Interviews",
+}
+
+
+def format_visibility_results_for_prompt(
+    results: dict[str, list[dict[str, Any]]],
+) -> str:
+    """Format public visibility sweep results for the LLM prompt.
+
+    Returns an empty string if no results.
+    """
+    sections: list[str] = []
+    total = sum(len(v) for v in results.values())
+
+    sections.append(
+        "## PUBLIC VISIBILITY SWEEP RESULTS\n"
+        "The following 10 targeted searches were executed. "
+        "Use these to populate the Public Visibility Report section."
+    )
+
+    for category in VISIBILITY_CATEGORIES:
+        label = _VISIBILITY_LABELS.get(category, category)
+        items = results.get(category, [])
+        status = f"{len(items)} results" if items else "NO RESULTS"
+        sections.append(f"\n**{label}** ({status}):")
+        if items:
+            for i, item in enumerate(items, 1):
+                tier_label = _TIER_LABELS.get(item.get("tier", 3), "LOW-QUALITY")
+                line = f"  {i}. [{tier_label}] {item['title']}"
+                if item.get("date"):
+                    line += f" [{item['date']}]"
+                line += f"\n     URL: {item['link']}"
+                if item.get("snippet"):
+                    line += f"\n     > {item['snippet']}"
+                sections.append(line)
+        else:
+            sections.append("  (No results found)")
+
+    sections.append(f"\n**Total visibility artifacts found:** {total}")
     return "\n".join(sections)
 
 
@@ -382,5 +480,34 @@ def generate_search_plan(
         "category": "authored",
         "rationale": "Authored content — reveals thinking style, priorities, expertise claims",
     })
+
+    # Public visibility sweep (10 queries)
+    base = f'"{name}"'
+    if company:
+        base += f' "{company}"'
+    visibility_queries = [
+        ("ted", f'{base} site:ted.com OR "TED talk"',
+         "TED talk — high-visibility public thought leadership"),
+        ("tedx", f'{base} "TEDx" OR site:tedx.com',
+         "TEDx talk — regional/topical thought leadership"),
+        ("keynote", f'{base} "keynote" "speaker" OR "keynote address"',
+         "Keynote speaking — conference headliner status"),
+        ("conference", f'{base} "conference" "speaker" OR "spoke at"',
+         "Conference presentations — industry engagement"),
+        ("summit", f'{base} "summit" "speaker" OR "summit keynote"',
+         "Summit appearances — executive-level visibility"),
+        ("podcast", f'{base} "podcast" "guest" OR "episode"',
+         "Podcast appearances — public positions, messaging patterns"),
+        ("webinar", f'{base} "webinar" OR "virtual event" "speaker"',
+         "Webinar appearances — topical expertise signals"),
+        ("youtube_talk", f'{base} site:youtube.com "talk" OR "presentation"',
+         "YouTube talks — public presentations, rhetorical style"),
+        ("panel", f'{base} "panel discussion" OR "panelist"',
+         "Panel discussions — collaborative positioning, peer network"),
+        ("interview_video", f'{base} "interview" "video" OR site:youtube.com "interview"',
+         "Video interviews — unscripted positions, body language context"),
+    ]
+    for cat, query, rationale in visibility_queries:
+        plan.append({"query": query, "category": f"visibility_{cat}", "rationale": rationale})
 
     return plan
