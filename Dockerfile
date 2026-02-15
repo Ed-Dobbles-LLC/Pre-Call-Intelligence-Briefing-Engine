@@ -11,6 +11,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY pyproject.toml .
 COPY app/ app/
 COPY migrations/ migrations/
+COPY scripts/ scripts/
 
 # Python deps
 RUN pip install --no-cache-dir . uvicorn[standard] fastapi

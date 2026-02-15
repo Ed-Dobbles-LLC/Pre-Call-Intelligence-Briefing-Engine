@@ -7,13 +7,13 @@
 -- The enrichment_json column stores the full PDL API response
 -- for audit/debug purposes.
 
-ALTER TABLE entities ADD COLUMN canonical_company VARCHAR(512);
-ALTER TABLE entities ADD COLUMN canonical_title VARCHAR(512);
-ALTER TABLE entities ADD COLUMN canonical_location VARCHAR(512);
-ALTER TABLE entities ADD COLUMN pdl_person_id VARCHAR(256);
-ALTER TABLE entities ADD COLUMN pdl_match_confidence REAL;
-ALTER TABLE entities ADD COLUMN enriched_at TIMESTAMP;
-ALTER TABLE entities ADD COLUMN enrichment_json TEXT;
+ALTER TABLE entities ADD COLUMN IF NOT EXISTS canonical_company VARCHAR(512);
+ALTER TABLE entities ADD COLUMN IF NOT EXISTS canonical_title VARCHAR(512);
+ALTER TABLE entities ADD COLUMN IF NOT EXISTS canonical_location VARCHAR(512);
+ALTER TABLE entities ADD COLUMN IF NOT EXISTS pdl_person_id VARCHAR(256);
+ALTER TABLE entities ADD COLUMN IF NOT EXISTS pdl_match_confidence REAL;
+ALTER TABLE entities ADD COLUMN IF NOT EXISTS enriched_at TIMESTAMP;
+ALTER TABLE entities ADD COLUMN IF NOT EXISTS enrichment_json TEXT;
 
 -- Index for finding enriched contacts
 CREATE INDEX IF NOT EXISTS ix_entities_pdl_person_id ON entities(pdl_person_id);

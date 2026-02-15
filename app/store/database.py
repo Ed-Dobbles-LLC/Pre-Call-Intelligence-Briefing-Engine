@@ -172,66 +172,6 @@ def get_session_factory(url: str | None = None) -> sessionmaker:
     return sessionmaker(bind=engine)
 
 
-def _apply_column_migrations(engine, effective_url: str) -> None:
-    """Add columns that may be missing on existing Postgres databases.
-
-    ``create_all()`` only creates *new* tables; it never ALTERs existing
-    ones.  This function closes the gap by issuing idempotent
-    ``ALTER TABLE … ADD COLUMN IF NOT EXISTS`` statements for every
-    column introduced in migrations 004-007.
-
-    On SQLite the clauses are wrapped in try/except because SQLite does
-    not support ``IF NOT EXISTS`` on ``ADD COLUMN``.
-    """
-    import logging
-
-    _log = logging.getLogger(__name__)
-
-    is_pg = not effective_url.startswith("sqlite")
-
-    alter_stmts = [
-        # Migration 004 — gate scores on brief_logs
-        "ALTER TABLE brief_logs ADD COLUMN {ine} identity_lock_score FLOAT DEFAULT 0.0",
-        "ALTER TABLE brief_logs ADD COLUMN {ine} evidence_coverage_pct FLOAT DEFAULT 0.0",
-        "ALTER TABLE brief_logs ADD COLUMN {ine} genericness_score FLOAT DEFAULT 0.0",
-        "ALTER TABLE brief_logs ADD COLUMN {ine} gate_status VARCHAR(32) DEFAULT 'not_run'",
-        # Migration 007 — canonical / PDL columns on entities
-        "ALTER TABLE entities ADD COLUMN {ine} canonical_company VARCHAR(512)",
-        "ALTER TABLE entities ADD COLUMN {ine} canonical_title VARCHAR(512)",
-        "ALTER TABLE entities ADD COLUMN {ine} canonical_location VARCHAR(512)",
-        "ALTER TABLE entities ADD COLUMN {ine} pdl_person_id VARCHAR(256)",
-        "ALTER TABLE entities ADD COLUMN {ine} pdl_match_confidence REAL",
-        "ALTER TABLE entities ADD COLUMN {ine} enriched_at TIMESTAMP",
-        "ALTER TABLE entities ADD COLUMN {ine} enrichment_json TEXT",
-    ]
-
-    index_stmts = [
-        "CREATE INDEX IF NOT EXISTS ix_brief_logs_gate_status ON brief_logs (gate_status)",
-        "CREATE INDEX IF NOT EXISTS ix_entities_pdl_person_id ON entities (pdl_person_id)",
-        "CREATE INDEX IF NOT EXISTS ix_entities_enriched_at ON entities (enriched_at)",
-    ]
-
-    ine = "IF NOT EXISTS" if is_pg else ""
-
-    try:
-        with engine.begin() as conn:
-            for tmpl in alter_stmts:
-                stmt = tmpl.format(ine=ine)
-                try:
-                    conn.execute(text(stmt))
-                except Exception:
-                    # SQLite: column already exists raises OperationalError
-                    pass
-            for stmt in index_stmts:
-                try:
-                    conn.execute(text(stmt))
-                except Exception:
-                    pass
-        _log.info("Column migrations verified/applied")
-    except Exception as exc:
-        _log.warning("Column migration check failed: %s", exc)
-
-
 def init_db(url: str | None = None) -> None:
     """Create all tables if they don't exist.
 
@@ -265,7 +205,6 @@ def init_db(url: str | None = None) -> None:
         except Exception as exc:
             _log.warning("Could not probe for pgvector extension: %s", exc)
     Base.metadata.create_all(engine)
-    _apply_column_migrations(engine, effective_url)
 
 
 def get_session(url: str | None = None) -> Session:
