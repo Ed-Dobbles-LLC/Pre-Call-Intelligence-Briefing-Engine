@@ -470,9 +470,9 @@ class TestNoEvidenceStrategicSections:
 
 
 class TestMarkdownRendering:
-    """Test that the renderer produces the Strategic Intelligence format."""
+    """Test that the renderer produces the person-first pre-call brief format."""
 
-    def test_renders_strategic_title(self):
+    def test_renders_precall_title(self):
         from app.brief.renderer import render_markdown
 
         evidence = RetrievedEvidence()
@@ -485,9 +485,9 @@ class TestMarkdownRendering:
         )
 
         md = render_markdown(brief)
-        assert "Strategic Intelligence Brief" in md
+        assert "Pre-Call Intelligence Brief" in md
 
-    def test_renders_all_strategic_sections(self):
+    def test_renders_all_person_first_sections(self):
         from app.brief.renderer import render_markdown
 
         evidence = RetrievedEvidence()
@@ -500,15 +500,13 @@ class TestMarkdownRendering:
         )
 
         md = render_markdown(brief)
-        assert "Strategic Positioning Snapshot" in md
-        assert "Power & Influence Map" in md
-        assert "Incentive Structure Analysis" in md
-        assert "Cognitive & Rhetorical Patterns" in md
-        assert "Strategic Tensions" in md
-        assert "Behavioral Forecast" in md
-        assert "Information Gaps That Matter" in md
-        assert "Executive Conversation Strategy" in md
-        assert "Meeting Delta Analysis" in md
+        assert "Relationship & Interaction Snapshot" in md
+        assert "Open Loops & Commitments" in md
+        assert "Watchouts & Risks" in md
+        assert "What I Must Cover" in md
+        assert "Leverage Plan" in md
+        assert "Unknowns That Matter" in md
+        assert "Evidence Index" in md
         assert "Engine Improvement Recommendations" in md
 
     def test_renders_evidence_tags(self):

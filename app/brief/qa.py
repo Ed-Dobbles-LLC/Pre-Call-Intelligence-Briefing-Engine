@@ -898,3 +898,122 @@ def render_qa_report_markdown(report: QAReport) -> str:
     lines.append("")
 
     return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Strict QA Gates
+# ---------------------------------------------------------------------------
+
+STRICT_EVIDENCE_THRESHOLD = 95.0
+
+# Additional genericness patterns for strict mode
+STRICT_GENERIC_PATTERNS: list[re.Pattern] = [
+    re.compile(r"\blikely\b", re.IGNORECASE),
+    re.compile(r"\bmay\b", re.IGNORECASE),
+    re.compile(r"\bcould\b", re.IGNORECASE),
+    re.compile(r"\bgenerally\b", re.IGNORECASE),
+    re.compile(r"\btypically\b", re.IGNORECASE),
+    re.compile(r"\brank [123]/[123] scenario\b", re.IGNORECASE),
+]
+
+
+def prune_uncited_claims(text: str) -> str:
+    """Remove substantive lines that lack any evidence tag.
+
+    Splits *text* by newlines and drops lines that are substantive (>20 chars,
+    not headers/table rows) yet contain no evidence tag matching
+    ``EVIDENCE_TAG_PATTERN``.  All other lines are kept as-is.
+
+    Returns the pruned text with uncited substantive lines removed.
+    """
+    lines = text.split("\n")
+    kept: list[str] = []
+    for line in lines:
+        stripped = line.strip()
+        # Keep non-substantive lines unconditionally
+        if not stripped or len(stripped) <= 20:
+            kept.append(line)
+            continue
+        if stripped.startswith(("#", "|", "---", "*", ">")):
+            kept.append(line)
+            continue
+        # Substantive line — keep only if it has an evidence tag
+        if EVIDENCE_TAG_PATTERN.search(stripped):
+            kept.append(line)
+        # else: drop the line (uncited substantive claim)
+    return "\n".join(kept)
+
+
+def compute_gate_status(
+    identity_lock_score: int,
+    evidence_coverage_pct: float,
+    genericness_score: int,
+    strict: bool = False,
+) -> str:
+    """Determine the overall gate status from individual QA scores.
+
+    Returns one of:
+    - ``"passed"``      — all gates pass
+    - ``"constrained"`` — identity lock < 70; brief must be limited to
+                          meeting/email evidence only
+    - ``"failed"``      — evidence coverage below threshold or genericness > 20
+    - ``"not_run"``     — default / indeterminate
+    """
+    threshold = STRICT_EVIDENCE_THRESHOLD if strict else 85.0
+
+    if evidence_coverage_pct < threshold or genericness_score > 20:
+        return "failed"
+
+    if identity_lock_score < 70:
+        return "constrained"
+
+    if (
+        identity_lock_score >= 70
+        and evidence_coverage_pct >= threshold
+        and genericness_score <= 20
+    ):
+        return "passed"
+
+    return "not_run"
+
+
+def lint_generic_filler_strict(text: str) -> GenericFillerResult:
+    """Scan text for generic enterprise filler using both standard and strict patterns.
+
+    Behaves like :func:`lint_generic_filler` but additionally checks against
+    ``STRICT_GENERIC_PATTERNS`` for a more aggressive detection pass.
+    """
+    result = GenericFillerResult()
+    all_patterns = GENERIC_PATTERNS + STRICT_GENERIC_PATTERNS
+
+    lines = text.split("\n")
+    for line_num, line in enumerate(lines, 1):
+        sentences = re.split(r'(?<=[.!?])\s+', line.strip())
+        for sentence in sentences:
+            sentence = sentence.strip()
+            if len(sentence) < 10:
+                continue
+            if sentence.startswith(("#", "|", "---", "*Generated", "*No ")):
+                continue
+
+            result.total_sentences += 1
+
+            has_tag = bool(EVIDENCE_TAG_PATTERN.search(sentence))
+
+            for pattern in all_patterns:
+                match = pattern.search(sentence)
+                if match and not has_tag:
+                    result.flagged_sentences.append({
+                        "sentence": sentence[:200],
+                        "pattern": match.group(0),
+                        "line": line_num,
+                    })
+                    result.generic_count += 1
+                    break  # One flag per sentence
+
+    return result
+
+
+def check_strict_coverage(result: EvidenceCoverageResult) -> bool:
+    """Check if coverage passes the strict 95% threshold."""
+    return result.coverage_pct >= STRICT_EVIDENCE_THRESHOLD
