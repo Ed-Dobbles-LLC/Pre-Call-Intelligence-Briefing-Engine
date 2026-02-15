@@ -2,6 +2,7 @@
 
 Usage:
     brief --person "Jane Doe" --company "Acme Corp" --when "2026-02-15 14:00" --topic "Q1 Review"
+    brief --person "Ben Titmus" --company "AnswerRocket" --strict
 """
 
 from __future__ import annotations
@@ -39,6 +40,12 @@ def _setup_logging():
     default=False,
     help="Skip API calls; use only stored data",
 )
+@click.option(
+    "--strict",
+    is_flag=True,
+    default=False,
+    help="Enforce quality gates: 95% evidence coverage, identity lock, genericness. Fail loudly.",
+)
 @click.option("--verbose", "-v", is_flag=True, default=False, help="Verbose logging")
 def cli(
     person: str | None,
@@ -46,6 +53,7 @@ def cli(
     meeting_when: str | None,
     topic: str | None,
     skip_ingestion: bool,
+    strict: bool,
     verbose: bool,
 ):
     """Generate a Pre-Call Intelligence Brief."""
@@ -57,13 +65,15 @@ def cli(
         console.print("[red]Error: At least --person or --company must be provided.[/red]")
         sys.exit(1)
 
+    mode_label = "[bold red]STRICT[/bold red] " if strict else ""
+    dash = "\u2014"
     console.print(
         Panel(
-            f"[bold]Pre-Call Intelligence Brief[/bold]\n"
-            f"Person: {person or '—'}  |  Company: {company or '—'}\n"
-            f"Topic: {topic or '—'}  |  Meeting: {meeting_when or '—'}",
+            f"[bold]{mode_label}Pre-Call Intelligence Brief[/bold]\n"
+            f"Person: {person or dash}  |  Company: {company or dash}\n"
+            f"Topic: {topic or dash}  |  Meeting: {meeting_when or dash}",
             title="Briefing Engine",
-            border_style="blue",
+            border_style="red" if strict else "blue",
         )
     )
 
@@ -76,15 +86,37 @@ def cli(
             topic=topic,
             meeting_when=meeting_when,
             skip_ingestion=skip_ingestion,
+            strict=strict,
         )
 
     # Print summary
-    score = result.brief.header.confidence_score
+    h = result.brief.header
+    score = h.confidence_score
     score_color = "green" if score >= 0.5 else "yellow" if score >= 0.2 else "red"
 
     console.print()
     console.print(f"[bold]Confidence:[/bold] [{score_color}]{score:.0%}[/{score_color}]")
-    console.print(f"[bold]Sources used:[/bold] {len(result.brief.appendix_evidence)}")
+    source_count = len(result.brief.evidence_index) or len(result.brief.appendix_evidence)
+    console.print(f"[bold]Sources used:[/bold] {source_count}")
+
+    # Gate results
+    if h.gate_status != "not_run":
+        gate_color = {
+            "passed": "green", "constrained": "yellow", "failed": "red"
+        }.get(h.gate_status, "white")
+        console.print(
+            f"[bold]Gate Status:[/bold] [{gate_color}]{h.gate_status.upper()}[/{gate_color}]"
+        )
+        console.print(f"  Identity Lock: {h.identity_lock_score:.0f}/100")
+        console.print(f"  Evidence Coverage: {h.evidence_coverage_pct:.0f}%")
+        console.print(f"  Genericness: {h.genericness_score:.0f}%")
+
+    if strict and h.gate_status == "failed":
+        console.print()
+        console.print(
+            "[bold red]STRICT MODE FAILURE:[/bold red] "
+            "Brief does not meet quality gates. Review evidence sources."
+        )
     console.print()
 
     if result.md_path:
@@ -98,6 +130,10 @@ def cli(
     if result.markdown:
         from rich.markdown import Markdown
         console.print(Markdown(result.markdown))
+
+    # Exit with error code in strict mode if gates failed
+    if strict and h.gate_status == "failed":
+        sys.exit(2)
 
 
 def main():

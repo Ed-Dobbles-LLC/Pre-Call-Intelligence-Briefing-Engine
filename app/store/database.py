@@ -139,6 +139,11 @@ class BriefLog(Base):
     brief_markdown = Column(Text, nullable=False)
     confidence_score = Column(Float, default=0.0)
     source_record_ids = Column(Text, default="[]")
+    # Quality gate scores
+    identity_lock_score = Column(Float, default=0.0)
+    evidence_coverage_pct = Column(Float, default=0.0)
+    genericness_score = Column(Float, default=0.0)
+    gate_status = Column(String(32), default="not_run")
     created_at = Column(DateTime, default=datetime.utcnow)
 
 

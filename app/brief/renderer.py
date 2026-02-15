@@ -1,7 +1,7 @@
-"""Render a BriefOutput as human-readable markdown.
+"""Render a BriefOutput as a person-first, evidence-locked pre-call brief.
 
-Outputs a Strategic Operating Model format with evidence discipline
-tags on every claim. No generic filler, no corporate fluff.
+Outputs a concise 1-2 page markdown brief organised as sections A-I.
+Every claim carries evidence tags and inline citations.
 """
 
 from __future__ import annotations
@@ -56,12 +56,12 @@ def _render_tagged_claims(
 
 
 def render_markdown(brief: BriefOutput) -> str:
-    """Convert a BriefOutput to a Strategic Intelligence markdown dossier."""
+    """Convert a BriefOutput to a person-first pre-call intelligence brief."""
     lines: list[str] = []
     h = brief.header
 
-    # ── Header ──
-    lines.append("# Strategic Intelligence Brief")
+    # ── A) Header ──
+    lines.append("# Pre-Call Intelligence Brief")
     lines.append("")
     lines.append("| Field | Value |")
     lines.append("|-------|-------|")
@@ -82,192 +82,39 @@ def render_markdown(brief: BriefOutput) -> str:
     lines.append(
         f"| **Sources** | {', '.join(h.data_sources_used) or 'none'} |"
     )
-    lines.append("")
-
-    # ── 1. Strategic Positioning Snapshot ──
-    lines.append("## 1. Strategic Positioning Snapshot")
-    lines.append("")
-    if brief.strategic_positioning:
-        lines.extend(_render_tagged_claims(brief.strategic_positioning))
-    else:
-        lines.append("*No strategic positioning data available*")
-    lines.append("")
-
-    # ── 2. Power & Influence Map ──
-    lines.append("## 2. Power & Influence Map")
-    lines.append("")
-    pm = brief.power_map
-    _pm_fields = [
-        ("Formal authority", pm.formal_authority),
-        ("Informal influence", pm.informal_influence),
-        ("Revenue control", pm.revenue_control),
-        ("Decision gate ownership", pm.decision_gate_ownership),
-        ("Needs to impress", pm.needs_to_impress),
-        ("Veto risk", pm.veto_risk),
-    ]
-    has_pm = False
-    for label, claim in _pm_fields:
-        if claim:
-            has_pm = True
-            lines.append(
-                f"- **{label}**: {_tag(claim.evidence_tag)} "
-                f"{claim.claim}{_cite(claim.citations)}"
-            )
-        else:
-            lines.append(f"- **{label}**: `[UNKNOWN]`")
-    if not has_pm:
-        lines.append("*No power map data available*")
-    lines.append("")
-
-    # ── 3. Incentive Structure Analysis ──
-    lines.append("## 3. Incentive Structure Analysis")
-    lines.append("")
-    inc = brief.incentive_structure
-    _inc_sections = [
-        ("Short-term (0\u20133 months)", inc.short_term),
-        ("Medium-term (3\u201312 months)", inc.medium_term),
-        ("Career incentives", inc.career),
-        ("Risk exposure", inc.risk_exposure),
-        ("Where they personally win", inc.personal_wins),
-        ("Where they personally lose", inc.personal_losses),
-    ]
-    has_inc = False
-    for label, claims in _inc_sections:
-        if claims:
-            has_inc = True
-            lines.append(f"**{label}:**")
-            lines.extend(_render_tagged_claims(claims))
-            lines.append("")
-    if not has_inc:
-        lines.append("*No incentive data available*")
-        lines.append("")
-
-    # ── 4. Cognitive & Rhetorical Patterns ──
-    lines.append("## 4. Cognitive & Rhetorical Patterns")
-    lines.append("")
-    if brief.cognitive_patterns:
-        for cp in brief.cognitive_patterns:
-            lines.append(
-                f"- **{cp.pattern_type}**: {_tag(cp.evidence_tag)} "
-                f"{cp.observation}{_cite(cp.citations)}"
-            )
-            if cp.evidence_quote:
-                lines.append(f'  > "{cp.evidence_quote}"')
-    else:
-        lines.append("*No cognitive patterns identified from available evidence*")
-    lines.append("")
-
-    # ── 5. Strategic Tensions ──
-    lines.append("## 5. Strategic Tensions")
-    lines.append("")
-    if brief.strategic_tensions:
-        for st in brief.strategic_tensions:
-            lines.append(
-                f"- **{st.tension}**: {_tag(st.evidence_tag)} "
-                f"{st.evidence}{_cite(st.citations)}"
-            )
-    else:
-        lines.append("*No strategic tensions identified*")
-    lines.append("")
-
-    # ── 6. Behavioral Forecast ──
-    lines.append("## 6. Behavioral Forecast")
-    lines.append("")
-    if brief.behavioral_forecasts:
-        for bf in brief.behavioral_forecasts:
-            lines.append(f"**{bf.scenario}**")
-            lines.append(f"- Predicted: {bf.predicted_reaction}")
-            lines.append(f"- Reasoning: {bf.reasoning}{_cite(bf.citations)}")
-            lines.append("")
-    else:
-        lines.append("*No behavioral forecasts \u2014 insufficient evidence*")
-    lines.append("")
-
-    # ── 7. Information Gaps That Matter ──
-    lines.append("## 7. Information Gaps That Matter")
-    lines.append("")
-    if brief.information_gaps:
-        for ig in brief.information_gaps:
-            lines.append(f"- **{ig.gap}** \u2014 {ig.strategic_impact}")
-    else:
-        lines.append("*No material information gaps identified*")
-    lines.append("")
-
-    # ── 8. Executive Conversation Strategy ──
-    lines.append("## 8. Executive Conversation Strategy")
-    lines.append("")
-    cs = brief.conversation_strategy
-    if cs.leverage_angles:
-        lines.append("**Leverage Angles:**")
-        for i, la in enumerate(cs.leverage_angles, 1):
-            lines.append(
-                f"{i}. {_tag(la.evidence_tag)} {la.claim}{_cite(la.citations)}"
-            )
-        lines.append("")
-    if cs.stress_tests:
-        lines.append("**Stress Tests:**")
-        for i, st in enumerate(cs.stress_tests, 1):
-            lines.append(
-                f"{i}. {_tag(st.evidence_tag)} {st.claim}{_cite(st.citations)}"
-            )
-        lines.append("")
-    if cs.credibility_builders:
-        lines.append("**Credibility Builders:**")
-        for i, cb in enumerate(cs.credibility_builders, 1):
-            lines.append(
-                f"{i}. {_tag(cb.evidence_tag)} {cb.claim}{_cite(cb.citations)}"
-            )
-        lines.append("")
-    if cs.contrarian_wedge:
-        cw = cs.contrarian_wedge
+    # Gate scores
+    if h.gate_status != "not_run":
         lines.append(
-            f"**Contrarian Wedge:** {_tag(cw.evidence_tag)} "
-            f"{cw.claim}{_cite(cw.citations)}"
+            f"| **Identity Lock** | {h.identity_lock_score:.0f}/100 |"
         )
-        lines.append("")
-    if cs.collaboration_vector:
-        cv = cs.collaboration_vector
         lines.append(
-            f"**High-Upside Collaboration:** {_tag(cv.evidence_tag)} "
-            f"{cv.claim}{_cite(cv.citations)}"
+            f"| **Evidence Coverage** | {h.evidence_coverage_pct:.0f}% |"
         )
-        lines.append("")
-    if not any([
-        cs.leverage_angles, cs.stress_tests, cs.credibility_builders,
-        cs.contrarian_wedge, cs.collaboration_vector,
-    ]):
-        lines.append("*No conversation strategy \u2014 insufficient evidence*")
+        lines.append(
+            f"| **Genericness** | {h.genericness_score:.0f}% |"
+        )
+        lines.append(f"| **Gate Status** | {h.gate_status.upper()} |")
+    if h.confidence_drivers:
+        lines.append(
+            f"| **Confidence Drivers** | {'; '.join(h.confidence_drivers)} |"
+        )
+    lines.append("")
+
+    # Identity verification warning
+    if brief.verify_first:
+        lines.append("> **\u26a0\ufe0f Identity Lock < 70 — Verify these facts before "
+                      "relying on public claims:**")
+        for vf in brief.verify_first:
+            lines.append(f"> - {vf.fact} (confidence: {vf.current_confidence})")
         lines.append("")
 
-    # ── 9. Meeting Delta Analysis ──
-    lines.append("## 9. Meeting Delta Analysis")
-    lines.append("")
-    md = brief.meeting_delta
-    if md.alignments:
-        lines.append("**Alignments (public persona = meeting signals):**")
-        lines.extend(_render_tagged_claims(md.alignments))
-        lines.append("")
-    if md.divergences:
-        lines.append("**Divergences (public persona \u2260 meeting signals):**")
-        lines.extend(_render_tagged_claims(md.divergences))
-        lines.append("")
-    if not md.alignments and not md.divergences:
-        lines.append(
-            "*No delta analysis \u2014 requires both public and meeting data*"
-        )
-        lines.append("")
-
-    # ── Operational Context (legacy sections) ──
-    lines.append("---")
-    lines.append("")
-    lines.append("## Operational Context")
+    # ── B) Relationship & Interaction Snapshot ──
+    lines.append("## Relationship & Interaction Snapshot")
     lines.append("")
 
     # Relationship Context
     rc = brief.relationship_context
     if rc.role or rc.influence_level or rc.relationship_health:
-        lines.append("### Relationship Context")
-        lines.append("")
         if rc.role:
             lines.append(f"- **Role**: {rc.role}{_cite(rc.citations)}")
         if rc.influence_level:
@@ -285,7 +132,7 @@ def render_markdown(brief: BriefOutput) -> str:
         lines.append("")
 
     # Last Interaction
-    lines.append("### Last Interaction")
+    lines.append("### Last Contact")
     lines.append("")
     if brief.last_interaction:
         li = brief.last_interaction
@@ -297,7 +144,7 @@ def render_markdown(brief: BriefOutput) -> str:
         lines.append(f"{li.summary}{date_str}{_cite(li.citations)}")
         if li.commitments:
             lines.append("")
-            lines.append("**Commitments:**")
+            lines.append("**Their commitments:**")
             for c in li.commitments:
                 lines.append(f"- {c}")
     else:
@@ -306,7 +153,7 @@ def render_markdown(brief: BriefOutput) -> str:
 
     # Interaction History
     if brief.interaction_history:
-        lines.append("### Recent Interaction History")
+        lines.append("### Recent Interactions")
         lines.append("")
         for ix in brief.interaction_history[:10]:
             date_str = ""
@@ -317,28 +164,31 @@ def render_markdown(brief: BriefOutput) -> str:
             lines.append(f"- {date_str}{ix.summary}{_cite(ix.citations)}")
         lines.append("")
 
-    # Open Loops
-    lines.append("### Open Loops")
+    # ── C) Open Loops & Commitments ──
+    lines.append("## Open Loops & Commitments")
     lines.append("")
     if brief.open_loops:
+        lines.append("| Item | Owner | Due | Status | Evidence |")
+        lines.append("|------|-------|-----|--------|----------|")
         for ol in brief.open_loops:
-            owner = f" (Owner: {ol.owner})" if ol.owner else ""
-            due = f" [Due: {ol.due_date}]" if ol.due_date else ""
+            owner = ol.owner or "\u2014"
+            due = ol.due_date or "\u2014"
+            cite = _cite(ol.citations).strip() if ol.citations else "\u2014"
             lines.append(
-                f"- {ol.description}{owner}{due}{_cite(ol.citations)}"
+                f"| {ol.description} | {owner} | {due} | {ol.status} | {cite} |"
             )
     else:
         lines.append("*No open loops identified*")
     lines.append("")
 
-    # Watchouts
-    lines.append("### Watchouts & Risks")
+    # ── D) Watchouts & Risks ──
+    lines.append("## Watchouts & Risks")
     lines.append("")
     if brief.watchouts:
         for w in brief.watchouts:
-            severity_icon = {"high": "\U0001F534", "medium": "\U0001F7E1", "low": "\U0001F7E2"}.get(
-                w.severity, "\u26AA"
-            )
+            severity_icon = {
+                "high": "\U0001F534", "medium": "\U0001F7E1", "low": "\U0001F7E2"
+            }.get(w.severity, "\u26AA")
             lines.append(
                 f"- {severity_icon} **{w.severity.upper()}**: "
                 f"{w.description}{_cite(w.citations)}"
@@ -347,24 +197,98 @@ def render_markdown(brief: BriefOutput) -> str:
         lines.append("*No watchouts identified*")
     lines.append("")
 
-    # Meeting Objectives
-    if brief.meeting_objectives:
-        lines.append("### Meeting Objectives")
-        lines.append("")
+    # ── E) What I Must Cover ──
+    lines.append("## What I Must Cover")
+    lines.append("")
+    if brief.what_to_cover:
+        for wtc in brief.what_to_cover:
+            lines.append(f"- {wtc.item}{_cite(wtc.citations)}")
+            if wtc.rationale:
+                lines.append(f"  *Rationale: {wtc.rationale}*")
+    elif brief.meeting_objectives:
         for mo in brief.meeting_objectives:
-            lines.append(f"- **Objective**: {mo.objective}")
+            lines.append(f"- **{mo.objective}**")
             lines.append(
                 f"  - *Measurable outcome*: "
                 f"{mo.measurable_outcome}{_cite(mo.citations)}"
             )
+    else:
+        lines.append("*Unknown \u2013 insufficient evidence to determine agenda items*")
+    lines.append("")
+
+    # ── F) Leverage Plan ──
+    lines.append("## Leverage Plan")
+    lines.append("")
+
+    # Leverage questions (prefer detailed, fall back to legacy)
+    if brief.leverage_questions:
+        lines.append("**Questions to ask:**")
+        for i, lq in enumerate(brief.leverage_questions[:3], 1):
+            lines.append(f"{i}. {lq.question}{_cite(lq.citations)}")
+            if lq.rationale:
+                lines.append(f"   *{lq.rationale}*")
+        lines.append("")
+    elif brief.leverage_plan.questions:
+        lines.append("**Questions to ask:**")
+        for i, q in enumerate(brief.leverage_plan.questions[:3], 1):
+            lines.append(f"{i}. {q}")
         lines.append("")
 
-    # Agenda
+    # Proof points (prefer detailed, fall back to legacy)
+    if brief.proof_points:
+        lines.append("**Proof points to deploy:**")
+        for i, pp in enumerate(brief.proof_points[:2], 1):
+            lines.append(f"{i}. {pp.point}{_cite(pp.citations)}")
+            if pp.why_it_matters:
+                lines.append(f"   *{pp.why_it_matters}*")
+        lines.append("")
+    elif brief.leverage_plan.proof_points:
+        lines.append("**Proof points to deploy:**")
+        for i, pp in enumerate(brief.leverage_plan.proof_points[:2], 1):
+            lines.append(f"{i}. {pp}")
+        lines.append("")
+
+    # Tension to surface
+    if brief.tension_to_surface_detail:
+        td = brief.tension_to_surface_detail
+        lines.append(
+            f"**Tension to surface:** {_tag(td.evidence_tag)} "
+            f"{td.claim}{_cite(td.citations)}"
+        )
+        lines.append("")
+    elif brief.leverage_plan.tension_to_surface:
+        lines.append(
+            f"**Tension to surface:** {brief.leverage_plan.tension_to_surface}"
+        )
+        lines.append("")
+
+    # Direct ask
+    if brief.direct_ask:
+        da = brief.direct_ask
+        lines.append(
+            f"**Direct ask:** {_tag(da.evidence_tag)} "
+            f"{da.claim}{_cite(da.citations)}"
+        )
+        lines.append("")
+    elif brief.leverage_plan.ask:
+        lines.append(f"**Direct ask:** {brief.leverage_plan.ask}")
+        lines.append("")
+
+    has_leverage = (
+        brief.leverage_questions or brief.proof_points
+        or brief.tension_to_surface_detail or brief.direct_ask
+        or brief.leverage_plan.questions or brief.leverage_plan.proof_points
+    )
+    if not has_leverage:
+        lines.append("*Unknown \u2013 insufficient evidence for leverage plan*")
+        lines.append("")
+
+    # ── G) Suggested Agenda ──
     if brief.agenda.variants:
-        lines.append("### Suggested Agenda")
+        lines.append("## Suggested Agenda")
         lines.append("")
         for variant in brief.agenda.variants:
-            lines.append(f"#### {variant.duration_minutes}-Minute Version")
+            lines.append(f"### {variant.duration_minutes}-Minute Version")
             lines.append("")
             lines.append("| Time | Block | Notes |")
             lines.append("|------|-------|-------|")
@@ -377,35 +301,38 @@ def render_markdown(brief: BriefOutput) -> str:
                 elapsed += block.minutes
             lines.append("")
 
-    # ── Engine Improvement Recommendations ──
-    lines.append("---")
+    # ── H) Unknowns That Matter ──
+    lines.append("## Unknowns That Matter")
     lines.append("")
-    lines.append("## Engine Improvement Recommendations")
+    if brief.information_gaps:
+        lines.append("| Unknown | Why It Matters | How to Resolve | Suggested Question |")
+        lines.append("|---------|----------------|----------------|--------------------|")
+        for ig in brief.information_gaps:
+            question = ig.suggested_question or "\u2014"
+            how = ig.how_to_resolve or "\u2014"
+            lines.append(
+                f"| {ig.gap} | {ig.strategic_impact} | {how} | {question} |"
+            )
+    else:
+        lines.append("*No material unknowns identified*")
     lines.append("")
-    ei = brief.engine_improvements
-    if ei.missing_signals:
-        lines.append("**Missing Signals:**")
-        for s in ei.missing_signals:
-            lines.append(f"- {s}")
-        lines.append("")
-    if ei.recommended_data_sources:
-        lines.append("**Recommended Data Sources:**")
-        for ds in ei.recommended_data_sources:
-            lines.append(f"- {ds}")
-        lines.append("")
-    if ei.capture_fields:
-        lines.append("**Capture Fields for Future Calls:**")
-        for cf in ei.capture_fields:
-            lines.append(f"- {cf}")
-        lines.append("")
-    if not ei.missing_signals and not ei.recommended_data_sources and not ei.capture_fields:
-        lines.append("*No improvement recommendations at this time*")
-        lines.append("")
 
-    # ── Appendix ──
-    lines.append("## Appendix: Evidence Sources")
+    # ── I) Evidence Index ──
+    lines.append("## Evidence Index")
     lines.append("")
-    if brief.appendix_evidence:
+    if brief.evidence_index:
+        lines.append("| # | Type | ID | Date | Excerpt | Link |")
+        lines.append("|---|------|----|------|---------|------|")
+        _dash = "\u2014"
+        for i, ev in enumerate(brief.evidence_index, 1):
+            date_str = ev.timestamp.strftime("%Y-%m-%d") if ev.timestamp else _dash
+            excerpt = ev.excerpt[:80] if ev.excerpt else _dash
+            link = ev.link or _dash
+            lines.append(
+                f"| {i} | {ev.source_type.value} | `{ev.source_id}` "
+                f"| {date_str} | {excerpt} | {link} |"
+            )
+    elif brief.appendix_evidence:
         lines.append("| # | Type | ID | Date | Title |")
         lines.append("|---|------|----|------|-------|")
         _dash = "\u2014"
@@ -419,6 +346,29 @@ def render_markdown(brief: BriefOutput) -> str:
     else:
         lines.append("*No evidence sources available*")
     lines.append("")
+
+    # ── Engine Improvements (internal) ──
+    ei = brief.engine_improvements
+    if ei.missing_signals or ei.recommended_data_sources or ei.capture_fields:
+        lines.append("---")
+        lines.append("")
+        lines.append("## Engine Improvement Recommendations")
+        lines.append("")
+        if ei.missing_signals:
+            lines.append("**Missing Signals:**")
+            for s in ei.missing_signals:
+                lines.append(f"- {s}")
+            lines.append("")
+        if ei.recommended_data_sources:
+            lines.append("**Recommended Data Sources:**")
+            for ds in ei.recommended_data_sources:
+                lines.append(f"- {ds}")
+            lines.append("")
+        if ei.capture_fields:
+            lines.append("**Capture Fields for Future Calls:**")
+            for cf in ei.capture_fields:
+                lines.append(f"- {cf}")
+            lines.append("")
 
     lines.append("---")
     lines.append("*Generated by Pre-Call Intelligence Briefing Engine*")

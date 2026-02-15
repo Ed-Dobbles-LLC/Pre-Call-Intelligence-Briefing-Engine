@@ -32,22 +32,26 @@ from app.models import (
     CognitivePattern,
     ConversationStrategy,
     EngineImprovement,
+    EvidenceIndexEntry,
     EvidenceItem,
     EvidenceTag,
     HeaderSection,
     IncentiveStructure,
     InformationGap,
     InteractionRecord,
+    LeverageQuestion,
     LeveragePlan,
     MeetingDelta,
     MeetingObjective,
     OpenLoop,
     PowerInfluenceMap,
+    ProofPoint,
     RelationshipContext,
     SourceType,
     StrategicTension,
     TaggedClaim,
     Watchout,
+    WhatToCoverItem,
 )
 from app.retrieve.retriever import RetrievedEvidence
 
@@ -57,41 +61,48 @@ logger = logging.getLogger(__name__)
 # Prompt templates
 # ---------------------------------------------------------------------------
 
-SYSTEM_PROMPT = """You are a Strategic Intelligence Analyst producing a decision-grade \
-executive dossier. You are NOT writing a summary. You are building an executive \
-intelligence layer.
+SYSTEM_PROMPT = """You are a Pre-Call Intelligence Analyst. Your job is to produce a \
+person-first, evidence-locked pre-call brief that an executive can trust before \
+walking into a meeting.
 
-Your output must be:
-- Decision-grade: every claim helps an executive negotiate, pressure-test, or decide
-- Behavioral: based on observed patterns, not personality adjectives
-- Strategic: focused on incentives, power dynamics, and tensions
-- Signal-dense: no padding, no filler, no corporate fluff
-- Explicit about uncertainty: every claim tagged with evidence confidence
+Your output is NOT a company overview, NOT a strategic dossier, NOT a personality \
+profile. It is a RELATIONSHIP BRIEF: what happened between us and this person, \
+what is open, what to cover, what to ask.
 
 ABSOLUTE RULES:
 
-1. EVIDENCE DISCIPLINE — Tag every claim with exactly one of:
+1. PERSON-FIRST — Every section is about the PERSON and your relationship with them. \
+Company context only where it directly explains a person's behavior or commitment.
+
+2. EVIDENCE DISCIPLINE — Tag every claim with exactly one of:
    - VERIFIED_MEETING: explicitly stated in meeting transcript
    - VERIFIED_PUBLIC: explicitly documented in public source
-   - INFERRED_HIGH: high-confidence analytical inference from multiple signals
+   - INFERRED_HIGH: high-confidence inference from multiple converging signals
    - INFERRED_LOW: low-confidence inference from weak or single signals
    - UNKNOWN: no supporting evidence — label it, do not guess
 
-2. CITATION FORMAT — Every factual claim MUST cite its source:
+3. CITATION FORMAT — Every factual claim MUST cite its source:
    [SOURCE:source_type:source_id:date]
 
-3. NO HALLUCINATION — If you cannot support a claim with evidence, write "Unknown" \
-and tag it UNKNOWN. An explicit gap is more valuable than plausible fiction.
+4. ZERO HALLUCINATION — If you cannot support a claim with evidence, write \
+"Unknown" and add a Resolution Question. An explicit gap is more valuable than \
+plausible fiction.
 
-4. NO GENERIC OUTPUT — Before including any statement, apply this test: \
-"Could this statement apply to 50% of executives in this industry?" If yes, delete it.
+5. SEPARATE FACT vs INFERENCE — Facts have citations. Inferences MUST be labeled \
+with evidence_tag and cite the upstream evidence they derive from.
 
-5. NO PERSONALITY ADJECTIVES — No "strategic leader", "data-driven", "passionate". \
-Only structural observations backed by evidence.
+6. NO GENERIC CONTENT — Before including any statement, test: "Could this apply \
+to 50% of executives in this role?" If yes, delete it. No "likely", "may", "could", \
+"generally", "typically" unless citing specific evidence.
 
-6. NO CORPORATE FLUFF — No buzzwords, no motivational tone, no flattery.
+7. NO SCENARIO PLANNING — No behavioral forecasts, no "if X then Y" predictions \
+unless directly supported by cited evidence from past interactions.
 
-7. BE CONCISE — Bullets over paragraphs. Evidence over adjectives. Gaps over guesses.
+8. NO CORPORATE FLUFF — No buzzwords, no personality adjectives, no flattery. \
+No "strategic leader", "data-driven", "passionate about".
+
+9. CONCISE — Target 1-2 pages. Bullets over paragraphs. Evidence over adjectives. \
+Gaps over guesses. If you have nothing evidenced, say "Unknown" and move on.
 
 Respond with a single JSON object. Do not include markdown fences."""
 
@@ -114,16 +125,20 @@ USER_PROMPT_TEMPLATE = """
 ### CONCERN / OBJECTION SNIPPETS
 {concerns_text}
 
-## REQUIRED OUTPUT — STRATEGIC OPERATING MODEL (JSON)
+## REQUIRED OUTPUT — PRE-CALL INTELLIGENCE BRIEF (JSON)
 
-Return a JSON object with ALL of these keys. For every tagged_claim object, use:
+Return a JSON object. Every bullet in sections B-F MUST have citations.
+If evidence is missing, output "Unknown" + a Resolution Question — do NOT guess.
+
+For every tagged_claim object, use:
 {{"claim": "<text>", "evidence_tag": "VERIFIED_MEETING|VERIFIED_PUBLIC|INFERRED_HIGH|INFERRED_LOW|UNKNOWN", "citations": [<citation objects>]}}
 
 {{
-  "confidence_score": <float 0-1>,
+  "confidence_score": <float 0-1 — explain what drives this number>,
+  "confidence_drivers": ["<driver1>", "<driver2>"],
 
   "relationship_context": {{
-    "role": "<role or null>",
+    "role": "<role or null — ONLY if evidenced>",
     "company": "<company or null>",
     "influence_level": "<low|medium|high or null>",
     "influence_level_inferred": <bool>,
@@ -134,8 +149,8 @@ Return a JSON object with ALL of these keys. For every tagged_claim object, use:
 
   "last_interaction": {{
     "date": "<ISO date or null>",
-    "summary": "<what happened>",
-    "commitments": ["<commitment1>"],
+    "summary": "<3-5 bullet 'what happened' — person-first, cited>",
+    "commitments": ["<their stated commitments — ONLY if evidenced>"],
     "citations": [<citation objects>]
   }},
 
@@ -148,12 +163,48 @@ Return a JSON object with ALL of these keys. For every tagged_claim object, use:
   ],
 
   "watchouts": [
-    {{"description": "<risk/concern>", "severity": "low|medium|high", "citations": [<citation objects>]}}
+    {{
+      "description": "<ONLY evidenced risks: objections raised, tension moments, things I said that create risk>",
+      "severity": "low|medium|high",
+      "citations": [<citation objects>]
+    }}
   ],
 
-  "meeting_objectives": [
-    {{"objective": "<what to achieve>", "measurable_outcome": "<how to measure>", "citations": [<citation objects>]}}
+  "what_to_cover": [
+    {{
+      "item": "<3-7 bullets: tie to open loops, their priorities, or unresolved objections>",
+      "rationale": "<why this matters — cite the source evidence>",
+      "citations": [<citation objects>]
+    }}
   ],
+
+  "leverage_questions": [
+    {{
+      "question": "<leverage question>",
+      "rationale": "<cites the upstream evidence that makes this question powerful>",
+      "citations": [<citation objects>]
+    }}
+  ],
+
+  "proof_points": [
+    {{
+      "point": "<proof point to deploy>",
+      "why_it_matters": "<tie to their stated priorities — cite source>",
+      "citations": [<citation objects>]
+    }}
+  ],
+
+  "tension_to_surface_detail": {{
+    "claim": "<1 tension to surface — cite the trigger>",
+    "evidence_tag": "VERIFIED_MEETING|INFERRED_HIGH",
+    "citations": [<citation objects>]
+  }},
+
+  "direct_ask": {{
+    "claim": "<1 direct ask/decision to seek — cite why now>",
+    "evidence_tag": "VERIFIED_MEETING|INFERRED_HIGH",
+    "citations": [<citation objects>]
+  }},
 
   "leverage_plan": {{
     "questions": ["<q1>", "<q2>", "<q3>"],
@@ -165,81 +216,20 @@ Return a JSON object with ALL of these keys. For every tagged_claim object, use:
 
   "agenda": {{
     "variants": [
-      {{"duration_minutes": 20, "blocks": [{{"minutes": 5, "label": "Opening", "notes": "..."}}]}},
+      {{"duration_minutes": 20, "blocks": [{{"minutes": 5, "label": "<label>", "notes": "<cites driver evidence>"}}]}},
       {{"duration_minutes": 30, "blocks": [...]}},
       {{"duration_minutes": 45, "blocks": [...]}}
     ]
   }},
 
-  "strategic_positioning": [
-    <5-7 tagged_claim objects answering: What game is this person playing? What incentives/constraints are visible? What outcomes are they measured on? No adjectives, only structural observations.>
-  ],
-
-  "power_map": {{
-    "formal_authority": <tagged_claim or null>,
-    "informal_influence": <tagged_claim or null>,
-    "revenue_control": <tagged_claim or null>,
-    "decision_gate_ownership": <tagged_claim or null>,
-    "needs_to_impress": <tagged_claim or null>,
-    "veto_risk": <tagged_claim or null>
-  }},
-
-  "incentive_structure": {{
-    "short_term": [<tagged_claims — what they need in next 0-3 months>],
-    "medium_term": [<tagged_claims — 3-12 month horizon>],
-    "career": [<tagged_claims — career trajectory incentives>],
-    "risk_exposure": [<tagged_claims — what could go wrong for them>],
-    "personal_wins": [<tagged_claims — where they personally benefit>],
-    "personal_losses": [<tagged_claims — where they personally lose>]
-  }},
-
-  "cognitive_patterns": [
-    {{
-      "pattern_type": "<e.g. Repeated language | Framing device | Growth vs control bias | Abstraction level>",
-      "observation": "<specific observation>",
-      "evidence_quote": "<verbatim quote if available>",
-      "evidence_tag": "VERIFIED_MEETING|INFERRED_HIGH|etc",
-      "citations": [<citation objects>]
-    }}
-  ],
-
-  "strategic_tensions": [
-    {{
-      "tension": "<e.g. Revenue target realism vs delivery capacity>",
-      "evidence": "<what from the evidence reveals this tension>",
-      "evidence_tag": "VERIFIED_MEETING|INFERRED_HIGH|etc",
-      "citations": [<citation objects>]
-    }}
-  ],
-
-  "behavioral_forecasts": [
-    {{
-      "scenario": "If <specific scenario>",
-      "predicted_reaction": "Likely reaction: <specific prediction>",
-      "reasoning": "<evidence that supports this prediction>",
-      "citations": [<citation objects>]
-    }}
-  ],
-
   "information_gaps": [
     {{
       "gap": "<what is unknown>",
-      "strategic_impact": "<why this gap matters for decision-making>"
+      "strategic_impact": "<why this gap matters>",
+      "how_to_resolve": "<method to fill this gap>",
+      "suggested_question": "<exact question to ask on the call>"
     }}
   ],
-
-  "conversation_strategy": {{
-    "leverage_angles": [<3 tagged_claims — angles mapped to their incentive structure>],
-    "stress_tests": [<2 tagged_claims — pressure-test angles>],
-    "credibility_builders": [<2 tagged_claims — what builds trust with them>],
-    "contrarian_wedge": <1 tagged_claim — intelligent challenge that earns respect>,
-    "collaboration_vector": <1 tagged_claim — highest-upside partnership angle>
-  }},
-
-  "meeting_delta": {{
-    "alignments": [<tagged_claims — where public persona matches meeting signals>],
-    "divergences": [<tagged_claims — where public persona contradicts meeting signals>]
-  }},
 
   "engine_improvements": {{
     "missing_signals": ["<signal type that was missing from the evidence>"],
@@ -253,17 +243,19 @@ Each citation object:
   "source_type": "fireflies|gmail",
   "source_id": "<id>",
   "timestamp": "<ISO datetime>",
-  "excerpt": "<exact text from evidence>",
+  "excerpt": "<exact quote from evidence, <=25 words>",
   "snippet_hash": "<sha256 of excerpt>",
   "link": null
 }}
 
 QUALITY GATE — Before returning, verify:
-1. Could any strategic_positioning bullet apply to 50% of executives? If yes, rewrite it.
-2. Does every behavioral_forecast cite specific evidence? If not, tag INFERRED_LOW.
-3. Are there any personality adjectives without evidence? If yes, delete them.
-4. Does every conversation_strategy angle map to a specific incentive? If not, fix it.
-5. Are information_gaps strategically material? Remove generic gaps like "career history missing".
+1. Is every bullet in last_interaction, open_loops, watchouts, what_to_cover, and leverage \
+cited? If not, either add a citation or remove the bullet.
+2. Does any statement apply to 50% of executives? Delete it.
+3. Are there personality adjectives without evidence? Delete them.
+4. Is there ANY speculative scenario planning without cited evidence? Delete it.
+5. For every UNKNOWN, did you add a Resolution Question in information_gaps? If not, add one.
+6. Are confidence_drivers explicit about what drives uncertainty?
 
 If you have NO evidence for a section, use:
 - For strings: "Unknown"
@@ -392,6 +384,29 @@ def _build_evidence_appendix(evidence: RetrievedEvidence) -> list[EvidenceItem]:
     return items
 
 
+def _build_evidence_index(evidence: RetrievedEvidence) -> list[EvidenceIndexEntry]:
+    """Build the evidence index with <=25 word excerpts and snippet hashes."""
+    entries = []
+    for record in evidence.all_source_records:
+        body = record.body or record.summary or ""
+        # Take first ~25 words as excerpt
+        words = body.split()[:25]
+        excerpt = " ".join(words)
+        if len(words) == 25:
+            excerpt += "..."
+        entries.append(
+            EvidenceIndexEntry(
+                source_type=SourceType(record.source_type),
+                source_id=record.source_id,
+                timestamp=record.date,
+                excerpt=excerpt,
+                snippet_hash=_compute_snippet_hash(excerpt),
+                link=record.link,
+            )
+        )
+    return entries
+
+
 def generate_brief(
     person: str | None,
     company: str | None,
@@ -417,6 +432,8 @@ def generate_brief(
 
     if not evidence.has_data:
         header.confidence_score = 0.0
+        header.confidence_drivers = ["No interaction data available"]
+        header.gate_status = "failed"
         return BriefOutput(
             header=header,
             relationship_context=RelationshipContext(
@@ -425,6 +442,7 @@ def generate_brief(
             last_interaction=None,
             open_loops=[],
             watchouts=[],
+            what_to_cover=[],
             meeting_objectives=[
                 MeetingObjective(
                     objective="Unknown – no evidence found in available data",
@@ -439,8 +457,10 @@ def generate_brief(
             information_gaps=[
                 InformationGap(
                     gap="No meeting transcripts or emails available for this contact",
-                    strategic_impact="Cannot assess incentives, power dynamics, or behavioral "
-                    "patterns without interaction data",
+                    strategic_impact="Cannot assess prior commitments, open loops, or "
+                    "relationship context without interaction data",
+                    how_to_resolve="Ingest Fireflies transcripts and/or Gmail threads",
+                    suggested_question="What's your current top priority this quarter?",
                 )
             ],
             engine_improvements=EngineImprovement(
@@ -651,15 +671,62 @@ def _parse_llm_response(
             )
         )
 
-    # Information gaps
+    # Information gaps (with resolution questions)
     information_gaps = []
     for ig_raw in raw.get("information_gaps", []):
         information_gaps.append(
             InformationGap(
                 gap=ig_raw.get("gap", ""),
                 strategic_impact=ig_raw.get("strategic_impact", ""),
+                how_to_resolve=ig_raw.get("how_to_resolve", ""),
+                suggested_question=ig_raw.get("suggested_question", ""),
             )
         )
+
+    # --- Person-first sections ---
+
+    # What to cover
+    what_to_cover = []
+    for wtc_raw in raw.get("what_to_cover", []):
+        what_to_cover.append(
+            WhatToCoverItem(
+                item=wtc_raw.get("item", ""),
+                rationale=wtc_raw.get("rationale", ""),
+                citations=_parse_citations(wtc_raw.get("citations")),
+            )
+        )
+
+    # Leverage questions (detailed, per-item citations)
+    leverage_questions = []
+    for lq_raw in raw.get("leverage_questions", []):
+        leverage_questions.append(
+            LeverageQuestion(
+                question=lq_raw.get("question", ""),
+                rationale=lq_raw.get("rationale", ""),
+                citations=_parse_citations(lq_raw.get("citations")),
+            )
+        )
+
+    # Proof points (detailed, per-item citations)
+    proof_points_detail = []
+    for pp_raw in raw.get("proof_points", []):
+        if isinstance(pp_raw, dict):
+            proof_points_detail.append(
+                ProofPoint(
+                    point=pp_raw.get("point", ""),
+                    why_it_matters=pp_raw.get("why_it_matters", ""),
+                    citations=_parse_citations(pp_raw.get("citations")),
+                )
+            )
+
+    # Tension to surface (detailed)
+    tension_detail = _parse_tagged_claim(raw.get("tension_to_surface_detail"))
+
+    # Direct ask
+    direct_ask = _parse_tagged_claim(raw.get("direct_ask"))
+
+    # Confidence drivers
+    header.confidence_drivers = raw.get("confidence_drivers", [])
 
     # Conversation strategy
     cs_raw = raw.get("conversation_strategy", {}) or {}
@@ -693,9 +760,16 @@ def _parse_llm_response(
         interaction_history=interaction_history,
         open_loops=open_loops,
         watchouts=watchouts,
+        what_to_cover=what_to_cover,
         meeting_objectives=objectives,
         leverage_plan=leverage_plan,
+        leverage_questions=leverage_questions,
+        proof_points=proof_points_detail,
+        tension_to_surface_detail=tension_detail,
+        direct_ask=direct_ask,
         agenda=agenda,
+        information_gaps=information_gaps,
+        evidence_index=_build_evidence_index(evidence),
         appendix_evidence=_build_evidence_appendix(evidence),
         strategic_positioning=strategic_positioning,
         power_map=power_map,
@@ -703,7 +777,6 @@ def _parse_llm_response(
         cognitive_patterns=cognitive_patterns,
         strategic_tensions=strategic_tensions,
         behavioral_forecasts=behavioral_forecasts,
-        information_gaps=information_gaps,
         conversation_strategy=conversation_strategy,
         meeting_delta=meeting_delta,
         engine_improvements=engine_improvements,
