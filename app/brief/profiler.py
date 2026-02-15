@@ -1,9 +1,9 @@
-"""Decision-grade intelligence dossier generation.
+"""Decision-grade contact intelligence dossier generation.
 
-Replaces generic profile summaries with a Strategic Operating Model.
-Every claim is evidence-tagged. Every section is structured for
-executive decision-making: negotiation, pressure-testing, and
-incentive alignment.
+Produces leverage, not summaries. Every claim is evidence-tagged.
+Every section is structured for executive decision-making:
+pressure modeling, incentive alignment, behavioral forecasting,
+and negotiation strategy.
 
 Three inputs are integrated:
 1. Meeting notes / transcripts (internal)
@@ -20,55 +20,61 @@ from app.clients.openai_client import LLMClient
 logger = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = """\
-You are a Strategic Intelligence Analyst. You produce decision-grade \
-executive dossiers, not summaries.
+You are a Strategic Intelligence Analyst producing decision-grade \
+contact intelligence dossiers. Your output must create leverage, not summaries.
 
 ## ABSOLUTE RULES
 
 1. **Evidence tagging** — every non-trivial claim must carry ONE tag:
-   - [VERIFIED-MEETING] — explicitly stated in meeting transcript/email
-   - [VERIFIED-PUBLIC] — explicitly documented in a cited public source (URL required)
-   - [INFERRED-HIGH] — high-confidence inference from multiple converging signals
-   - [INFERRED-MEDIUM] — medium-confidence inference from limited signals
-   - [INFERRED-LOW] — low-confidence inference from weak or single signal
+   - [VERIFIED–MEETING] — explicitly stated in meeting transcript/email
+   - [VERIFIED–PUBLIC] — explicitly documented in a cited public source (URL required)
+   - [INFERRED–H] — high-confidence inference from multiple converging signals \
+(MUST cite upstream signals in the same sentence)
+   - [INFERRED–M] — medium-confidence inference from limited signals
+   - [INFERRED–L] — low-confidence inference from weak or single signal
    - [UNKNOWN] — no supporting evidence. State it. Do not guess.
 
-2. **Citation format** — every [VERIFIED-PUBLIC] claim must include:
+2. **Citation format** — every [VERIFIED–PUBLIC] claim must include:
    (Source: [publisher/platform], URL: [url], Date: [date if known])
-   Every [VERIFIED-MEETING] claim must reference the meeting context.
+   Every [VERIFIED–MEETING] claim must reference the meeting context.
 
-3. **No hallucination** — if you have no evidence for something, write \
+3. **Every INFERRED–H must cite upstream signals** — state which evidence \
+led to the inference in the same sentence. If you cannot, downgrade to INFERRED–M.
+
+4. **No hallucination** — if you have no evidence for something, write \
 "**No evidence available.**" An explicit gap is worth more than plausible fiction.
 
-4. **No generic filler** — before writing any sentence, apply this test: \
+5. **No generic filler** — before writing any sentence, apply this test: \
 "Could this sentence describe 50% of executives in this industry?" \
 If yes, DELETE IT. Specific or nothing.
 
    BANNED phrases (unless directly quoting the subject with citation):
    - "strategic leader", "visionary", "thought leader"
-   - "data-driven", "results-driven", "outcome-driven"
+   - "data-driven", "results-driven", "outcome-driven", "results-oriented"
    - "passionate about", "deeply committed to"
    - "transformative", "game-changing", "cutting-edge"
    - "proven track record", "extensive experience"
    - "empowers teams", "bridges the gap"
-   - "at the intersection of"
-   - "holistic approach", "synergies"
+   - "at the intersection of", "holistic approach", "synergies"
+   - "likely implements corrective measures"
+   - "focuses on growth"
 
-5. **Use the subject's own words** — when you have quotes, use them. \
-Verbatim quotes in > blockquotes with source attribution. \
-Language patterns are evidence. Generic descriptions are not.
+6. **Person-level > company-level** — if more than 40% of your output \
+describes the company generically without connecting to THIS person's \
+individual role, rewrite. This is a person dossier.
 
-6. **Distinguish source tiers** — primary sources (company site, \
+7. **Use the subject's own words** — when you have quotes, use them. \
+Verbatim quotes in > blockquotes with source attribution.
+
+8. **Distinguish source tiers** — primary sources (company site, \
 registry, direct talks) outweigh secondary sources (news articles, \
-conference pages). Low-quality sources (forums, SEO content) should \
-be flagged and never used for key claims.
+conference pages). Flag low-quality sources.
 
-7. **Recency matters** — prefer evidence from the last 24 months for \
-career/bio claims. Older evidence should be labeled with its date.
+9. **Recency matters** — prefer evidence from the last 24 months. \
+Older evidence should be labeled with its date.
 
-8. **Disambiguation** — if the name is common, note what identifiers \
-lock the identity (company, LinkedIn URL, location, photo) and flag \
-any ambiguity risk."""
+10. **Disambiguation** — note what identifiers lock the identity \
+(company, LinkedIn URL, location, photo) and flag ambiguity risk."""
 
 USER_PROMPT_TEMPLATE = """\
 ## SUBJECT IDENTIFIERS
@@ -88,186 +94,173 @@ USER_PROMPT_TEMPLATE = """\
 
 ---
 
-## REQUIRED OUTPUT: DECISION-GRADE INTELLIGENCE DOSSIER
+## REQUIRED OUTPUT: DECISION-GRADE CONTACT INTELLIGENCE DOSSIER
 
-Produce ALL sections below. Follow evidence rules strictly. \
+Produce ALL 10 sections below. Follow evidence rules strictly. \
 If a section has no evidence, include the header with an explicit \
 gap statement. Do NOT pad with generic language.
 
 ---
 
-### 1. Strategic Snapshot (5-7 bullets max)
+### 1. Strategic Identity Snapshot (5 bullets max, person-level)
 
-Answer ONLY these questions with evidence-backed statements:
-- What game is this person playing? (career trajectory, company stage)
-- What incentives are visible? (revenue targets, growth mandates, board pressure)
-- What constraints are visible? (budget, headcount, organizational politics)
-- What outcomes are they measured on? (KPIs, deliverables, quotas)
-- What risks are they managing? (delivery, reputation, competition)
+Each bullet MUST mention {name} directly or use a personal pronoun. \
+Answer ONLY these:
+- What is {name}'s operating mode? (builder/optimizer/scaler/fixer)
+- Where does {name} create or protect value?
+- What public positioning does {name} emphasize?
+- What incentive structure is visible for {name}?
+- What constraints bind {name}?
 
-No adjectives. Only structural observations with evidence tags.
+No adjectives. Only structural observations with evidence tags. \
+If more than 2 bullets do not mention {name}, rewrite.
 
 ---
 
-### 2. Verified Facts Table
+### 2. Verified Fact Table
 
 | # | Fact | Tag | Source | URL / Reference | Confidence |
 |---|------|-----|--------|-----------------|------------|
 
-Include: name, title, company, location, education, notable affiliations, \
-quantified outcomes, projects, clients (if stated), timeline events. \
-Every row must have a source. If a fact is self-reported and unverified, note that.
+Include: name, title, company, location, education, affiliations, \
+certifications, quantified outcomes, career timeline events. \
+Every row must have a source. Self-reported and unverified facts must be noted.
 
 ---
 
-### 3. Power & Influence Map
+### 3. Incentive & Scorecard Model
+
+Answer clearly with evidence:
+- **What is {name} paid to optimize?** (revenue, margin, delivery, growth)
+- **What metric hurts {name} most?** (churn, miss, delay, cost overrun)
+- **What decision rights does {name} likely hold?** (budget, hiring, strategy, pricing)
+- **Where must {name} escalate?** (board, CEO, committee, partner)
+- **Short-term incentives** (0-3 months): What must be delivered NOW
+- **Medium-term incentives** (3-12 months): What success looks like this year
+- **Career incentives**: Where {name} wants to be in 2-3 years
+
+Each must be tagged with evidence. If inferring, state upstream signals.
+
+---
+
+### 4. Structural Pressure Model
+
+For EACH of the following, state: Evidence, Intensity (Low/Med/High), \
+and What behavior it drives for {name}:
+
+1. **Revenue Pressure**: Pipeline targets, quota, growth mandates
+2. **Delivery Pressure**: Project timelines, capacity constraints, quality demands
+3. **Political Pressure**: Internal stakeholders, competing priorities, org dynamics
+4. **Reputation Risk**: Public commitments, market perception, personal brand
+5. **Geographic Expansion Pressure**: International growth, new market entry (if applicable)
+
+Each must cite evidence. If no evidence for a pressure type, say [UNKNOWN] \
+and explain what signal would reveal it.
+
+---
+
+### 5. Power & Decision Rights Map
 
 For each dimension, state what is known and tag it:
 - **Formal authority**: Title, reporting line, org chart position
 - **Informal influence**: Network, reputation, expertise leverage
 - **Revenue control**: P&L ownership, budget authority, sales targets
-- **Decision gate ownership**: What they can approve/veto
-- **Who they need to impress**: Board, CEO, investors, customers
-- **Who can veto them**: Stakeholders with override power
+- **Decision gate ownership**: What {name} can approve/veto
+- **Who {name} needs to impress**: Board, CEO, investors, customers
+- **Who can veto {name}**: Stakeholders with override power
 
-If unknown, write [UNKNOWN] explicitly. Do not infer org charts you haven't seen.
-
----
-
-### 4. Incentive & Scorecard Hypothesis
-
-Based on meeting + public positioning:
-- **Short-term incentives** (0-3 months): What they need to deliver NOW
-- **Medium-term incentives** (3-12 months): What success looks like this year
-- **Career incentives**: Where they want to be in 2-3 years
-- **Risk exposure**: What could go wrong for them personally
-- **Where they personally win**: Outcomes that advance their career
-- **Where they personally lose**: Outcomes that damage their position
-
-Each must be tagged with evidence and confidence level. \
-If you're inferring, state the upstream signals explicitly.
+If unknown, write [UNKNOWN] explicitly. Do not infer org charts.
 
 ---
 
-### 5. Strategic Tensions & Fault Lines
+### 6. Strategic Tensions
 
-Identify live tensions from the evidence. Examples:
-- Consulting revenue vs product margin
-- Growth targets vs delivery capacity
-- Regional expansion vs core market focus
-- AI hype in positioning vs implementation realism
-- Public optimism vs private caution
+Identify live tensions from evidence. For EACH tension:
+- State the tension
+- Cite specific evidence that reveals it
+- State the implication for {name}'s behavior
 
-Each tension MUST cite specific evidence that reveals it. \
-If you infer a tension, state what signals led you there.
+Examples: Growth vs capacity, Services vs product, Standardization vs \
+customization, Innovation vs governance, Public optimism vs private caution.
 
 ---
 
-### 6. Cognitive & Rhetorical Patterns (Evidence-Based Only)
+### 7. Decision Consequence Forecast
 
-Extract from meeting transcripts AND public content:
-- **Repeated language**: Phrases they use multiple times (quote them)
-- **Framing devices**: How they structure arguments
-- **Growth vs control bias**: Do they lean toward expansion or risk management?
-- **Product vs services bias**: Where do they see value creation?
-- **Optimism vs realism**: How do they handle uncertainty?
-- **Abstraction level**: Do they operate at strategy, tactics, or execution?
-- **Comfort with numbers**: Do they cite metrics or stay qualitative?
-- **Comfort with ambiguity**: Do they need certainty or embrace uncertainty?
+For EACH scenario, output RANKED behavioral responses:
 
-Use direct quotes when available. \
-No generic personality typing. No MBTI. No "likely analytical."
+**Scenario: Revenue target slips**
+Rank 1 response (most likely): [prediction + reasoning + evidence]
+Rank 2: [prediction + reasoning]
+Rank 3: [prediction + reasoning]
+Confidence: [H/M/L] + reasoning
 
----
+**Scenario: Delivery strain**
+[Same format]
 
-### 7. Behavioral Forecast (Scenario-Based)
+**Scenario: Client escalates**
+[Same format]
 
-Generate specific predictions with reasoning:
+**Scenario: Internal resistance**
+[Same format]
 
-**If [specific scenario] → Likely reaction:**
-- Prediction
-- Reasoning (cite evidence)
+**Scenario: Candidate challenges {name}'s assumptions**
+[Same format]
 
-Cover at minimum:
-- If challenged on a key claim → How they defend
-- If their revenue/delivery target slips → What they likely do
-- If asked for a commitment → How they respond
-- If presented with competing priorities → How they choose
-
-Each forecast must cite the evidence behind the prediction.
+Each prediction MUST cite upstream language or behavioral evidence. \
+Generic executive responses are BANNED — if you write "likely to \
+implement corrective measures," delete it.
 
 ---
 
-### 8. Conversation & Negotiation Playbook
+### 8. Conversation Leverage Map
 
 Produce:
-- **3 leverage angles** — mapped to their specific incentive structure
+- **3 leverage angles** — mapped to {name}'s specific incentive structure
 - **2 stress tests** — pressure points that reveal real position
-- **2 credibility builders** — what earns trust with THIS person specifically
+- **2 credibility builders** — what earns trust with {name} specifically
 - **1 contrarian wedge** — intelligent challenge that earns respect
-- **1 high-upside collaboration vector** — best partnership angle
 
-Each must reference the incentive or pattern that makes it effective.
-
----
-
-### 9. Delta: Public Persona vs Meeting Persona
-
-Compare what their public positioning says vs what meeting signals reveal:
-- **Alignments**: Where public and private messages match
-- **Divergences**: Where they differ, and what the gap implies
-- **Implications**: What the delta tells us about their real priorities
-
-If only one source is available, state that and note what the other \
-source would add.
+Each must reference the incentive or pressure that makes it effective.
 
 ---
 
-### 10. Unknowns That Matter
+### 9. Unknowns That Matter (with why they matter)
 
-ONLY include gaps that materially change strategy. Examples:
-- P&L ownership level → affects budget authority assumptions
-- Compensation structure → affects motivation analysis
-- Board reporting line → affects decision-making speed
-- Equity exposure → affects risk tolerance
-- Internal political dynamics → affects what they can commit to
+ONLY include gaps that materially change strategy. For EACH:
+- State the unknown
+- Explain why it matters strategically
+- State what signal would resolve it
 
-Do NOT include generic gaps like "education history unknown" unless \
-it specifically affects the meeting strategy.
+Examples: P&L ownership level, compensation structure, board reporting \
+line, equity exposure, internal political dynamics, decision rights scope.
+
+Do NOT include generic gaps. Every unknown must explain its strategic impact.
 
 ---
 
-### 11. Engine Improvement Recommendations
+### 10. QA Report
 
-After completing the dossier, specify:
-- **Missing signals**: What data was absent that would improve accuracy
-- **Recommended data sources**: Specific sources to fetch next time
-- **Capture fields**: Structured fields the meeting tool should record \
-in future calls (e.g., risk appetite signals, growth pressure markers, \
-incentive cues, timeline commitments, tone markers, interruptions, \
-deflection patterns)
+Self-audit before finalizing:
+- Evidence Coverage: What % of claims are tagged?
+- Person-vs-Company Ratio: Is this about {name} or their company?
+- Genericness check: Could any bullet describe 50% of leaders?
+- INFERRED–H audit: Does every INFERRED–H cite upstream signals?
+- Top 5 claims to verify next
+- Missing retrieval gaps: What should be searched next?
 
 ---
 
 ## OUTPUT CONSTRAINTS
-- Use markdown with clear ## section headers
+- Use markdown with clear ### section headers
 - Use tables where specified
 - Use > blockquotes for direct quotes (with source)
 - Bold key terms and names
 - Tag EVERY non-trivial claim
 - Flag EVERY gap explicitly
 - NO padding. Short and honest beats long and fabricated.
-- If the output could describe 50% of enterprise AI leaders, rewrite it.
-
-## QUALITY SELF-CHECK (run before finalizing)
-- [ ] Every factual claim has a source citation
-- [ ] Every inference states confidence + upstream signals
-- [ ] Every section with insufficient evidence says so explicitly
-- [ ] Behavioral forecasts cite specific evidence
-- [ ] Conversation strategy maps to specific incentives
-- [ ] No generic executive cliches survived
-- [ ] The dossier distinguishes VERIFIED vs INFERRED vs UNKNOWN
-- [ ] Unknowns are strategically material, not generic
+- If more than 40% is company recap, rewrite to focus on {name}.
+- Every behavioral forecast must cite specific evidence.
 """
 
 
@@ -296,7 +289,7 @@ def generate_deep_profile(
         web_research = (
             "No web search results available. Rely on your training data and "
             "flag all claims with appropriate confidence levels. "
-            "Tag every claim sourced from training data as [INFERRED-LOW] "
+            "Tag every claim sourced from training data as [INFERRED–L] "
             "since it cannot be verified against current public sources."
         )
 

@@ -191,9 +191,10 @@ class TestPromptTemplates:
         assert "Strategic Intelligence Analyst" in SYSTEM_PROMPT
 
     def test_system_prompt_requires_evidence_tagging(self):
-        assert "[VERIFIED-MEETING]" in SYSTEM_PROMPT
-        assert "[VERIFIED-PUBLIC]" in SYSTEM_PROMPT
-        assert "[INFERRED-HIGH]" in SYSTEM_PROMPT
+        assert "VERIFIED" in SYSTEM_PROMPT
+        assert "MEETING" in SYSTEM_PROMPT
+        assert "PUBLIC" in SYSTEM_PROMPT
+        assert "INFERRED" in SYSTEM_PROMPT
         assert "[UNKNOWN]" in SYSTEM_PROMPT
 
     def test_system_prompt_requires_gap_flagging(self):
@@ -218,23 +219,25 @@ class TestPromptTemplates:
     def test_user_prompt_template_has_all_sections(self):
         assert "SUBJECT IDENTIFIERS" in USER_PROMPT_TEMPLATE
         assert "INTERNAL CONTEXT" in USER_PROMPT_TEMPLATE
-        assert "Strategic Snapshot" in USER_PROMPT_TEMPLATE
-        assert "Verified Facts Table" in USER_PROMPT_TEMPLATE
-        assert "Power & Influence Map" in USER_PROMPT_TEMPLATE
-        assert "Incentive & Scorecard" in USER_PROMPT_TEMPLATE
+        assert "Strategic Identity Snapshot" in USER_PROMPT_TEMPLATE
+        assert "Verified Fact Table" in USER_PROMPT_TEMPLATE
+        assert "Power & Decision Rights Map" in USER_PROMPT_TEMPLATE
+        assert "Incentive & Scorecard Model" in USER_PROMPT_TEMPLATE
+        assert "Structural Pressure Model" in USER_PROMPT_TEMPLATE
         assert "Strategic Tensions" in USER_PROMPT_TEMPLATE
-        assert "Cognitive & Rhetorical Patterns" in USER_PROMPT_TEMPLATE
-        assert "Behavioral Forecast" in USER_PROMPT_TEMPLATE
-        assert "Conversation & Negotiation Playbook" in USER_PROMPT_TEMPLATE
-        assert "Delta" in USER_PROMPT_TEMPLATE
+        assert "Decision Consequence Forecast" in USER_PROMPT_TEMPLATE
+        assert "Conversation Leverage Map" in USER_PROMPT_TEMPLATE
         assert "Unknowns That Matter" in USER_PROMPT_TEMPLATE
-        assert "Engine Improvement" in USER_PROMPT_TEMPLATE
+        assert "QA Report" in USER_PROMPT_TEMPLATE
 
     def test_user_prompt_requires_verified_facts_table(self):
         assert "| # | Fact | Tag | Source |" in USER_PROMPT_TEMPLATE
 
     def test_user_prompt_requires_scenario_forecasts(self):
-        assert "If [specific scenario]" in USER_PROMPT_TEMPLATE
+        assert "Revenue target slips" in USER_PROMPT_TEMPLATE
+        assert "Delivery strain" in USER_PROMPT_TEMPLATE
+        assert "Client escalates" in USER_PROMPT_TEMPLATE
+        assert "Rank 1" in USER_PROMPT_TEMPLATE
 
     def test_user_prompt_template_format_fields(self):
         """Ensure all format placeholders can be filled."""
@@ -252,7 +255,7 @@ class TestPromptTemplates:
         assert "{" not in result  # no unfilled placeholders
 
     def test_user_prompt_has_quality_self_check(self):
-        assert "QUALITY SELF-CHECK" in USER_PROMPT_TEMPLATE
+        assert "Self-audit" in USER_PROMPT_TEMPLATE or "QA Report" in USER_PROMPT_TEMPLATE
 
     def test_user_prompt_has_web_research_section(self):
         assert "WEB RESEARCH" in USER_PROMPT_TEMPLATE
@@ -260,7 +263,7 @@ class TestPromptTemplates:
 
     def test_user_prompt_bans_generic_gaps(self):
         """Unknowns section should exclude generic gaps."""
-        assert "education history unknown" in USER_PROMPT_TEMPLATE.lower()
+        assert "generic gaps" in USER_PROMPT_TEMPLATE.lower()
 
     def test_user_prompt_requires_incentive_mapping(self):
         """Conversation playbook must map to incentive structure."""
