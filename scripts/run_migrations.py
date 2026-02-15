@@ -56,7 +56,13 @@ def run_migrations() -> None:
     is_sqlite = url.startswith("sqlite")
 
     logger.info("Connecting to database …")
-    engine = create_engine(url)
+    # Use a short connect timeout so we fail fast instead of hanging
+    # (default psycopg2 timeout is very long and will eat the health-check window)
+    connect_args = {}
+    if not is_sqlite:
+        connect_args["connect_timeout"] = 10
+        connect_args["options"] = "-c statement_timeout=30000"  # 30s per statement
+    engine = create_engine(url, connect_args=connect_args)
 
     # Verify the connection actually works before running migrations
     try:
