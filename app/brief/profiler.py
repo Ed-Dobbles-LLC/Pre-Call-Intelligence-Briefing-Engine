@@ -92,11 +92,13 @@ USER_PROMPT_TEMPLATE = """\
 ## WEB RESEARCH (real-time search results with source tiers)
 {web_research}
 
+{visibility_research}
+
 ---
 
-## REQUIRED OUTPUT: DECISION-GRADE CONTACT INTELLIGENCE DOSSIER
+## REQUIRED OUTPUT: CONTACT INTELLIGENCE DOSSIER
 
-Produce ALL 10 sections below. Follow evidence rules strictly. \
+Produce ALL 11 sections below. Follow evidence rules strictly. \
 If a section has no evidence, include the header with an explicit \
 gap statement. Do NOT pad with generic language.
 
@@ -128,34 +130,45 @@ Every row must have a source. Self-reported and unverified facts must be noted.
 
 ---
 
-### 3. Incentive & Scorecard Model
+### 3. Public Visibility Report
 
-Answer clearly with evidence:
-- **What is {name} paid to optimize?** (revenue, margin, delivery, growth)
-- **What metric hurts {name} most?** (churn, miss, delay, cost overrun)
-- **What decision rights does {name} likely hold?** (budget, hiring, strategy, pricing)
-- **Where must {name} escalate?** (board, CEO, committee, partner)
-- **Short-term incentives** (0-3 months): What must be delivered NOW
-- **Medium-term incentives** (3-12 months): What success looks like this year
-- **Career incentives**: Where {name} wants to be in 2-3 years
+Summarise the public visibility sweep results. For EACH category \
+where results were found, provide:
+- **Category** (TED/TEDx/Keynote/Conference/Summit/Podcast/Webinar/YouTube/Panel/Interview)
+- **Title** of the appearance
+- **URL** (cite it)
+- **Key takeaway** — what position or message did {name} project?
+- **Evidence tag** — [VERIFIED–PUBLIC] with URL
 
-Each must be tagged with evidence. If inferring, state upstream signals.
+For categories with NO results, state "[UNKNOWN] — no appearances \
+found in search sweep for this category."
+
+Summary metrics:
+- Total visibility artifacts found
+- Which categories returned results
+- Public positioning signal (what themes appear across appearances)
 
 ---
 
-### 4. Structural Pressure Model
+### 4. Incentive & Pressure Model
 
-For EACH of the following, state: Evidence, Intensity (Low/Med/High), \
-and What behavior it drives for {name}:
+**Incentive Model:**
+- **Paid to optimize**: (revenue, margin, delivery, growth) — cite evidence
+- **Metric that hurts most**: (churn, miss, delay, cost overrun) — cite evidence
+- **Decision rights**: (budget, hiring, strategy, pricing) — cite evidence
+- **Escalation path**: (board, CEO, committee, partner) — cite evidence
+- **Failure mode**: What happens when {name}'s key metric misses?
 
+**Structural Pressure Model:**
+For EACH, state: Evidence, Intensity (Low/Med/High), Behavior it drives:
 1. **Revenue Pressure**: Pipeline targets, quota, growth mandates
 2. **Delivery Pressure**: Project timelines, capacity constraints, quality demands
 3. **Political Pressure**: Internal stakeholders, competing priorities, org dynamics
 4. **Reputation Risk**: Public commitments, market perception, personal brand
-5. **Geographic Expansion Pressure**: International growth, new market entry (if applicable)
+5. **Geographic Expansion Pressure**: International growth, new market entry
 
-Each must cite evidence. If no evidence for a pressure type, say [UNKNOWN] \
-and explain what signal would reveal it.
+Each must cite evidence. If no evidence, say [UNKNOWN] and explain \
+what signal would reveal it.
 
 ---
 
@@ -213,24 +226,53 @@ implement corrective measures," delete it.
 
 ---
 
-### 8. Conversation Leverage Map
+### 8. Deal Probability Score
 
-Produce:
-- **3 leverage angles** — mapped to {name}'s specific incentive structure
-- **2 stress tests** — pressure points that reveal real position
-- **2 credibility builders** — what earns trust with {name} specifically
-- **1 contrarian wedge** — intelligent challenge that earns respect
+Calculate a 0-100 deal probability score with these weighted factors. \
+For EACH factor, state your score, the weight range, and evidence:
 
-Each must reference the incentive or pressure that makes it effective.
+**Positive factors:**
+- Incentive alignment (0-20): How well does our offering align with {name}'s incentives?
+- Authority scope (0-15): Does {name} have authority to act?
+- Budget / P&L influence (0-15): Does {name} control relevant budget?
+- Pressure alignment (0-15): Do current pressures favour our proposition?
+- Public positioning (0-10): Does {name}'s public stance support engagement?
+
+**Negative factors (subtract):**
+- Political friction risk (0-15): Internal resistance, competing stakeholders
+- Competing priorities (0-10): Other initiatives that drain attention/budget
+
+**Output format:**
+| Factor | Score | Range | Evidence |
+|--------|-------|-------|----------|
+(one row per factor)
+
+**Total: [SUM]/100** | Confidence: [H/M/L]
 
 ---
 
-### 9. Unknowns That Matter (with why they matter)
+### 9. Influence Strategy Recommendation
+
+Based on the above analysis, produce:
+- **Primary leverage**: The single strongest angle to open with
+- **Secondary leverage**: Backup approach if primary doesn't land
+- **Message framing bias**: How to frame value (growth vs risk vs efficiency)
+- **Psychological tempo**: Fast close / slow build / consultative
+- **Pressure points** (2-3): Specific pressures we can address
+- **Avoidance points** (2-3): Topics or framings to avoid
+- **Early warning signs** (2-3): Signals that {name} is disengaging or stalling
+
+Each must reference specific evidence from the dossier.
+
+---
+
+### 10. Unknowns That Matter (with why they matter)
 
 ONLY include gaps that materially change strategy. For EACH:
 - State the unknown
 - Explain why it matters strategically
 - State what signal would resolve it
+- State the exact question to ask
 
 Examples: P&L ownership level, compensation structure, board reporting \
 line, equity exposure, internal political dynamics, decision rights scope.
@@ -239,13 +281,14 @@ Do NOT include generic gaps. Every unknown must explain its strategic impact.
 
 ---
 
-### 10. QA Report
+### 11. QA Report
 
 Self-audit before finalizing:
 - Evidence Coverage: What % of claims are tagged?
 - Person-vs-Company Ratio: Is this about {name} or their company?
 - Genericness check: Could any bullet describe 50% of leaders?
 - INFERRED–H audit: Does every INFERRED–H cite upstream signals?
+- Public Visibility Sweep: Were all 10 categories searched?
 - Top 5 claims to verify next
 - Missing retrieval gaps: What should be searched next?
 
@@ -274,6 +317,7 @@ def generate_deep_profile(
     company_size: int | None = None,
     interactions_summary: str = "",
     web_research: str = "",
+    visibility_research: str = "",
 ) -> str:
     """Generate a decision-grade intelligence dossier for a contact.
 
@@ -293,6 +337,12 @@ def generate_deep_profile(
             "since it cannot be verified against current public sources."
         )
 
+    if not visibility_research:
+        visibility_research = (
+            "## PUBLIC VISIBILITY SWEEP RESULTS\n"
+            "No visibility sweep was executed. All 10 categories remain unsearched."
+        )
+
     user_prompt = USER_PROMPT_TEMPLATE.format(
         name=name,
         title=title or "Unknown",
@@ -303,6 +353,7 @@ def generate_deep_profile(
         company_size=f"{company_size:,} employees" if company_size else "Unknown",
         internal_context=internal_context,
         web_research=web_research,
+        visibility_research=visibility_research,
     )
 
     llm = LLMClient()

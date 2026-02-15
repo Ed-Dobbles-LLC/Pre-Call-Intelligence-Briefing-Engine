@@ -1017,3 +1017,104 @@ def lint_generic_filler_strict(text: str) -> GenericFillerResult:
 def check_strict_coverage(result: EvidenceCoverageResult) -> bool:
     """Check if coverage passes the strict 95% threshold."""
     return result.coverage_pct >= STRICT_EVIDENCE_THRESHOLD
+
+
+# ---------------------------------------------------------------------------
+# Public Visibility Sweep QA Gates
+# ---------------------------------------------------------------------------
+
+# The 3 mandatory sweep category groups
+SWEEP_TED_TEDX = {"ted", "tedx"}
+SWEEP_PODCAST_WEBINAR = {"podcast", "webinar"}
+SWEEP_CONFERENCE_KEYNOTE = {"conference", "keynote", "summit"}
+
+
+@dataclass
+class VisibilitySweepAudit:
+    """Result of auditing public visibility sweep execution."""
+    sweep_executed: bool = False
+    categories_searched: list[str] = field(default_factory=list)
+    ted_tedx_searched: bool = False
+    podcast_webinar_searched: bool = False
+    conference_keynote_searched: bool = False
+    total_results: int = 0
+    hard_failures: list[str] = field(default_factory=list)
+
+    @property
+    def passes(self) -> bool:
+        """True if all mandatory sweep groups were searched."""
+        return len(self.hard_failures) == 0
+
+
+def audit_visibility_sweep(
+    categories_searched: list[str],
+    sweep_executed: bool = False,
+) -> VisibilitySweepAudit:
+    """Audit whether the mandatory visibility sweep was fully executed.
+
+    Hard failures:
+    - TED/TEDx sweep not executed
+    - No podcast/webinar sweep
+    - No conference/keynote sweep
+    """
+    result = VisibilitySweepAudit(
+        sweep_executed=sweep_executed,
+        categories_searched=categories_searched,
+    )
+
+    searched_set = set(categories_searched)
+
+    # Check TED/TEDx group
+    if searched_set & SWEEP_TED_TEDX:
+        result.ted_tedx_searched = True
+    else:
+        result.hard_failures.append("TED/TEDx sweep not executed")
+
+    # Check podcast/webinar group
+    if searched_set & SWEEP_PODCAST_WEBINAR:
+        result.podcast_webinar_searched = True
+    else:
+        result.hard_failures.append("No podcast/webinar sweep executed")
+
+    # Check conference/keynote group
+    if searched_set & SWEEP_CONFERENCE_KEYNOTE:
+        result.conference_keynote_searched = True
+    else:
+        result.hard_failures.append("No conference/keynote sweep executed")
+
+    if not sweep_executed:
+        result.hard_failures.insert(0, "Visibility sweep was not executed at all")
+
+    return result
+
+
+def generate_dossier_qa_report(
+    dossier_text: str,
+    claims: list[dict] | None = None,
+    disambiguation: DisambiguationResult | None = None,
+    person_name: str = "",
+    visibility_categories: list[str] | None = None,
+    visibility_sweep_executed: bool = False,
+) -> QAReport:
+    """Run all QA gates on a generated dossier including visibility sweep audit.
+
+    Extends generate_qa_report with visibility sweep hard failure checks.
+    """
+    report = generate_qa_report(
+        dossier_text=dossier_text,
+        claims=claims,
+        disambiguation=disambiguation,
+        person_name=person_name,
+    )
+
+    # Visibility sweep audit
+    if visibility_categories is not None:
+        sweep_audit = audit_visibility_sweep(
+            categories_searched=visibility_categories,
+            sweep_executed=visibility_sweep_executed,
+        )
+        if not sweep_audit.passes:
+            for failure in sweep_audit.hard_failures:
+                report.hallucination_risk_flags.append(f"VISIBILITY SWEEP: {failure}")
+
+    return report
