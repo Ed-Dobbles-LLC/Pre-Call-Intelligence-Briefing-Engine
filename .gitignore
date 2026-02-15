@@ -39,3 +39,6 @@ htmlcov/
 
 # Cached images (runtime artifacts)
 image_cache/
+
+# Log files
+logs*.json

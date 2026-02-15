@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import json
 import os
-import tempfile
 from datetime import datetime, timedelta
 
 import pytest
@@ -15,7 +13,7 @@ os.environ["OPENAI_API_KEY"] = ""
 os.environ["FIREFLIES_API_KEY"] = ""
 os.environ["BRIEFING_API_KEY"] = ""  # disable auth for tests
 
-from app.store.database import Base, EntityRecord, SourceRecord, get_engine, get_session, init_db
+from app.store.database import Base, EntityRecord, get_engine, get_session
 
 
 @pytest.fixture(autouse=True)

@@ -609,7 +609,6 @@ def _sync_gmail_emails() -> dict:
         ).all()
 
         known_emails: dict[str, EntityRecord] = {}  # email -> entity
-        own_emails: set[str] = set()  # user's own emails (skip these)
         for entity in entities:
             for email in json.loads(entity.emails or "[]"):
                 known_emails[email.lower()] = entity
@@ -646,7 +645,7 @@ def _sync_gmail_emails() -> dict:
                     break
 
             # Store the email
-            record = store_email(
+            store_email(
                 normalized,
                 entity_id=matched_entity.id if matched_entity else None,
             )

@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 
 from app.normalize.entity_resolver import (
-    ResolvedEntity,
     resolve_company,
     resolve_person,
     _extract_email_from_header,
