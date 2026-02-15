@@ -336,8 +336,10 @@ async def async_sync_fireflies() -> dict:
     """Async version: fetch transcripts and build profiles.
 
     Safe to call from within an existing event loop (e.g., FastAPI).
-    Holds _sync_lock during all database-mutating operations so that
-    concurrent repair or profile reads see a consistent state.
+    Offloads blocking DB/sync operations to a thread so the event loop
+    stays responsive. Holds _sync_lock during all database-mutating
+    operations so that concurrent repair or profile reads see a
+    consistent state.
     """
     global _sync_running
 
@@ -365,10 +367,13 @@ async def async_sync_fireflies() -> dict:
         raw_transcripts = await _fetch_transcripts(client, since)
         logger.info("Auto-sync: fetched %d transcripts from Fireflies", len(raw_transcripts))
 
-        result = _process_transcripts(raw_transcripts)
+        # Offload blocking DB operations to a thread so the event loop
+        # stays responsive (health checks, dashboard, etc. keep working).
+        loop = asyncio.get_running_loop()
+        result = await loop.run_in_executor(None, _process_transcripts, raw_transcripts)
 
         # Sync Gmail emails for contacts and discover email-only profiles
-        gmail_result = _sync_gmail_emails()
+        gmail_result = await loop.run_in_executor(None, _sync_gmail_emails)
         result["emails_synced"] = gmail_result["emails_synced"]
         result["email_profiles_created"] = gmail_result["email_profiles_created"]
         if "gmail_error" in gmail_result:
