@@ -371,6 +371,8 @@ async def async_sync_fireflies() -> dict:
         gmail_result = _sync_gmail_emails()
         result["emails_synced"] = gmail_result["emails_synced"]
         result["email_profiles_created"] = gmail_result["email_profiles_created"]
+        if "gmail_error" in gmail_result:
+            result["gmail_error"] = gmail_result["gmail_error"]
 
         # Enrich profiles with Apollo.io data (photos, LinkedIn, titles)
         enriched = await _enrich_profiles_with_apollo()
@@ -383,7 +385,7 @@ async def async_sync_fireflies() -> dict:
         return result
 
     except Exception as exc:
-        logger.exception("Auto-sync failed")
+        logger.exception("Auto-sync failed: %s", exc)
         return {
             "transcripts_synced": 0,
             "profiles_updated": 0,
@@ -439,6 +441,8 @@ def sync_fireflies_transcripts() -> dict:
         gmail_result = _sync_gmail_emails()
         result["emails_synced"] = gmail_result["emails_synced"]
         result["email_profiles_created"] = gmail_result["email_profiles_created"]
+        if "gmail_error" in gmail_result:
+            result["gmail_error"] = gmail_result["gmail_error"]
 
         # Enrich profiles with Apollo.io data
         enrich_loop = asyncio.new_event_loop()
@@ -459,7 +463,7 @@ def sync_fireflies_transcripts() -> dict:
         return result
 
     except Exception as exc:
-        logger.exception("Auto-sync failed")
+        logger.exception("Auto-sync failed: %s", exc)
         return {
             "transcripts_synced": 0,
             "profiles_updated": 0,
@@ -795,6 +799,11 @@ def _sync_gmail_emails() -> dict:
     except Exception:
         session.rollback()
         logger.exception("Gmail sync failed")
+        return {
+            "emails_synced": emails_synced,
+            "email_profiles_created": email_profiles_created,
+            "gmail_error": "Gmail sync failed — check server logs for details",
+        }
     finally:
         session.close()
 
@@ -1278,8 +1287,19 @@ def get_all_profiles() -> list[dict]:
 
 def get_dashboard_stats() -> dict:
     """Get summary stats for the dashboard."""
-    init_db()
-    session = get_session()
+    try:
+        init_db()
+        session = get_session()
+    except Exception:
+        logger.exception("get_dashboard_stats: failed to connect to database")
+        return {
+            "profiles": 0,
+            "transcripts": 0,
+            "briefs": 0,
+            "last_sync": None,
+            "error": "Database connection failed",
+        }
+
     try:
         profiles_count = session.query(EntityRecord).filter(
             EntityRecord.entity_type == "person",
@@ -1294,11 +1314,31 @@ def get_dashboard_stats() -> dict:
         from app.store.database import BriefLog
         briefs_count = session.query(BriefLog).count()
 
+        # If _last_sync is not set in memory, try to infer from most recent source
+        last_sync = _last_sync
+        if not last_sync:
+            latest_source = (
+                session.query(SourceRecord.ingested_at)
+                .order_by(SourceRecord.ingested_at.desc())
+                .first()
+            )
+            if latest_source and latest_source[0]:
+                last_sync = latest_source[0]
+
         return {
             "profiles": profiles_count,
             "transcripts": transcripts_count,
             "briefs": briefs_count,
-            "last_sync": _last_sync.isoformat() if _last_sync else None,
+            "last_sync": last_sync.isoformat() if last_sync else None,
+        }
+    except Exception:
+        logger.exception("get_dashboard_stats: query failed")
+        return {
+            "profiles": 0,
+            "transcripts": 0,
+            "briefs": 0,
+            "last_sync": None,
+            "error": "Failed to load stats",
         }
     finally:
         session.close()
@@ -1414,8 +1454,11 @@ def start_background_sync(interval_minutes: int = 30):
     """Start a background thread that periodically syncs Fireflies transcripts.
 
     Uses the sync version (own event loop) since this runs in a separate thread.
+    Waits 10 seconds before first sync to let the server fully initialize.
     """
     def _sync_loop():
+        # Wait for server to fully start before first sync
+        time.sleep(10)
         while True:
             try:
                 if settings.fireflies_api_key:

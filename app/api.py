@@ -274,9 +274,15 @@ def get_next_steps():
 @app.post("/sync", dependencies=[Depends(verify_api_key)])
 async def trigger_sync():
     """Trigger a manual sync of Fireflies transcripts and profile rebuild."""
-    result = await async_sync_fireflies()
+    try:
+        result = await async_sync_fireflies()
+    except Exception as exc:
+        logger.exception("Sync endpoint: unexpected error")
+        raise HTTPException(status_code=500, detail=f"Sync failed unexpectedly: {exc}")
     if "error" in result:
-        raise HTTPException(status_code=400, detail=result["error"])
+        # Return 409 for "already in progress" vs 400 for config errors
+        status = 409 if "already in progress" in result["error"].lower() else 400
+        raise HTTPException(status_code=status, detail=result["error"])
     return result
 
 
@@ -2249,7 +2255,16 @@ async def generate_profile_research(profile_id: int):
 @app.get("/stats", dependencies=[Depends(verify_api_key)])
 def dashboard_stats():
     """Return summary statistics for the dashboard."""
-    return get_dashboard_stats()
+    try:
+        return get_dashboard_stats()
+    except Exception:
+        logger.exception("Stats endpoint failed")
+        return {
+            "profiles": 0,
+            "transcripts": 0,
+            "briefs": 0,
+            "last_sync": None,
+        }
 
 
 # ---------------------------------------------------------------------------

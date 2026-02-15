@@ -1600,6 +1600,14 @@
     let currentView = 'rendered';
     let allProfiles = [];
     const API_BASE = '';
+    // API key read from ?key= query param or localStorage
+    const apiKey = new URLSearchParams(window.location.search).get('key')
+                   || localStorage.getItem('briefing_api_key')
+                   || '';
+
+    function authHeaders() {
+      return apiKey ? { 'Authorization': 'Bearer ' + apiKey } : {};
+    }
 
     // ── Helpers ──
     function $(id) { return document.getElementById(id); }
@@ -1825,7 +1833,7 @@
     // ── Dashboard Stats ──
     async function loadStats() {
       try {
-        const res = await fetch(API_BASE + '/stats');
+        const res = await fetch(API_BASE + '/stats', { headers: authHeaders() });
         if (!res.ok) return;
         const data = await res.json();
         $('statProfiles').textContent = data.profiles || 0;
@@ -1845,8 +1853,8 @@
       const container = $('nextStepsContainer');
       try {
         const [profilesRes, nextStepsRes] = await Promise.all([
-          fetch(API_BASE + '/profiles'),
-          fetch(API_BASE + '/next-steps').catch(() => null),
+          fetch(API_BASE + '/profiles', { headers: authHeaders() }),
+          fetch(API_BASE + '/next-steps', { headers: authHeaders() }).catch(() => null),
         ]);
         if (!profilesRes.ok) throw new Error();
         const profiles = await profilesRes.json();
@@ -1967,7 +1975,7 @@
       btn.innerHTML = '<span class="spinner-sm"></span> Syncing...';
 
       try {
-        const res = await fetch(API_BASE + '/sync', { method: 'POST' });
+        const res = await fetch(API_BASE + '/sync', { method: 'POST', headers: authHeaders() });
         if (!res.ok) {
           const err = await res.json().catch(() => ({ detail: 'Sync failed' }));
           throw new Error(err.detail);
@@ -1995,7 +2003,7 @@
       btn.disabled = true;
       btn.innerHTML = '<span class="spinner-sm"></span> Refreshing...';
       try {
-        const res = await fetch(API_BASE + '/profiles/refresh-photos', { method: 'POST' });
+        const res = await fetch(API_BASE + '/profiles/refresh-photos', { method: 'POST', headers: authHeaders() });
         if (!res.ok) {
           const err = await res.json().catch(() => ({ detail: 'Refresh failed' }));
           throw new Error(err.detail);
@@ -2018,7 +2026,7 @@
     // ── Profiles ──
     async function loadProfiles() {
       try {
-        const res = await fetch(API_BASE + '/profiles');
+        const res = await fetch(API_BASE + '/profiles', { headers: authHeaders() });
         if (!res.ok) return;
         allProfiles = await res.json();
         renderProfiles(allProfiles);
@@ -2333,7 +2341,7 @@
       try {
         const res = await fetch(API_BASE + '/profiles/' + profileId + '/meeting-prep', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', ...authHeaders() },
         });
         if (!res.ok) {
           const err = await res.json().catch(() => ({}));
@@ -2710,7 +2718,7 @@
       try {
         const res = await fetch(API_BASE + '/profiles/' + profileId + '/deep-research', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', ...authHeaders() },
         });
         if (!res.ok) {
           const err = await res.json().catch(() => ({}));
@@ -2766,7 +2774,7 @@
     // ── Recent briefs ──
     async function loadRecent() {
       try {
-        const res = await fetch(API_BASE + '/briefs/recent');
+        const res = await fetch(API_BASE + '/briefs/recent', { headers: authHeaders() });
         const data = await res.json();
         const list = $('recentList');
 
@@ -2829,7 +2837,7 @@
 
         const res = await fetch(API_BASE + '/brief', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', ...authHeaders() },
           body: JSON.stringify(body),
         });
 
@@ -2903,7 +2911,7 @@
 
     async function loadPendingReviews() {
       try {
-        const res = await fetch(API_BASE + '/profiles/pending-review');
+        const res = await fetch(API_BASE + '/profiles/pending-review', { headers: authHeaders() });
         if (!res.ok) return;
         pendingReviews = await res.json();
         renderPendingReviews();
@@ -3028,7 +3036,7 @@
       try {
         const res = await fetch(API_BASE + '/profiles/' + profileId + '/confirm-linkedin', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', ...authHeaders() },
           body: JSON.stringify({ candidate_index: idx }),
         });
         if (!res.ok) throw new Error('Failed to confirm');
@@ -3058,7 +3066,7 @@
       try {
         const res = await fetch(API_BASE + '/profiles/' + profileId + '/search-linkedin', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', ...authHeaders() },
           body: JSON.stringify({ query: query }),
         });
         if (!res.ok) throw new Error('Search failed');
@@ -3091,7 +3099,7 @@
       try {
         const res = await fetch(API_BASE + '/profiles/' + profileId + '/set-linkedin', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', ...authHeaders() },
           body: JSON.stringify({ linkedin_url: url }),
         });
         if (!res.ok) throw new Error('Failed to save');
@@ -3113,7 +3121,7 @@
       try {
         const res = await fetch(API_BASE + '/profiles/' + profileId + '/confirm-linkedin', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', ...authHeaders() },
           body: JSON.stringify({ candidate_index: -1 }),
         });
         if (!res.ok) throw new Error('Failed to update');
@@ -3134,7 +3142,7 @@
       try {
         const res = await fetch(API_BASE + '/profiles/' + profileId + '/confirm-linkedin', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', ...authHeaders() },
           body: JSON.stringify({ candidate_index: -1 }),
         });
         if (!res.ok) throw new Error('Failed to update');
