@@ -19,6 +19,9 @@ RUN pip install --no-cache-dir . uvicorn[standard] fastapi
 # Create output directory
 RUN mkdir -p /app/out
 
+# Ensure Python output is visible in Railway logs (no buffering)
+ENV PYTHONUNBUFFERED=1
+
 # Railway injects PORT at runtime
 ENV PORT=8000
 EXPOSE ${PORT}

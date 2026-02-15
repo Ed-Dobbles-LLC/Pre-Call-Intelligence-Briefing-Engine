@@ -58,6 +58,15 @@ def run_migrations() -> None:
     logger.info("Connecting to database …")
     engine = create_engine(url)
 
+    # Verify the connection actually works before running migrations
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        logger.info("Database connection OK")
+    except Exception as exc:
+        logger.error("Cannot connect to database: %s", exc)
+        sys.exit(1)
+
     for filename in ORDERED_MIGRATIONS:
         path = MIGRATIONS_DIR / filename
         if not path.exists():
@@ -108,4 +117,8 @@ def run_migrations() -> None:
 
 
 if __name__ == "__main__":
-    run_migrations()
+    try:
+        run_migrations()
+    except Exception:
+        logger.exception("Migration script crashed")
+        sys.exit(1)
