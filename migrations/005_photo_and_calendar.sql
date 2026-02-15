@@ -1,0 +1,31 @@
+-- Migration 005: Photo resolution fields + Calendar meeting support
+-- Applies to both SQLite and PostgreSQL
+--
+-- Photo fields are stored in EntityRecord.domains JSON, not separate columns,
+-- to match the existing architecture. This migration documents the schema.
+--
+-- Calendar meetings are also stored in EntityRecord.domains JSON as:
+--   upcoming_meetings: [{calendar_event_id, title, start_time, end_time, ...}]
+--   has_upcoming_meeting: bool
+--   next_meeting_title: str
+--   next_meeting_time: str
+--
+-- Photo resolution fields (in domains JSON):
+--   photo_url: str
+--   photo_source: "uploaded"|"cached_proxy"|"enrichment_provider"|"gravatar"|"company_logo"|"initials"
+--   photo_status: "RESOLVED"|"MISSING"|"FAILED"|"BLOCKED"|"EXPIRED"
+--   photo_last_checked_at: ISO datetime
+--   photo_last_error: str
+--
+-- Contact stub fields (for calendar-created contacts):
+--   source: "calendar_ingest"
+--   created_from: "calendar_attendee"
+--   research_status: "QUEUED"|"IN_PROGRESS"|"COMPLETED"|"SKIPPED"
+--
+-- Meeting enrichment (in domains JSON, per meeting):
+--   enrichment: {snippet, last_contact_date, open_commitments, confidence_score}
+
+-- No DDL changes needed: all new fields live in the existing domains JSON column.
+-- This migration is a documentation marker for the photo + calendar schema.
+
+SELECT 1;
