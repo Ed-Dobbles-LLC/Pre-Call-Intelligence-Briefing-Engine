@@ -257,8 +257,8 @@ def run_pipeline(
     md_path = output_dir / f"{base_name}.md"
 
     brief_json = brief.model_dump_json(indent=2)
-    json_path.write_text(brief_json)
-    md_path.write_text(markdown)
+    json_path.write_text(brief_json, encoding="utf-8")
+    md_path.write_text(markdown, encoding="utf-8")
 
     logger.info("Wrote %s and %s", json_path, md_path)
 
