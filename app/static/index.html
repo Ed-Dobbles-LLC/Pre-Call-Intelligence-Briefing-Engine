@@ -2116,7 +2116,7 @@
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
               ${p.dossier_mode_a_markdown ? 'View Meeting Prep' : 'Meeting Prep'}
             </button>
-            ${p.linkedin_status === 'confirmed' ? '<button class="btn-research-secondary" onclick="' + (p.deep_profile ? 'scrollToDeepProfile(' + p.id + ')' : 'generateDeepProfile(' + p.id + ')') + '"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/><path d="M11 8v6M8 11h6"/></svg>' + (p.deep_profile ? 'View Deep Research' : 'Run Deep Research') + '</button>' : ''}
+            <button class="btn-research-secondary" onclick="${p.deep_profile ? 'scrollToDeepProfile(' + p.id + ')' : 'generateDeepProfile(' + p.id + ')'}"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/><path d="M11 8v6M8 11h6"/></svg>${p.deep_profile ? 'View Deep Research' : 'Run Deep Research'}</button>
             <button class="btn-research-secondary" onclick="triggerPdfUpload(${p.id})">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><polyline points="9 15 12 12 15 15"/></svg>
               ${p.linkedin_pdf_path ? 'Re-upload PDF' : 'Upload LinkedIn PDF'}
@@ -2248,8 +2248,8 @@
         html += '</div>';
       }
 
-      // Deep Research Dossier section (Mode B) — verified contacts only
-      if (p.linkedin_status === 'confirmed') {
+      // Deep Research Dossier section (Mode B) — available for all contacts
+      {
         const drStatus = p.deep_research_status || 'NOT_STARTED';
         const drColor = drStatus === 'SUCCEEDED' ? 'var(--success)' : drStatus === 'FAILED' ? 'var(--danger)' : 'var(--text-muted)';
         html += `<div class="modal-section" id="deepProfileSection${p.id}">
@@ -2651,37 +2651,82 @@
       return html;
     }
 
+    function renderRetrievalLedgerHtml(data) {
+      const ledgerCount = data.retrieval_ledger_count || 0;
+      const visCount = data.visibility_ledger_count || 0;
+      const pdlEnriched = data.pdl_enriched;
+      const drStatus = data.deep_research_status || 'UNKNOWN';
+      const fc = data.fail_closed_status || {};
+      const gatesPassed = fc.gates_passed;
+      const serpError = fc.serp_error || '';
+
+      const statusColor = drStatus === 'SUCCEEDED' ? 'var(--success)' : drStatus === 'FAILED' ? 'var(--danger)' : 'var(--warning)';
+      const ledgerColor = ledgerCount > 0 ? 'var(--success)' : 'var(--danger)';
+      const visColor = visCount > 0 ? 'var(--success)' : 'var(--danger)';
+
+      let html = `<div style="background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius-md);padding:14px;margin:8px 0">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+          <span style="font-size:13px;font-weight:600">Deep Research Status</span>
+          <span style="font-size:11px;font-weight:600;color:${statusColor};background:${statusColor}20;padding:2px 8px;border-radius:4px">${drStatus}</span>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;font-size:12px">
+          <div style="background:var(--bg-card);border-radius:6px;padding:8px;text-align:center">
+            <div style="color:var(--text-muted);margin-bottom:2px">Retrieval Ledger</div>
+            <div style="font-weight:700;font-size:18px;color:${ledgerColor}">${ledgerCount}</div>
+            <div style="color:var(--text-muted)">queries logged</div>
+          </div>
+          <div style="background:var(--bg-card);border-radius:6px;padding:8px;text-align:center">
+            <div style="color:var(--text-muted);margin-bottom:2px">Visibility Sweep</div>
+            <div style="font-weight:700;font-size:18px;color:${visColor}">${visCount}</div>
+            <div style="color:var(--text-muted)">visibility queries</div>
+          </div>
+          <div style="background:var(--bg-card);border-radius:6px;padding:8px;text-align:center">
+            <div style="color:var(--text-muted);margin-bottom:2px">PDL Enriched</div>
+            <div style="font-weight:700;font-size:18px;color:${pdlEnriched ? 'var(--success)' : 'var(--text-muted)'}">${pdlEnriched ? 'Yes' : 'No'}</div>
+          </div>
+        </div>`;
+
+      if (serpError) {
+        html += `<div style="margin-top:8px;padding:6px 10px;background:var(--danger-bg);border-radius:6px;font-size:11px;color:var(--danger)">${serpError}</div>`;
+      }
+
+      html += '</div>';
+      return html;
+    }
+
     async function generateDeepProfile(profileId, regenerate) {
       const section = document.getElementById('deepProfileSection' + profileId);
       if (!section) return;
 
-      // Show loading state
+      // Show loading state with progress
       section.innerHTML = `<h4>Intelligence Dossier</h4>
         <div style="text-align:center;padding:40px">
           <div class="loading-spinner" style="margin:0 auto 16px"></div>
-          <div style="color:var(--text-secondary);font-size:14px;font-weight:500">Generating intelligence dossier...</div>
-          <div style="color:var(--text-muted);font-size:12px;margin-top:6px">Entity lock \u2192 Web search \u2192 Visibility sweep \u2192 LLM synthesis \u2192 QA gates</div>
-          <div style="color:var(--text-muted);font-size:12px;margin-top:2px">This may take 30\u201360 seconds</div>
+          <div style="color:var(--text-secondary);font-size:14px;font-weight:500" id="drProgress${profileId}">Starting deep research...</div>
+          <div style="color:var(--text-muted);font-size:12px;margin-top:6px">PDL enrich \u2192 Web search \u2192 Visibility sweep \u2192 Entity lock \u2192 LLM synthesis \u2192 QA gates</div>
+          <div style="color:var(--text-muted);font-size:12px;margin-top:2px">This may take 30\u201390 seconds</div>
         </div>`;
 
       try {
-        const res = await fetch(API_BASE + '/profiles/' + profileId + '/deep-profile', {
+        const res = await fetch(API_BASE + '/profiles/' + profileId + '/deep-research', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
         });
         if (!res.ok) {
           const err = await res.json().catch(() => ({}));
-          throw new Error(err.detail || 'Research generation failed');
+          throw new Error(err.detail || 'Deep research failed');
         }
         const data = await res.json();
-        showToast('Intelligence dossier generated!', 'success');
+
+        const isSuccess = data.deep_research_status === 'SUCCEEDED';
+        showToast(isSuccess ? 'Intelligence dossier generated!' : 'Deep research completed with issues', isSuccess ? 'success' : 'warning');
 
         // Update local profile data
         const profile = allProfiles.find(p => p.id === profileId);
         if (profile) {
           profile.deep_profile = data.deep_profile;
           profile.deep_profile_generated_at = data.generated_at;
-          profile.deep_research_status = data.deep_research_status || (data.status === 'ok' ? 'SUCCEEDED' : 'FAILED');
+          profile.deep_research_status = data.deep_research_status;
           profile.entity_lock_score = (data.entity_lock || {}).entity_lock_score;
           profile.qa_passes_all = (data.qa_report || {}).passes_all;
           profile.qa_report_data = data.qa_report;
@@ -2690,7 +2735,7 @@
           profile.visibility_report = data.visibility_report;
         }
 
-        // Render the result with entity lock + QA + visibility + search plan + dossier
+        // Render the result with retrieval ledger + entity lock + QA + visibility + dossier
         section.innerHTML = `<h4>Intelligence Dossier</h4>
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
             <span style="font-size:12px;color:var(--text-muted)">Generated just now</span>
@@ -2699,11 +2744,12 @@
               Regenerate
             </button>
           </div>
+          ${renderRetrievalLedgerHtml(data)}
           ${renderEntityLockHtml(data.entity_lock)}
           ${renderVisibilityReportHtml(data.visibility_report)}
-          ${renderQaReportHtml(data.qa_report)}
+          ${data.qa_report ? renderQaReportHtml(data.qa_report) : ''}
           ${renderSearchPlanHtml(data.search_plan)}
-          <div class="deep-profile-content">${marked.parse(data.deep_profile)}</div>`;
+          <div class="deep-profile-content">${marked.parse(data.deep_profile || '(No dossier generated)')}</div>`;
       } catch (e) {
         showToast(e.message);
         section.innerHTML = `<h4>Intelligence Dossier</h4>

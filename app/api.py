@@ -754,6 +754,7 @@ async def enrich_profile(profile_id: int):
             profile_data=profile_data,
             contact_id=profile_id,
             contact_name=entity.name,
+            entity=entity,
         )
 
         if result["success"]:
@@ -774,7 +775,13 @@ async def enrich_profile(profile_id: int):
 
 @app.get("/debug/enrichment")
 def debug_enrichment():
-    """Debug endpoint: PDL enrichment status and rate limiter state."""
+    """Debug endpoint: PDL enrichment status with per-contact detail.
+
+    Shows:
+    - Global PDL status and rate limiter state
+    - Per-contact enrichment records from the database (canonical columns)
+    - Recent in-memory enrichment attempts with identifiers used
+    """
     from app.clients.pdl_client import get_enrichment_log, get_rate_limiter
 
     log = get_enrichment_log()
@@ -783,14 +790,610 @@ def debug_enrichment():
     total_enriched = sum(1 for e in log if e.get("status") == "success")
     total_failed = sum(1 for e in log if e.get("status") != "success")
 
+    # Per-contact enrichment from database
+    per_contact: list[dict] = []
+    session = get_session()
+    try:
+        enriched_entities = session.query(EntityRecord).filter(
+            EntityRecord.enriched_at.isnot(None),
+        ).order_by(EntityRecord.enriched_at.desc()).limit(50).all()
+
+        for ent in enriched_entities:
+            profile_data = json.loads(ent.domains or "{}")
+            per_contact.append({
+                "contact_id": ent.id,
+                "name": ent.name,
+                "canonical_company": ent.canonical_company,
+                "canonical_title": ent.canonical_title,
+                "canonical_location": ent.canonical_location,
+                "pdl_person_id": ent.pdl_person_id,
+                "pdl_match_confidence": ent.pdl_match_confidence,
+                "enriched_at": ent.enriched_at.isoformat() if ent.enriched_at else None,
+                "request_identifier_used": profile_data.get(
+                    "enrichment_request_identifier", "unknown"
+                ),
+                "fields_in_json": {
+                    "company": profile_data.get("company", ""),
+                    "title": profile_data.get("title", ""),
+                    "location": profile_data.get("location", ""),
+                    "linkedin_url": profile_data.get("linkedin_url", ""),
+                },
+                "persisted_to_columns": bool(ent.pdl_person_id),
+            })
+    finally:
+        session.close()
+
     return {
         "pdl_enabled": settings.pdl_enabled,
         "pdl_configured": bool(settings.pdl_api_key),
         "total_enriched": total_enriched,
         "total_failed": total_failed,
+        "enriched_contacts": per_contact,
         "last_10_attempts": log[-10:],
         "rate_limiter_state": limiter.state,
     }
+
+
+@app.get("/debug/serp")
+def debug_serp():
+    """Debug endpoint: SerpAPI configuration and recent deep-research results.
+
+    Shows:
+    - SerpAPI configuration status
+    - Per-contact deep research status (from profile data)
+    - Retrieval ledger row counts
+    - Visibility sweep execution status
+    """
+    serpapi_configured = bool(settings.serpapi_api_key)
+
+    per_contact: list[dict] = []
+    session = get_session()
+    try:
+        entities = session.query(EntityRecord).filter(
+            EntityRecord.entity_type == "person",
+        ).all()
+
+        for ent in entities:
+            profile_data = json.loads(ent.domains or "{}")
+            dr_status = profile_data.get("deep_research_status", "NOT_STARTED")
+            if dr_status == "NOT_STARTED" and not profile_data.get("retrieval_ledger"):
+                continue  # Skip contacts with no research activity
+
+            per_contact.append({
+                "contact_id": ent.id,
+                "name": ent.name,
+                "deep_research_status": dr_status,
+                "entity_lock_score": profile_data.get("entity_lock_score"),
+                "retrieval_ledger_rows": len(profile_data.get("retrieval_ledger", [])),
+                "visibility_ledger_rows": len(profile_data.get("visibility_ledger", [])),
+                "visibility_sweep_executed": (
+                    profile_data.get("visibility_report", {}).get("sweep_executed", False)
+                ),
+                "evidence_nodes": len(profile_data.get("evidence_nodes", [])),
+                "generated_at": profile_data.get("deep_profile_generated_at"),
+                "fail_closed_gates_passed": (
+                    profile_data.get("fail_closed_status", {}).get("gates_passed")
+                ),
+            })
+    finally:
+        session.close()
+
+    return {
+        "serpapi_configured": serpapi_configured,
+        "openai_configured": bool(settings.openai_api_key),
+        "contacts_with_research": per_contact,
+    }
+
+
+@app.post("/profiles/{profile_id}/deep-research", dependencies=[Depends(verify_api_key)])
+async def deep_research_endpoint(profile_id: int):
+    """Execute full Deep Research pipeline for a contact.
+
+    This is the primary deep research endpoint that:
+    1. Auto-runs PDL enrichment if not recently enriched
+    2. Executes SerpAPI visibility sweep (MANDATORY, fail-closed)
+    3. Saves RetrievalLedger rows (every query logged)
+    4. Builds EvidenceNodes from web results
+    5. Recomputes Entity Lock using PDL + web evidence
+    6. Synthesizes dossier (Mode B) via LLM
+    7. Runs QA gates and saves results
+
+    Fail-closed rules:
+    - If SerpAPI key missing or call fails: returns failure report with
+      preserved ledger rows and error reason
+    - Does NOT claim sweep executed if it didn't
+    - Persists partial results even on failure
+    """
+    from app.services.enrichment_service import enrich_contact
+
+    session = get_session()
+    try:
+        entity = session.query(EntityRecord).get(profile_id)
+        if not entity:
+            raise HTTPException(status_code=404, detail="Profile not found")
+
+        profile_data = json.loads(entity.domains or "{}")
+
+        # --- STEP 0: Auto-enrich via PDL if not recently enriched ---
+        pdl_ran = False
+        enriched_at = profile_data.get("enriched_at", "")
+        needs_enrichment = not enriched_at
+        if enriched_at:
+            try:
+                from datetime import timedelta
+                last_enriched = datetime.fromisoformat(enriched_at)
+                if datetime.utcnow() - last_enriched > timedelta(days=7):
+                    needs_enrichment = True
+            except (ValueError, TypeError):
+                needs_enrichment = True
+
+        if needs_enrichment and settings.pdl_enabled and settings.pdl_api_key:
+            try:
+                enrich_result = await enrich_contact(
+                    profile_data=profile_data,
+                    contact_id=profile_id,
+                    contact_name=entity.name,
+                    entity=entity,
+                )
+                pdl_ran = True
+                # Save enrichment even if deep research fails later
+                entity.domains = json.dumps(profile_data)
+                session.commit()
+                logger.info(
+                    "Auto-enriched profile %d before deep research: %s",
+                    profile_id, enrich_result.get("fields_updated", []),
+                )
+            except Exception:
+                logger.exception("Auto-enrichment failed for profile %d", profile_id)
+
+        # Read current profile data (may have been updated by enrichment)
+        profile_data = json.loads(entity.domains or "{}")
+
+        p_name = entity.name
+        p_company = (
+            entity.canonical_company
+            or profile_data.get("company", "")
+        )
+        p_title = (
+            entity.canonical_title
+            or profile_data.get("title", "")
+        )
+        p_linkedin = profile_data.get("linkedin_url", "")
+        p_location = (
+            entity.canonical_location
+            or profile_data.get("location", "")
+        )
+
+        # Mark as RUNNING
+        profile_data["deep_research_status"] = DossierMode.RUNNING
+        entity.domains = json.dumps(profile_data)
+        session.commit()
+
+        # --- STEP 1: Generate auditable search plan ---
+        search_plan = generate_search_plan(
+            name=p_name,
+            company=p_company,
+            title=p_title,
+            linkedin_url=p_linkedin,
+            location=p_location,
+        )
+
+        interactions_summary = build_interactions_summary(profile_data)
+
+        # --- Initialize Evidence Graph ---
+        graph = EvidenceGraph()
+
+        # Add PDF evidence nodes if LinkedIn PDF was uploaded
+        if profile_data.get("linkedin_pdf_raw_text"):
+            try:
+                from app.services.linkedin_pdf import (
+                    LinkedInPDFTextResult,
+                    build_evidence_nodes_from_pdf,
+                )
+                text_result = LinkedInPDFTextResult(
+                    raw_text=profile_data.get("linkedin_pdf_raw_text", ""),
+                    headline=profile_data.get("headline", ""),
+                    location=profile_data.get("location", ""),
+                    about=profile_data.get("linkedin_pdf_sections", {}).get("about", ""),
+                    experience=profile_data.get("linkedin_pdf_experience", []),
+                    education=profile_data.get("linkedin_pdf_education", []),
+                    skills=profile_data.get("linkedin_pdf_skills", []),
+                    sections=profile_data.get("linkedin_pdf_sections", {}),
+                )
+                pdf_nodes = build_evidence_nodes_from_pdf(text_result, contact_name=p_name)
+                for node_data in pdf_nodes:
+                    graph.add_pdf_node(
+                        source=node_data["source"],
+                        snippet=node_data["snippet"],
+                        date=node_data.get("date", "UNKNOWN"),
+                        ref=node_data.get("ref", ""),
+                    )
+                logger.info("Added %d PDF evidence nodes for profile %d", len(pdf_nodes), profile_id)
+            except Exception:
+                logger.exception("PDF evidence extraction failed for profile %d", profile_id)
+
+        # Add meeting evidence nodes
+        for interaction in profile_data.get("interactions", [])[:15]:
+            graph.add_meeting_node(
+                source=interaction.get("title", "meeting"),
+                snippet=interaction.get("summary", "")[:200] or interaction.get("title", ""),
+                date=interaction.get("date", "UNKNOWN"),
+                ref=interaction.get("type", "meeting"),
+            )
+
+        # --- STEP 2: Execute SerpAPI retrieval (with ledger logging) ---
+        web_research = ""
+        visibility_research = ""
+        search_results: dict = {}
+        visibility_results: dict = {}
+        visibility_sweep_executed = False
+        serp_error = ""
+
+        if settings.serpapi_api_key:
+            try:
+                serp = SerpAPIClient()
+
+                # Person search with ledger
+                search_results = await serp.search_person_with_ledger(
+                    name=p_name,
+                    company=p_company,
+                    title=p_title,
+                    linkedin_url=p_linkedin,
+                    graph=graph,
+                )
+                web_research = format_web_results_for_prompt(search_results)
+                logger.info(
+                    "Web search for '%s' returned %d results (ledger: %d rows)",
+                    p_name,
+                    sum(len(v) for v in search_results.values()),
+                    len(graph.ledger),
+                )
+            except Exception as exc:
+                serp_error = f"Web search failed: {exc}"
+                logger.exception("Web search failed for '%s'", p_name)
+
+            # --- Visibility Sweep (MANDATORY, fail-closed) ---
+            try:
+                serp = SerpAPIClient()
+                visibility_results = await serp.search_visibility_sweep_with_ledger(
+                    name=p_name,
+                    company=p_company,
+                    graph=graph,
+                )
+                visibility_research = format_visibility_results_for_prompt(
+                    visibility_results
+                )
+                visibility_sweep_executed = True
+                logger.info(
+                    "Visibility sweep for '%s': %d results, %d ledger rows",
+                    p_name,
+                    sum(len(v) for v in visibility_results.values()),
+                    len(graph.get_visibility_ledger_rows()),
+                )
+            except Exception as exc:
+                serp_error += f" Visibility sweep failed: {exc}"
+                logger.exception("Visibility sweep failed for '%s'", p_name)
+        else:
+            serp_error = "SerpAPI key not configured (SERPAPI_API_KEY not set)"
+            # Log the error to the ledger so we have a record
+            graph.log_retrieval(
+                query="[SERPAPI_UNAVAILABLE]",
+                intent="visibility",
+                results=[],
+            )
+
+        # --- STEP 3: Entity Lock (with PDL data) ---
+        # Build PDL data dict from canonical columns/profile_data
+        pdl_data = {
+            "canonical_company": (
+                entity.canonical_company
+                or profile_data.get("canonical_company", "")
+            ),
+            "canonical_title": (
+                entity.canonical_title
+                or profile_data.get("canonical_title", "")
+            ),
+            "canonical_location": (
+                entity.canonical_location
+                or profile_data.get("canonical_location", "")
+            ),
+            "pdl_match_confidence": (
+                entity.pdl_match_confidence
+                or profile_data.get("pdl_match_confidence", 0)
+            ),
+        }
+
+        apollo_data = {}
+        if profile_data.get("apollo_raw"):
+            apollo_data = profile_data["apollo_raw"]
+
+        entity_lock = score_disambiguation(
+            name=p_name,
+            company=p_company,
+            title=p_title,
+            linkedin_url=p_linkedin,
+            location=p_location,
+            search_results=search_results,
+            apollo_data=apollo_data,
+            has_meeting_data=bool(profile_data.get("interactions")),
+            pdl_data=pdl_data,
+        )
+
+        entity_lock_report = {
+            "canonical_name": p_name,
+            "confirmed_employer": p_company or None,
+            "confirmed_title": p_title or None,
+            "location": p_location or None,
+            "linkedin_url": p_linkedin or None,
+            "entity_lock_score": entity_lock.score,
+            "lock_status": entity_lock.lock_status,
+            "is_locked": entity_lock.is_locked,
+            "pdl_enriched": bool(entity.pdl_person_id or profile_data.get("pdl_person_id")),
+            "pdl_confidence": pdl_data.get("pdl_match_confidence"),
+            "pdl_canonical": {
+                "company": pdl_data.get("canonical_company"),
+                "title": pdl_data.get("canonical_title"),
+                "location": pdl_data.get("canonical_location"),
+            },
+            "disambiguation_risks": (
+                [] if entity_lock.is_locked
+                else [f"IDENTITY {entity_lock.lock_status} — review evidence"]
+            ),
+            "evidence": entity_lock.evidence,
+            "signals": {
+                "name_match": entity_lock.name_match,
+                "company_match": entity_lock.company_match,
+                "title_match": entity_lock.title_match,
+                "linkedin_url_present": entity_lock.linkedin_url_present,
+                "linkedin_confirmed": entity_lock.linkedin_confirmed,
+                "linkedin_verified_by_retrieval": entity_lock.linkedin_verified_by_retrieval,
+                "location_match": entity_lock.location_match,
+                "photo_available": entity_lock.photo_available,
+                "multiple_sources_agree": entity_lock.multiple_sources_agree,
+                "employer_match": entity_lock.employer_match,
+                "meeting_confirmed": entity_lock.meeting_confirmed,
+                "secondary_source_match": entity_lock.secondary_source_match,
+            },
+        }
+
+        # --- PRE-SYNTHESIS GATE ---
+        has_public_results = any(len(v) > 0 for v in search_results.values())
+        vis_coverage_confidence = compute_visibility_coverage_confidence(graph)
+
+        dossier_mode, mode_reason = determine_dossier_mode(
+            entity_lock_score=entity_lock.score,
+            visibility_executed=visibility_sweep_executed,
+            has_public_results=has_public_results,
+            person_name=p_name,
+        )
+
+        logger.info(
+            "Pre-synthesis gate for '%s': mode=%s, entity_lock=%d, "
+            "visibility_executed=%s, serp_error='%s'",
+            p_name, dossier_mode, entity_lock.score,
+            visibility_sweep_executed, serp_error[:100],
+        )
+
+        # --- Handle HALTED mode ---
+        if dossier_mode == DossierMode.HALTED:
+            failure_report = build_failure_report(
+                mode_reason=mode_reason,
+                entity_lock_score=entity_lock.score,
+                visibility_confidence=vis_coverage_confidence,
+                graph=graph,
+                person_name=p_name,
+            )
+            if serp_error:
+                failure_report += f"\n\n--- SERP ERROR ---\n{serp_error}"
+
+            fail_closed_status = {
+                "gates_passed": False,
+                "dossier_mode": dossier_mode,
+                "mode_reason": mode_reason,
+                "serp_error": serp_error,
+                "visibility_ledger_rows": len(graph.get_visibility_ledger_rows()),
+                "visibility_confidence": vis_coverage_confidence,
+                "entity_lock_score": entity_lock.score,
+                "entity_lock_status": entity_lock.lock_status,
+                "has_public_results": has_public_results,
+                "failure_message": failure_report,
+            }
+
+            generated_at = datetime.utcnow().isoformat()
+            profile_data["deep_profile"] = failure_report
+            profile_data["dossier_mode_b_markdown"] = failure_report
+            profile_data["deep_profile_generated_at"] = generated_at
+            profile_data["deep_research_status"] = DossierMode.FAILED
+            profile_data["entity_lock_score"] = entity_lock.score
+            profile_data["entity_lock_report"] = entity_lock_report
+            profile_data["search_plan"] = search_plan
+            profile_data["fail_closed_status"] = fail_closed_status
+            profile_data["evidence_graph"] = graph.to_dict()
+            profile_data["retrieval_ledger"] = [r.model_dump() for r in graph.ledger]
+            profile_data["visibility_ledger"] = [
+                r.model_dump() for r in graph.get_visibility_ledger_rows()
+            ]
+            entity.domains = json.dumps(profile_data)
+            session.commit()
+
+            return {
+                "status": "halted",
+                "mode": DossierMode.DEEP_RESEARCH,
+                "dossier_mode": dossier_mode,
+                "deep_research_status": DossierMode.FAILED,
+                "deep_profile": failure_report,
+                "generated_at": generated_at,
+                "entity_lock": entity_lock_report,
+                "qa_report": None,
+                "search_plan": search_plan,
+                "visibility_report": {
+                    "sweep_executed": visibility_sweep_executed,
+                    "serp_error": serp_error,
+                },
+                "fail_closed_status": fail_closed_status,
+                "evidence_graph": graph.to_dict(),
+                "retrieval_ledger_count": len(graph.ledger),
+                "visibility_ledger_count": len(graph.get_visibility_ledger_rows()),
+                "pdl_enriched": pdl_ran,
+            }
+
+        # --- STEP 4: Generate dossier via LLM ---
+        if not settings.openai_api_key:
+            raise HTTPException(status_code=400, detail="OpenAI API key not configured")
+
+        pdf_context = ""
+        if profile_data.get("linkedin_pdf_raw_text"):
+            pdf_text = profile_data["linkedin_pdf_raw_text"][:10000]
+            pdf_context = (
+                f"\n\n## USER-SUPPLIED LINKEDIN PDF (artifact evidence)\n"
+                f"Tag claims from this source as [VERIFIED-PDF].\n\n{pdf_text}"
+            )
+
+        result = generate_deep_profile(
+            name=p_name,
+            title=p_title,
+            company=p_company,
+            linkedin_url=p_linkedin,
+            location=p_location,
+            industry=profile_data.get("company_industry", ""),
+            company_size=profile_data.get("company_size"),
+            interactions_summary=interactions_summary + pdf_context,
+            web_research=web_research,
+            visibility_research=visibility_research,
+        )
+
+        # --- STEP 5: Post-synthesis QA gates ---
+        visibility_categories_searched = [
+            cat for cat in VISIBILITY_CATEGORIES
+            if visibility_results.get(cat) is not None
+        ]
+        qa_report = generate_dossier_qa_report(
+            dossier_text=result,
+            disambiguation=entity_lock,
+            person_name=p_name,
+            visibility_categories=visibility_categories_searched,
+            visibility_sweep_executed=visibility_sweep_executed,
+        )
+        qa_markdown = render_qa_report_markdown(qa_report)
+
+        # --- STEP 6: Post-synthesis fail-closed enforcement ---
+        visibility_ledger_count = len(graph.get_visibility_ledger_rows())
+        evidence_coverage = qa_report.evidence_coverage.coverage_pct
+        should_output, fail_message = enforce_fail_closed_gates(
+            dossier_text=result,
+            entity_lock_score=entity_lock.score,
+            visibility_ledger_count=visibility_ledger_count,
+            evidence_coverage_pct=evidence_coverage,
+            person_name=p_name,
+            has_public_results=has_public_results,
+        )
+
+        # Apply mode-based prose filtering
+        if should_output:
+            result = filter_prose_by_mode(result, dossier_mode, entity_lock.score)
+
+        # Build visibility report
+        highest_signal = extract_highest_signal_artifacts(graph, max_artifacts=3)
+        visibility_report = {
+            "sweep_executed": visibility_sweep_executed,
+            "categories_searched": visibility_categories_searched,
+            "total_results": sum(len(v) for v in visibility_results.values()),
+            "results_by_category": {
+                cat: len(visibility_results.get(cat, []))
+                for cat in VISIBILITY_CATEGORIES
+            },
+            "highest_signal_artifacts": highest_signal,
+            "coverage_confidence": vis_coverage_confidence,
+        }
+
+        fail_closed_status = {
+            "gates_passed": should_output,
+            "dossier_mode": dossier_mode,
+            "mode_reason": mode_reason,
+            "visibility_ledger_rows": visibility_ledger_count,
+            "visibility_confidence": vis_coverage_confidence,
+            "evidence_coverage_pct": round(evidence_coverage, 1),
+            "entity_lock_score": entity_lock.score,
+            "entity_lock_status": entity_lock.lock_status,
+            "has_public_results": has_public_results,
+            "failure_message": fail_message if not should_output else None,
+        }
+
+        # --- Persist ---
+        generated_at = datetime.utcnow().isoformat()
+        deep_research_status = (
+            DossierMode.SUCCEEDED if should_output else DossierMode.FAILED
+        )
+        profile_data["deep_profile"] = result if should_output else fail_message
+        profile_data["dossier_mode_b_markdown"] = (
+            result if should_output else fail_message
+        )
+        profile_data["deep_profile_generated_at"] = generated_at
+        profile_data["deep_research_status"] = deep_research_status
+        profile_data["entity_lock_score"] = entity_lock.score
+        profile_data["entity_lock_report"] = entity_lock_report
+        profile_data["qa_genericness_score"] = qa_report.genericness.genericness_score
+        profile_data["qa_evidence_coverage_pct"] = round(
+            qa_report.evidence_coverage.coverage_pct, 1,
+        )
+        profile_data["qa_passes_all"] = qa_report.passes_all
+        profile_data["qa_report_markdown"] = qa_markdown
+        profile_data["search_plan"] = search_plan
+        profile_data["visibility_report"] = visibility_report
+        profile_data["fail_closed_status"] = fail_closed_status
+        profile_data["evidence_graph"] = graph.to_dict()
+        profile_data["retrieval_ledger"] = [r.model_dump() for r in graph.ledger]
+        profile_data["visibility_ledger"] = [
+            r.model_dump() for r in graph.get_visibility_ledger_rows()
+        ]
+        profile_data["evidence_nodes"] = [
+            n.model_dump() for n in graph.nodes.values()
+        ]
+        entity.domains = json.dumps(profile_data)
+        session.commit()
+
+        return {
+            "status": "ok" if should_output else "halted",
+            "mode": DossierMode.DEEP_RESEARCH,
+            "dossier_mode": dossier_mode,
+            "deep_research_status": deep_research_status,
+            "deep_profile": result if should_output else fail_message,
+            "generated_at": generated_at,
+            "entity_lock": entity_lock_report,
+            "qa_report": {
+                "passes_all": qa_report.passes_all,
+                "genericness_score": qa_report.genericness.genericness_score,
+                "evidence_coverage_pct": round(
+                    qa_report.evidence_coverage.coverage_pct, 1,
+                ),
+                "person_level_pct": round(qa_report.person_level.person_pct, 1),
+                "contradictions": len(qa_report.contradictions),
+                "hallucination_risk_flags": qa_report.hallucination_risk_flags,
+                "markdown": qa_markdown,
+            },
+            "search_plan": search_plan,
+            "visibility_report": visibility_report,
+            "fail_closed_status": fail_closed_status,
+            "evidence_graph": graph.to_dict(),
+            "retrieval_ledger_count": len(graph.ledger),
+            "visibility_ledger_count": len(graph.get_visibility_ledger_rows()),
+            "pdl_enriched": pdl_ran or bool(entity.pdl_person_id),
+        }
+    except HTTPException:
+        raise
+    except Exception:
+        # Mark as FAILED on unexpected errors
+        try:
+            profile_data = json.loads(entity.domains or "{}")
+            profile_data["deep_research_status"] = DossierMode.FAILED
+            entity.domains = json.dumps(profile_data)
+            session.commit()
+        except Exception:
+            session.rollback()
+        logger.exception("Deep research failed for profile %d", profile_id)
+        raise HTTPException(status_code=500, detail="Deep research failed")
+    finally:
+        session.close()
 
 
 @app.get("/profiles", dependencies=[Depends(verify_api_key)])

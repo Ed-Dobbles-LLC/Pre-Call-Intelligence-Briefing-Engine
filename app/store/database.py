@@ -49,7 +49,15 @@ class EntityRecord(Base):
     entity_type = Column(String(32), nullable=False, default="person")  # person | company
     emails = Column(Text, default="[]")  # JSON list
     aliases = Column(Text, default="[]")  # JSON list
-    domains = Column(Text, default="[]")  # JSON list (for companies)
+    domains = Column(Text, default="[]")  # JSON list / profile_data blob
+    # Canonical fields — written by PDL enrichment, read by Entity Lock
+    canonical_company = Column(String(512), nullable=True)
+    canonical_title = Column(String(512), nullable=True)
+    canonical_location = Column(String(512), nullable=True)
+    pdl_person_id = Column(String(256), nullable=True)
+    pdl_match_confidence = Column(Float, nullable=True)
+    enriched_at = Column(DateTime, nullable=True)
+    enrichment_json = Column(Text, nullable=True)  # Full PDL response JSON
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

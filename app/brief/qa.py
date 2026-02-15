@@ -329,6 +329,7 @@ def score_disambiguation(
     search_results: dict | None = None,
     apollo_data: dict | None = None,
     has_meeting_data: bool = False,
+    pdl_data: dict | None = None,
 ) -> DisambiguationResult:
     """Score identity lock confidence from 0-100.
 
@@ -336,25 +337,152 @@ def score_disambiguation(
     +10 LinkedIn URL present (weak internal evidence)
     +30 LinkedIn verified by retrieval (strong public evidence; replaces +10)
     +20 Meeting confirms name/employer (internal verified)
-    +20 Employer confirmed by public source
-    +10 Title confirmed by public source
-    +10 Location confirmed by public source
+    +20 Employer confirmed by public source (or by PDL enrichment)
+    +10 Title confirmed by public source (or by PDL enrichment)
+    +10 Location confirmed by public source (or by PDL enrichment)
     +20 Multiple independent domains agree
+
+    PDL enrichment counts as an independent confirming domain.
+    PDL-confirmed company/title/location each contribute their full points
+    even without SerpAPI results (PDL is a verified data provider).
 
     LinkedIn URL present (+10) is REPLACED (not stacked) by verified (+30).
     Meeting data gives +20 for internal confirmation regardless of public signals.
-    This prevents score collapse to 0 when we have a LinkedIn URL and meetings
-    but haven't run retrieval yet.
     """
     result = DisambiguationResult()
     search_results = search_results or {}
     apollo_data = apollo_data or {}
+    pdl_data = pdl_data or {}
 
     name_lower = name.lower()
     company_lower = company.lower() if company else ""
 
     # Track independent confirming domains for multi-domain bonus
     confirming_domains: set[str] = set()
+
+    # --- PDL enrichment credit (runs before search-based scoring) ---
+    pdl_company = (pdl_data.get("canonical_company") or "").lower()
+    pdl_title = (pdl_data.get("canonical_title") or "").lower()
+    pdl_location = (pdl_data.get("canonical_location") or "").lower()
+    pdl_confidence = pdl_data.get("pdl_match_confidence", 0)
+
+    pdl_company_matched = False
+    pdl_title_matched = False
+    pdl_location_matched = False
+
+    if pdl_confidence and pdl_confidence > 0.5:
+        confirming_domains.add("pdl")
+
+        # PDL confirms employer
+        if pdl_company and company_lower:
+            if (
+                company_lower in pdl_company
+                or pdl_company in company_lower
+            ):
+                pdl_company_matched = True
+                result.employer_match = True
+                result.company_match = True
+                result.score += 20
+                result.evidence.append({
+                    "signal": (
+                        f"Employer '{company}' confirmed by PDL enrichment "
+                        f"(confidence: {pdl_confidence:.0%})"
+                    ),
+                    "weight": 20,
+                    "source": "pdl",
+                })
+            elif pdl_company:
+                # PDL returned a company but it doesn't match — still note it
+                result.evidence.append({
+                    "signal": (
+                        f"PDL company mismatch: expected '{company}', "
+                        f"got '{pdl_data.get('canonical_company', '')}'"
+                    ),
+                    "weight": 0,
+                    "source": "pdl",
+                })
+        elif pdl_company and not company_lower:
+            # No company provided but PDL has one — accept as confirmed
+            pdl_company_matched = True
+            result.employer_match = True
+            result.company_match = True
+            result.score += 15
+            result.evidence.append({
+                "signal": (
+                    f"Employer set by PDL: '{pdl_data.get('canonical_company', '')}' "
+                    f"(confidence: {pdl_confidence:.0%})"
+                ),
+                "weight": 15,
+                "source": "pdl",
+            })
+
+        # PDL confirms title
+        if pdl_title:
+            title_lower = title.lower() if title else ""
+            pdl_title_words = [w for w in pdl_title.split() if len(w) >= 3]
+            user_title_words = [w for w in title_lower.split() if len(w) >= 2]
+            # Match if: any PDL word in user title, OR any user word in PDL title,
+            # OR exact substring match in either direction
+            title_matched = (
+                (pdl_title_words and any(w in title_lower for w in pdl_title_words))
+                or (user_title_words and any(w in pdl_title for w in user_title_words))
+                or (title_lower and (
+                    title_lower in pdl_title or pdl_title in title_lower
+                ))
+            )
+            if title_lower and title_matched:
+                pdl_title_matched = True
+                result.title_match = True
+                result.score += 10
+                result.evidence.append({
+                    "signal": (
+                        f"Title '{title}' confirmed by PDL: "
+                        f"'{pdl_data.get('canonical_title', '')}'"
+                    ),
+                    "weight": 10,
+                    "source": "pdl",
+                })
+            elif not title_lower:
+                # No title provided but PDL has one
+                pdl_title_matched = True
+                result.title_match = True
+                result.score += 10
+                result.evidence.append({
+                    "signal": (
+                        f"Title set by PDL: '{pdl_data.get('canonical_title', '')}'"
+                    ),
+                    "weight": 10,
+                    "source": "pdl",
+                })
+
+        # PDL confirms location
+        if pdl_location:
+            location_lower = location.lower() if location else ""
+            if location_lower and (
+                location_lower in pdl_location or pdl_location in location_lower
+            ):
+                pdl_location_matched = True
+                result.location_match = True
+                result.score += 10
+                result.evidence.append({
+                    "signal": (
+                        f"Location '{location}' confirmed by PDL: "
+                        f"'{pdl_data.get('canonical_location', '')}'"
+                    ),
+                    "weight": 10,
+                    "source": "pdl",
+                })
+            elif not location_lower:
+                pdl_location_matched = True
+                result.location_match = True
+                result.score += 10
+                result.evidence.append({
+                    "signal": (
+                        f"Location set by PDL: '{pdl_data.get('canonical_location', '')}'"
+                    ),
+                    "weight": 10,
+                    "source": "pdl",
+                })
 
     # LinkedIn scoring: URL present (+10) OR verified by retrieval (+30)
     if linkedin_url and linkedin_url.startswith("http"):
@@ -437,7 +565,8 @@ def score_disambiguation(
             })
 
     # Employer match (20 pts) — company confirmed across sources
-    if company_lower:
+    # Skip if already fully confirmed by PDL (avoids double-counting)
+    if company_lower and not pdl_company_matched:
         employer_sources = 0
         for category in search_results:
             for r in search_results.get(category, []):
@@ -483,7 +612,8 @@ def score_disambiguation(
                     })
 
     # Title match (10 pts) — title confirmed in non-LinkedIn sources
-    if title:
+    # Skip if already confirmed by PDL
+    if title and not pdl_title_matched:
         title_lower = title.lower()
         for category in ["general", "news", "company_site"]:
             for r in search_results.get(category, []):
@@ -506,7 +636,8 @@ def score_disambiguation(
                 break
 
     # Location match (10 pts)
-    if location:
+    # Skip if already confirmed by PDL
+    if location and not pdl_location_matched:
         location_lower = location.lower()
         for category in search_results:
             for r in search_results.get(category, []):

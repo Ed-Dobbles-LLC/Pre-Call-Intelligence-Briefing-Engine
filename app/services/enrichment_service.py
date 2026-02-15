@@ -31,8 +31,15 @@ async def enrich_contact(
     profile_data: dict,
     contact_id: int,
     contact_name: str = "",
+    entity: object | None = None,
 ) -> dict:
     """Enrich a contact using PDL.
+
+    Args:
+        profile_data: The JSON profile dict (will be mutated in-place).
+        contact_id: The entity ID.
+        contact_name: The contact's name.
+        entity: Optional EntityRecord — if provided, canonical columns are set.
 
     Returns dict with:
     - success: bool
@@ -40,6 +47,8 @@ async def enrich_contact(
     - photo_updated: bool
     - match_confidence: float
     - error: str (if failed)
+    - request_identifier_used: str (what identifier was sent to PDL)
+    - persisted_to_db: bool
     """
     result = {
         "success": False,
@@ -48,6 +57,8 @@ async def enrich_contact(
         "match_confidence": 0.0,
         "error": "",
         "pdl_person_id": "",
+        "request_identifier_used": "",
+        "persisted_to_db": False,
     }
 
     # Determine best identifiers
@@ -57,6 +68,16 @@ async def enrich_contact(
     name = contact_name or profile_data.get("name", "")
     company = profile_data.get("company", "")
     location = profile_data.get("location", "")
+
+    # Track which identifier we used
+    if email:
+        result["request_identifier_used"] = f"email:{email}"
+    elif linkedin_url:
+        result["request_identifier_used"] = f"linkedin:{linkedin_url}"
+    elif name and company:
+        result["request_identifier_used"] = f"name+company:{name}@{company}"
+    elif name:
+        result["request_identifier_used"] = f"name:{name}"
 
     # Must have at least one identifier
     if not email and not linkedin_url and not name:
@@ -94,30 +115,62 @@ async def enrich_contact(
     result["match_confidence"] = pdl_result.match_confidence
     result["pdl_person_id"] = pdl_result.person_id
 
+    now_iso = datetime.utcnow().isoformat()
+
+    # --- JSON blob persistence (profile_data) ---
     profile_data["pdl_person_id"] = pdl_result.person_id
     profile_data["pdl_match_confidence"] = pdl_result.match_confidence
-    profile_data["enrichment_json"] = pdl_result.raw_response
-    profile_data["enriched_at"] = datetime.utcnow().isoformat()
+    profile_data["enriched_at"] = now_iso
+    # Nest PDL data under enrichment_json.pdl for clarity
+    enrichment_json = profile_data.get("enrichment_json", {})
+    if not isinstance(enrichment_json, dict):
+        enrichment_json = {}
+    enrichment_json["pdl"] = pdl_result.raw_response
+    profile_data["enrichment_json"] = enrichment_json
 
     # Update canonical fields — only if PDL returned a value AND field is currently empty
     fields = pdl_result.fields
     updated: list[str] = []
 
-    if fields.title and not profile_data.get("title"):
-        profile_data["title"] = fields.title
-        updated.append("title")
-    if fields.company and not profile_data.get("company"):
-        profile_data["company"] = fields.company
-        updated.append("company")
-    if fields.location and not profile_data.get("location"):
-        profile_data["location"] = fields.location
-        updated.append("location")
+    # Always set canonical_* from PDL (these are the "source of truth" from PDL)
+    if fields.company:
+        profile_data["canonical_company"] = fields.company
+        if not profile_data.get("company"):
+            profile_data["company"] = fields.company
+            updated.append("company")
+    if fields.title:
+        profile_data["canonical_title"] = fields.title
+        if not profile_data.get("title"):
+            profile_data["title"] = fields.title
+            updated.append("title")
+    if fields.location:
+        profile_data["canonical_location"] = fields.location
+        if not profile_data.get("location"):
+            profile_data["location"] = fields.location
+            updated.append("location")
     if fields.linkedin_url and not profile_data.get("linkedin_url"):
         profile_data["linkedin_url"] = fields.linkedin_url
         updated.append("linkedin_url")
     if fields.name and not contact_name:
-        # Only update name if we don't already have one
         updated.append("name")
+
+    # --- Column persistence (EntityRecord canonical fields) ---
+    if entity is not None:
+        try:
+            if fields.company:
+                entity.canonical_company = fields.company
+            if fields.title:
+                entity.canonical_title = fields.title
+            if fields.location:
+                entity.canonical_location = fields.location
+            entity.pdl_person_id = pdl_result.person_id
+            entity.pdl_match_confidence = pdl_result.match_confidence
+            entity.enriched_at = datetime.utcnow()
+            import json as _json
+            entity.enrichment_json = _json.dumps(pdl_result.raw_response)
+            result["persisted_to_db"] = True
+        except Exception as exc:
+            logger.warning("Failed to set canonical columns: %s", exc)
 
     # Handle photo — NEVER wipe existing resolved photo
     if fields.photo_url:
@@ -132,7 +185,7 @@ async def enrich_contact(
             profile_data["photo_url"] = photo_result["local_url"]
             profile_data["photo_source"] = PhotoSource.ENRICHMENT_PROVIDER
             profile_data["photo_status"] = PhotoStatus.RESOLVED
-            profile_data["photo_last_checked_at"] = datetime.utcnow().isoformat()
+            profile_data["photo_last_checked_at"] = now_iso
             result["photo_updated"] = True
             updated.append("photo_url")
 
@@ -140,9 +193,9 @@ async def enrich_contact(
 
     logger.info(
         "PDL enrichment succeeded for contact %d (%s): "
-        "confidence=%.2f, fields=%s, photo=%s",
+        "confidence=%.2f, fields=%s, photo=%s, persisted=%s",
         contact_id, name, pdl_result.match_confidence,
-        updated, result["photo_updated"],
+        updated, result["photo_updated"], result["persisted_to_db"],
     )
 
     return result

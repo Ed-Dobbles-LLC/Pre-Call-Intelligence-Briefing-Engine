@@ -169,7 +169,7 @@ class TestSuccessfulEnrichment:
 
         assert profile_data["pdl_person_id"] == "pdl-123"
         assert profile_data["pdl_match_confidence"] == 0.95
-        assert profile_data["enrichment_json"]["id"] == "pdl-123"
+        assert profile_data["enrichment_json"]["pdl"]["id"] == "pdl-123"
         assert profile_data["enriched_at"]  # ISO timestamp present
 
     @pytest.mark.asyncio
