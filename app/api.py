@@ -22,7 +22,13 @@ from pydantic import BaseModel, Field
 
 from app.brief.pipeline import run_pipeline
 from app.brief.profiler import build_interactions_summary, generate_deep_profile
+from app.brief.evidence_graph import (
+    EvidenceGraph,
+    extract_highest_signal_artifacts,
+    compute_visibility_coverage_confidence,
+)
 from app.brief.qa import (
+    enforce_fail_closed_gates,
     generate_dossier_qa_report,
     render_qa_report_markdown,
     score_disambiguation,
@@ -581,7 +587,19 @@ async def generate_profile_research(profile_id: int):
 
         interactions_summary = build_interactions_summary(profile_data)
 
-        # --- STEP 1: Fetch web data via SerpAPI ---
+        # --- Initialize Evidence Graph ---
+        graph = EvidenceGraph()
+
+        # Add meeting evidence nodes from interactions
+        for interaction in profile_data.get("interactions", [])[:15]:
+            graph.add_meeting_node(
+                source=interaction.get("title", "meeting"),
+                snippet=interaction.get("summary", "")[:200] or interaction.get("title", ""),
+                date=interaction.get("date", "UNKNOWN"),
+                ref=interaction.get("type", "meeting"),
+            )
+
+        # --- STEP 1: Fetch web data via SerpAPI (with ledger logging) ---
         web_research = ""
         visibility_research = ""
         search_results: dict = {}
@@ -590,37 +608,41 @@ async def generate_profile_research(profile_id: int):
         if settings.serpapi_api_key:
             try:
                 serp = SerpAPIClient()
-                search_results = await serp.search_person(
+                search_results = await serp.search_person_with_ledger(
                     name=p_name,
                     company=p_company,
                     title=p_title,
                     linkedin_url=p_linkedin,
+                    graph=graph,
                 )
                 web_research = format_web_results_for_prompt(search_results)
                 logger.info(
-                    "Web search for '%s' returned %d total results",
+                    "Web search for '%s' returned %d total results (ledger: %d rows)",
                     p_name,
                     sum(len(v) for v in search_results.values()),
+                    len(graph.ledger),
                 )
             except Exception:
                 logger.exception("Web search failed for '%s', proceeding without", p_name)
 
-            # --- STEP 1b: Public Visibility Sweep (MANDATORY) ---
+            # --- STEP 1b: Public Visibility Sweep (MANDATORY, fail-closed) ---
             try:
                 if not serp.api_key:
                     serp = SerpAPIClient()
-                visibility_results = await serp.search_public_visibility(
+                visibility_results = await serp.search_visibility_sweep_with_ledger(
                     name=p_name,
                     company=p_company,
+                    graph=graph,
                 )
                 visibility_research = format_visibility_results_for_prompt(
                     visibility_results
                 )
                 visibility_sweep_executed = True
                 logger.info(
-                    "Visibility sweep for '%s' returned %d total results",
+                    "Visibility sweep for '%s' returned %d total results (ledger: %d rows)",
                     p_name,
                     sum(len(v) for v in visibility_results.values()),
+                    len(graph.get_visibility_ledger_rows()),
                 )
             except Exception:
                 logger.exception(
@@ -714,7 +736,20 @@ async def generate_profile_research(profile_id: int):
                 len(qa_report.contradictions),
             )
 
+        # --- STEP 4b: Fail-closed gate enforcement ---
+        visibility_ledger_count = len(graph.get_visibility_ledger_rows())
+        evidence_coverage = qa_report.evidence_coverage.coverage_pct
+        should_output, fail_message = enforce_fail_closed_gates(
+            dossier_text=result,
+            entity_lock_score=entity_lock.score,
+            visibility_ledger_count=visibility_ledger_count,
+            evidence_coverage_pct=evidence_coverage,
+            person_name=p_name,
+        )
+
         # --- Build visibility report summary ---
+        highest_signal = extract_highest_signal_artifacts(graph, max_artifacts=3)
+        vis_coverage_confidence = compute_visibility_coverage_confidence(graph)
         visibility_report = {
             "sweep_executed": visibility_sweep_executed,
             "categories_searched": visibility_categories_searched,
@@ -733,11 +768,23 @@ async def generate_profile_research(profile_id: int):
                 cat: len(visibility_results.get(cat, []))
                 for cat in VISIBILITY_CATEGORIES
             },
+            "highest_signal_artifacts": highest_signal,
+            "coverage_confidence": vis_coverage_confidence,
+        }
+
+        # --- Evidence Graph + fail-closed status ---
+        fail_closed_status = {
+            "gates_passed": should_output,
+            "visibility_ledger_rows": visibility_ledger_count,
+            "evidence_coverage_pct": round(evidence_coverage, 1),
+            "entity_lock_score": entity_lock.score,
+            "entity_lock_status": entity_lock.lock_status,
+            "failure_message": fail_message if not should_output else None,
         }
 
         # --- Persist ---
         generated_at = datetime.utcnow().isoformat()
-        profile_data["deep_profile"] = result
+        profile_data["deep_profile"] = result if should_output else fail_message
         profile_data["deep_profile_generated_at"] = generated_at
         profile_data["entity_lock_score"] = entity_lock.score
         profile_data["qa_genericness_score"] = qa_report.genericness.genericness_score
@@ -748,12 +795,14 @@ async def generate_profile_research(profile_id: int):
         profile_data["qa_report_markdown"] = qa_markdown
         profile_data["search_plan"] = search_plan
         profile_data["visibility_report"] = visibility_report
+        profile_data["fail_closed_status"] = fail_closed_status
+        profile_data["evidence_graph"] = graph.to_dict()
         entity.domains = json.dumps(profile_data)
         session.commit()
 
         return {
-            "status": "ok",
-            "deep_profile": result,
+            "status": "ok" if should_output else "halted",
+            "deep_profile": result if should_output else fail_message,
             "generated_at": generated_at,
             "entity_lock": entity_lock_report,
             "qa_report": {
@@ -767,6 +816,8 @@ async def generate_profile_research(profile_id: int):
             },
             "search_plan": search_plan,
             "visibility_report": visibility_report,
+            "fail_closed_status": fail_closed_status,
+            "evidence_graph": graph.to_dict(),
         }
     except HTTPException:
         raise

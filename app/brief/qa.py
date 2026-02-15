@@ -1118,3 +1118,56 @@ def generate_dossier_qa_report(
                 report.hallucination_risk_flags.append(f"VISIBILITY SWEEP: {failure}")
 
     return report
+
+
+# ---------------------------------------------------------------------------
+# Fail-Closed Enforcement (Evidence Graph integration)
+# ---------------------------------------------------------------------------
+
+
+def enforce_fail_closed_gates(
+    dossier_text: str,
+    entity_lock_score: int,
+    visibility_ledger_count: int,
+    evidence_coverage_pct: float,
+    person_name: str = "",
+) -> tuple[bool, str]:
+    """Enforce fail-closed gates and return (should_output, message).
+
+    Returns:
+        (True, "") if all gates pass — output the dossier.
+        (False, failure_text) if any hard gate fails — output the failure text INSTEAD.
+    """
+    failures: list[str] = []
+
+    # Gate 1: Visibility sweep must have been executed
+    if visibility_ledger_count == 0:
+        failures.append(
+            "FAIL: VISIBILITY SWEEP NOT EXECUTED\n"
+            "The retrieval ledger contains 0 visibility-intent rows.\n"
+            "The dossier cannot be produced without executing the visibility sweep.\n"
+            f'Run the full 16-query battery for "{person_name}" and log each result.'
+        )
+
+    # Gate 2: Evidence coverage must be >= 85%
+    if evidence_coverage_pct < 85.0:
+        failures.append(
+            f"FAIL: EVIDENCE COVERAGE {evidence_coverage_pct:.1f}%\n"
+            f"Coverage must be >= 85%. Current: {evidence_coverage_pct:.1f}%.\n"
+            "Sentences without evidence tags must be cited or removed."
+        )
+
+    if failures:
+        header = "DOSSIER GENERATION HALTED — FAIL-CLOSED GATES FAILED\n"
+        header += "=" * 60 + "\n"
+        body = "\n\n".join(failures)
+        lock_status = "LOCKED" if entity_lock_score >= 70 else (
+            "PARTIAL" if entity_lock_score >= 50 else "NOT LOCKED"
+        )
+        footer = (
+            f"\n\nEntity Lock: {entity_lock_score}/100 ({lock_status})\n"
+            "Fix the above failures and re-run."
+        )
+        return False, header + body + footer
+
+    return True, ""

@@ -31,8 +31,57 @@ class EvidenceTag(str, Enum):
     verified_meeting = "VERIFIED_MEETING"
     verified_public = "VERIFIED_PUBLIC"
     inferred_high = "INFERRED_HIGH"
+    inferred_medium = "INFERRED_MEDIUM"
     inferred_low = "INFERRED_LOW"
     unknown = "UNKNOWN"
+
+
+# ---------------------------------------------------------------------------
+# Evidence Graph (fail-closed foundation)
+# ---------------------------------------------------------------------------
+
+class EvidenceNode(BaseModel):
+    """A single piece of retrievable evidence. The atom of truth."""
+    id: str = Field(..., description="Unique ID e.g. E1, E2")
+    type: str = Field(..., description="MEETING or PUBLIC")
+    source: str = Field(..., description="doc reference or URL")
+    ref: str = Field("", description="timestamp, section, or URL fragment")
+    snippet: str = Field(..., description="Verbatim or near-verbatim excerpt <= 30 words")
+    date: str = Field("UNKNOWN", description="YYYY-MM-DD or UNKNOWN")
+
+
+class Claim(BaseModel):
+    """A substantive assertion backed by EvidenceNodes."""
+    claim_id: str = Field(..., description="Unique ID e.g. C1, C2")
+    text: str
+    tag: str = Field(
+        ...,
+        description=(
+            "VERIFIED-MEETING | VERIFIED-PUBLIC | INFERRED-H | "
+            "INFERRED-M | INFERRED-L | UNKNOWN"
+        ),
+    )
+    evidence_ids: list[str] = Field(default_factory=list)
+    confidence: str = Field("L", description="H | M | L")
+
+
+class RetrievalLedgerRow(BaseModel):
+    """One row of the mandatory retrieval ledger.
+
+    Every SerpAPI call must produce one of these, even if 0 results.
+    """
+    query_id: str = Field(..., description="Unique ID e.g. Q1, Q2")
+    query: str
+    intent: str = Field(
+        ...,
+        description="entity_lock | visibility | bio | press | registry | talks",
+    )
+    top_results: list[dict] = Field(
+        default_factory=list,
+        description="List of {rank, title, url, date, snippet}",
+    )
+    selected_evidence_ids: list[str] = Field(default_factory=list)
+    result_count: int = 0
 
 
 class Citation(BaseModel):

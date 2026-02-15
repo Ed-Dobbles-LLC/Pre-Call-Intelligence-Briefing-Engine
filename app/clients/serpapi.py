@@ -256,6 +256,107 @@ class SerpAPIClient:
 
         return results
 
+    async def search_visibility_sweep_with_ledger(
+        self,
+        name: str,
+        company: str = "",
+        graph: Any = None,
+    ) -> dict[str, list[dict[str, Any]]]:
+        """Run the full 16+ query visibility sweep with retrieval ledger logging.
+
+        This is the fail-closed version: every query is logged to the Evidence Graph's
+        retrieval ledger, even if it returns 0 results. If no graph is provided,
+        results are still returned but not logged.
+        """
+        from app.brief.evidence_graph import build_visibility_queries
+
+        queries = build_visibility_queries(name, company)
+        results: dict[str, list[dict[str, Any]]] = {}
+
+        for i, (query, intent) in enumerate(queries):
+            category = f"visibility_{i}"
+            if self.api_key:
+                hits = await self.search(query, num=5)
+                normalized = [_normalize_result(r) for r in hits]
+            else:
+                hits = []
+                normalized = []
+
+            results[category] = normalized
+
+            # Log to retrieval ledger (always, even with 0 results)
+            if graph is not None:
+                graph.log_retrieval(
+                    query=query,
+                    intent=intent,
+                    results=normalized,
+                )
+
+            if self.api_key:
+                await asyncio.sleep(0.3)
+
+        # Also populate the standard VISIBILITY_CATEGORIES dict
+        category_results: dict[str, list[dict[str, Any]]] = {}
+        for cat in VISIBILITY_CATEGORIES:
+            category_results[cat] = []
+
+        # Map queries back to categories based on keywords
+        category_keywords = {
+            "ted": ["ted.com", '"TED"', "TED talk"],
+            "tedx": ["TEDx", "tedx.com"],
+            "keynote": ["keynote"],
+            "conference": ["conference"],
+            "summit": ["summit"],
+            "podcast": ["podcast"],
+            "webinar": ["webinar"],
+            "youtube_talk": ["YouTube talk", "youtube.com"],
+            "panel": ["panel"],
+            "interview_video": ["interview video", "fireside"],
+        }
+        for key, items in results.items():
+            query_text = queries[int(key.split("_")[1])][0] if key.startswith("visibility_") else ""
+            for cat, keywords in category_keywords.items():
+                if any(kw.lower() in query_text.lower() for kw in keywords):
+                    category_results[cat].extend(items)
+                    break
+
+        return category_results
+
+    async def search_person_with_ledger(
+        self,
+        name: str,
+        company: str = "",
+        title: str = "",
+        linkedin_url: str = "",
+        graph: Any = None,
+    ) -> dict[str, list[dict[str, Any]]]:
+        """Run person search queries with retrieval ledger logging."""
+        results = await self.search_person(
+            name=name, company=company, title=title, linkedin_url=linkedin_url,
+        )
+
+        if graph is not None:
+            intent_map = {
+                "general": "bio",
+                "linkedin": "entity_lock",
+                "news": "press",
+                "talks": "talks",
+                "company_site": "bio",
+                "registry": "registry",
+            }
+            for category, items in results.items():
+                intent = intent_map.get(category, "bio")
+                q_parts = [f'"{name}"']
+                if company:
+                    q_parts.append(f'"{company}"')
+                graph.log_retrieval(
+                    query=f"{' '.join(q_parts)} [{category}]",
+                    intent=intent,
+                    results=items,
+                )
+
+        return results
+
     async def search_targeted(
         self,
         name: str,
