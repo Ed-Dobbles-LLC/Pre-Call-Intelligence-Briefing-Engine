@@ -22,7 +22,12 @@ from pydantic import BaseModel, Field
 
 from app.brief.pipeline import run_pipeline
 from app.brief.profiler import build_interactions_summary, generate_deep_profile
-from app.clients.serpapi import SerpAPIClient, format_web_results_for_prompt
+from app.brief.qa import generate_qa_report, render_qa_report_markdown, score_disambiguation
+from app.clients.serpapi import (
+    SerpAPIClient,
+    format_web_results_for_prompt,
+    generate_search_plan,
+)
 from app.config import settings, validate_config
 from app.models import BriefOutput
 from app.store.database import BriefLog, EntityRecord, get_session, init_db
@@ -530,11 +535,10 @@ async def set_linkedin(profile_id: int, request: SetLinkedInRequest):
 
 @app.post("/profiles/{profile_id}/deep-profile", dependencies=[Depends(verify_api_key)])
 async def generate_profile_research(profile_id: int):
-    """Generate a deep intelligence profile for a verified contact.
+    """Generate a decision-grade intelligence dossier for a verified contact.
 
-    Uses web search (SerpAPI) to gather real public data, then the LLM
-    to produce a structured executive dossier with career analysis,
-    strategic patterns, conversation playbook, and risk signals.
+    Pipeline: Entity Lock → SerpAPI retrieval → LLM synthesis → QA gates.
+    Returns the dossier, entity lock report, QA report, and search queries.
     Only works for profiles with linkedin_status == 'confirmed'.
     """
     if not settings.openai_api_key:
@@ -554,49 +558,147 @@ async def generate_profile_research(profile_id: int):
                 detail="Profile must be verified before generating deep research",
             )
 
+        p_name = entity.name
+        p_company = profile_data.get("company", "")
+        p_title = profile_data.get("title", "")
+        p_linkedin = profile_data.get("linkedin_url", "")
+        p_location = profile_data.get("location", "")
+
+        # --- STEP 0: Generate auditable search plan ---
+        search_plan = generate_search_plan(
+            name=p_name,
+            company=p_company,
+            title=p_title,
+            linkedin_url=p_linkedin,
+            location=p_location,
+        )
+
         interactions_summary = build_interactions_summary(profile_data)
 
-        # Fetch real web data via SerpAPI if configured
+        # --- STEP 1: Fetch web data via SerpAPI ---
         web_research = ""
+        search_results: dict = {}
         if settings.serpapi_api_key:
             try:
                 serp = SerpAPIClient()
-                results = await serp.search_person(
-                    name=entity.name,
-                    company=profile_data.get("company", ""),
-                    title=profile_data.get("title", ""),
-                    linkedin_url=profile_data.get("linkedin_url", ""),
+                search_results = await serp.search_person(
+                    name=p_name,
+                    company=p_company,
+                    title=p_title,
+                    linkedin_url=p_linkedin,
                 )
-                web_research = format_web_results_for_prompt(results)
+                web_research = format_web_results_for_prompt(search_results)
                 logger.info(
                     "Web search for '%s' returned %d total results",
-                    entity.name,
-                    sum(len(v) for v in results.values()),
+                    p_name,
+                    sum(len(v) for v in search_results.values()),
                 )
             except Exception:
-                logger.exception("Web search failed for '%s', proceeding without", entity.name)
+                logger.exception("Web search failed for '%s', proceeding without", p_name)
 
+        # --- STEP 2: Entity Lock (disambiguation scoring) ---
+        apollo_data = {}
+        if profile_data.get("apollo_raw"):
+            apollo_data = profile_data["apollo_raw"]
+        elif p_title or profile_data.get("photo_url"):
+            apollo_data = {"name": p_name, "title": p_title}
+            if profile_data.get("photo_url"):
+                apollo_data["photo_url"] = profile_data["photo_url"]
+
+        entity_lock = score_disambiguation(
+            name=p_name,
+            company=p_company,
+            title=p_title,
+            linkedin_url=p_linkedin,
+            location=p_location,
+            search_results=search_results,
+            apollo_data=apollo_data,
+        )
+
+        entity_lock_report = {
+            "canonical_name": p_name,
+            "confirmed_employer": p_company or None,
+            "confirmed_title": p_title or None,
+            "location": p_location or None,
+            "linkedin_url": p_linkedin or None,
+            "entity_lock_score": entity_lock.score,
+            "is_locked": entity_lock.is_locked,
+            "disambiguation_risks": (
+                [] if entity_lock.is_locked
+                else ["IDENTITY NOT FULLY LOCKED — review evidence before acting on dossier"]
+            ),
+            "evidence": entity_lock.evidence,
+            "signals": {
+                "name_match": entity_lock.name_match,
+                "company_match": entity_lock.company_match,
+                "title_match": entity_lock.title_match,
+                "linkedin_confirmed": entity_lock.linkedin_confirmed,
+                "location_match": entity_lock.location_match,
+                "photo_available": entity_lock.photo_available,
+                "multiple_sources_agree": entity_lock.multiple_sources_agree,
+            },
+        }
+
+        # --- STEP 3: Generate dossier via LLM ---
         result = generate_deep_profile(
-            name=entity.name,
-            title=profile_data.get("title", ""),
-            company=profile_data.get("company", ""),
-            linkedin_url=profile_data.get("linkedin_url", ""),
-            location=profile_data.get("location", ""),
+            name=p_name,
+            title=p_title,
+            company=p_company,
+            linkedin_url=p_linkedin,
+            location=p_location,
             industry=profile_data.get("company_industry", ""),
             company_size=profile_data.get("company_size"),
             interactions_summary=interactions_summary,
             web_research=web_research,
         )
 
+        # --- STEP 4: QA gates ---
+        qa_report = generate_qa_report(
+            dossier_text=result,
+            disambiguation=entity_lock,
+        )
+        qa_markdown = render_qa_report_markdown(qa_report)
+
+        if not qa_report.passes_all:
+            logger.warning(
+                "QA gates FAILED for profile %d (%s): genericness=%d, coverage=%.0f%%, "
+                "contradictions=%d",
+                profile_id,
+                p_name,
+                qa_report.genericness.genericness_score,
+                qa_report.evidence_coverage.coverage_pct,
+                len(qa_report.contradictions),
+            )
+
+        # --- Persist ---
+        generated_at = datetime.utcnow().isoformat()
         profile_data["deep_profile"] = result
-        profile_data["deep_profile_generated_at"] = datetime.utcnow().isoformat()
+        profile_data["deep_profile_generated_at"] = generated_at
+        profile_data["entity_lock_score"] = entity_lock.score
+        profile_data["qa_genericness_score"] = qa_report.genericness.genericness_score
+        profile_data["qa_evidence_coverage_pct"] = round(
+            qa_report.evidence_coverage.coverage_pct, 1
+        )
+        profile_data["qa_passes_all"] = qa_report.passes_all
+        profile_data["qa_report_markdown"] = qa_markdown
+        profile_data["search_plan"] = search_plan
         entity.domains = json.dumps(profile_data)
         session.commit()
 
         return {
             "status": "ok",
             "deep_profile": result,
-            "generated_at": profile_data["deep_profile_generated_at"],
+            "generated_at": generated_at,
+            "entity_lock": entity_lock_report,
+            "qa_report": {
+                "passes_all": qa_report.passes_all,
+                "genericness_score": qa_report.genericness.genericness_score,
+                "evidence_coverage_pct": round(qa_report.evidence_coverage.coverage_pct, 1),
+                "contradictions": len(qa_report.contradictions),
+                "hallucination_risk_flags": qa_report.hallucination_risk_flags,
+                "markdown": qa_markdown,
+            },
+            "search_plan": search_plan,
         }
     except HTTPException:
         raise
