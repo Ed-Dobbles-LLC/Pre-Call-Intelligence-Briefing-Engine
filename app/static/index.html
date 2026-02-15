@@ -1683,13 +1683,17 @@
       }
     }
 
-    function avatarHtml(name, email, size, photoUrl) {
+    function avatarHtml(name, email, size, photoUrl, linkedinUrl) {
       size = size || 40;
       const initials = getInitials(name);
       const colorCls = avatarClass(name);
-      // Fallback chain: Apollo photo → unavatar.io (multi-source) → Gravatar → initials
+      // Fallback chain: Apollo photo → LinkedIn via unavatar → email via unavatar → Gravatar → initials
       const sources = [];
       if (photoUrl) sources.push(photoUrl);
+      if (linkedinUrl) {
+        const m = linkedinUrl.match(/linkedin\.com\/in\/([^/?#]+)/);
+        if (m) sources.push('https://unavatar.io/linkedin/' + m[1] + '?fallback=false');
+      }
       if (email) sources.push('https://unavatar.io/' + encodeURIComponent(email.trim().toLowerCase()) + '?fallback=false');
       const gravatar = getGravatarUrl(email, size * 2);
       if (gravatar) sources.push(gravatar);
@@ -2010,7 +2014,7 @@
         return `
         <div class="profile-card" onclick="openProfileModal(${i})">
           <div class="profile-card-top">
-            ${avatarHtml(p.name, p.email, 40, p.photo_url || getCandidatePhoto(p))}
+            ${avatarHtml(p.name, p.email, 40, p.photo_url || getCandidatePhoto(p), p.linkedin_url)}
             <div class="profile-info">
               <div class="profile-name">${p.name}</div>
               <div class="profile-company">${p.title ? p.title + (p.company ? ' @ ' + p.company : '') : (p.company || p.email || 'Unknown')}</div>
@@ -2058,7 +2062,7 @@
       let html = `
         <div class="modal-section">
           <div style="display:flex;align-items:center;gap:16px;margin-bottom:20px">
-            ${avatarHtml(p.name, p.email, 56, p.photo_url || getCandidatePhoto(p))}
+            ${avatarHtml(p.name, p.email, 56, p.photo_url || getCandidatePhoto(p), p.linkedin_url)}
             <div>
               <div style="font-size:20px;font-weight:700">${p.name}</div>
               ${p.title ? '<div style="color:var(--text-primary);font-size:14px">' + p.title + (p.company ? ' @ ' + p.company : '') + '</div>' : (p.company ? '<div style="color:var(--text-secondary)">' + p.company + '</div>' : '')}
@@ -2395,7 +2399,7 @@
 
         const headerHtml = `
           <div class="review-card-header">
-            ${avatarHtml(p.name, p.email, 48, p.photo_url || getCandidatePhoto(p))}
+            ${avatarHtml(p.name, p.email, 48, p.photo_url || getCandidatePhoto(p), p.linkedin_url)}
             <div class="review-card-info">
               <div class="review-card-name">${p.name}</div>
               <div class="review-card-meta">
