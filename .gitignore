@@ -36,3 +36,6 @@ out/
 .pytest_cache/
 .coverage
 htmlcov/
+
+# Cached images (runtime artifacts)
+image_cache/
