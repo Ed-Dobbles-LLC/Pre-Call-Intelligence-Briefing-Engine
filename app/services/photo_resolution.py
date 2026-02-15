@@ -44,8 +44,10 @@ class PhotoStatus(str, Enum):
     RESOLVED = "RESOLVED"
     MISSING = "MISSING"
     FAILED = "FAILED"
+    FAILED_RENDER = "FAILED_RENDER"
     BLOCKED = "BLOCKED"
     EXPIRED = "EXPIRED"
+    UNKNOWN = "UNKNOWN"
 
 
 @dataclass
@@ -142,8 +144,13 @@ class PhotoResolutionService:
         company_domain: str = "",
         existing_photo_url: str = "",
         existing_photo_source: str = "",
+        existing_photo_status: str = "",
     ) -> PhotoResolutionResult:
         """Run the photo resolution decision tree.
+
+        RULE: Never regress. If an existing photo_url is present and has not
+        been marked FAILED_RENDER by the client, preserve it. Only attempt
+        re-resolution when photo_url is empty or explicitly failed.
 
         Returns PhotoResolutionResult with the best available photo.
         """
@@ -157,47 +164,39 @@ class PhotoResolutionService:
             resolved_at=datetime.utcnow().isoformat(),
         )
 
-        # Step 1: User-uploaded photo (highest priority, never expires)
-        if existing_photo_source == PhotoSource.UPLOADED and existing_photo_url:
-            log.attempted_sources.append("uploaded")
-            log.resolved_source = "uploaded"
+        # Step 0: PRESERVE existing photo if present and not failed
+        # This is the anti-regression guard — never wipe a working photo.
+        if existing_photo_url and existing_photo_status != PhotoStatus.FAILED_RENDER:
+            log.attempted_sources.append("existing_preserved")
+            log.resolved_source = "existing_preserved"
+            # Determine the source category
+            source = existing_photo_source or PhotoSource.ENRICHMENT_PROVIDER
+            if existing_photo_source == PhotoSource.UPLOADED:
+                source = PhotoSource.UPLOADED
+            elif existing_photo_source == PhotoSource.CACHED_PROXY:
+                source = PhotoSource.CACHED_PROXY
+            elif existing_photo_source == PhotoSource.GRAVATAR:
+                source = PhotoSource.GRAVATAR
+            elif existing_photo_source == PhotoSource.COMPANY_LOGO:
+                source = PhotoSource.COMPANY_LOGO
+            else:
+                source = PhotoSource.ENRICHMENT_PROVIDER
+
             result.photo_url = existing_photo_url
-            result.photo_source = PhotoSource.UPLOADED
+            result.photo_source = source
             result.photo_status = PhotoStatus.RESOLVED
+            if self._is_blocked_url(existing_photo_url):
+                log.attempted_sources.append("linkedin_cdn_preserved")
+                logger.info(
+                    "Photo for %s is LinkedIn CDN — preserving (client will fallback on error)",
+                    contact_name,
+                )
             self._resolution_logs.append(log)
             return result
 
-        # Step 2: Previously cached proxy photo
-        if existing_photo_source == PhotoSource.CACHED_PROXY and existing_photo_url:
-            log.attempted_sources.append("cached_proxy")
-            log.resolved_source = "cached_proxy"
-            result.photo_url = existing_photo_url
-            result.photo_source = PhotoSource.CACHED_PROXY
-            result.photo_status = PhotoStatus.RESOLVED
-            self._resolution_logs.append(log)
-            return result
+        # --- Below here: photo_url is empty OR photo_status == FAILED_RENDER ---
 
-        # Step 3: Enrichment provider photo (Apollo/Clearbit person API)
-        # Only use if NOT a LinkedIn CDN URL (those expire/block)
-        if existing_photo_url and not self._is_blocked_url(existing_photo_url):
-            log.attempted_sources.append("enrichment_provider")
-            log.resolved_source = "enrichment_provider"
-            result.photo_url = existing_photo_url
-            result.photo_source = PhotoSource.ENRICHMENT_PROVIDER
-            result.photo_status = PhotoStatus.RESOLVED
-            self._resolution_logs.append(log)
-            return result
-
-        if existing_photo_url and self._is_blocked_url(existing_photo_url):
-            log.attempted_sources.append("enrichment_provider_blocked")
-            log.error = f"Blocked LinkedIn CDN URL: {existing_photo_url[:80]}"
-            result.error = log.error
-            logger.info(
-                "Photo blocked for %s: LinkedIn CDN URL detected, skipping",
-                contact_name,
-            )
-
-        # Step 4: Gravatar (email-based)
+        # Step 1: Gravatar (email-based)
         if email:
             log.attempted_sources.append("gravatar")
             grav_url = gravatar_url(email)
@@ -210,7 +209,7 @@ class PhotoResolutionService:
                 self._resolution_logs.append(log)
                 return result
 
-        # Step 5: Company logo (domain-based)
+        # Step 2: Company logo (domain-based)
         domain = company_domain or extract_domain_from_email(email)
         if domain:
             log.attempted_sources.append("company_logo")
@@ -224,7 +223,7 @@ class PhotoResolutionService:
                 self._resolution_logs.append(log)
                 return result
 
-        # Step 6: Initials fallback (always works)
+        # Step 3: Initials fallback (always works)
         log.attempted_sources.append("initials")
         log.resolved_source = "initials"
         result.photo_url = ""
@@ -288,6 +287,7 @@ def resolve_photo_for_profile(profile_data: dict) -> dict:
     """Convenience: run photo resolution for a single profile dict.
 
     Updates the profile_data dict in place and returns the resolution result.
+    RULE: Never clear an existing photo_url unless photo_status == FAILED_RENDER.
     """
     service = PhotoResolutionService()
     result = service.resolve(
@@ -297,6 +297,7 @@ def resolve_photo_for_profile(profile_data: dict) -> dict:
         company_domain=profile_data.get("company_domain", ""),
         existing_photo_url=profile_data.get("photo_url", ""),
         existing_photo_source=profile_data.get("photo_source", ""),
+        existing_photo_status=profile_data.get("photo_status", ""),
     )
 
     profile_data["photo_url"] = result.photo_url
@@ -306,4 +307,17 @@ def resolve_photo_for_profile(profile_data: dict) -> dict:
     if result.error:
         profile_data["photo_last_error"] = result.error
 
+    return profile_data
+
+
+def backfill_photo_status(profile_data: dict) -> dict:
+    """Backfill: if photo_url exists but status was set to MISSING, restore to UNKNOWN.
+
+    This fixes profiles that had their status overwritten by a prior buggy resolver
+    that blocked LinkedIn CDN URLs and set status to MISSING.
+    """
+    photo_url = profile_data.get("photo_url", "")
+    photo_status = profile_data.get("photo_status", "")
+    if photo_url and photo_status in (PhotoStatus.MISSING, "MISSING", ""):
+        profile_data["photo_status"] = PhotoStatus.UNKNOWN
     return profile_data

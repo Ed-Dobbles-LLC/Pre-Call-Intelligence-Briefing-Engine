@@ -50,6 +50,9 @@ class Settings(BaseSettings):
     # Logging
     log_level: str = "INFO"
 
+    # Image proxy
+    linkedin_proxy_enabled: bool = False  # OFF by default — ToS risk
+
     # Retrieval window
     retrieval_window_days: int = 90
 
