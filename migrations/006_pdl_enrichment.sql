@@ -1,0 +1,20 @@
+-- 006: People Data Labs (PDL) enrichment fields
+--
+-- These fields are stored in the JSON 'domains' column of entity_records,
+-- not as separate columns, since entity_records uses a flexible JSON blob
+-- for profile data. This migration documents the schema for reference.
+--
+-- Fields added to profile_data JSON:
+--   pdl_person_id       TEXT     -- PDL person identifier
+--   pdl_match_confidence REAL    -- 0.0-1.0 match confidence
+--   enrichment_json     JSON     -- Full PDL response
+--   enriched_at         TEXT     -- ISO timestamp of last enrichment
+--   photo_source        TEXT     -- enum: uploaded, cached_proxy, enrichment_provider,
+--                                --   linkedin_pdf_crop, gravatar, company_logo,
+--                                --   initials, pdl
+--   photo_status        TEXT     -- enum: RESOLVED, MISSING, FAILED, FAILED_RENDER,
+--                                --   BLOCKED, EXPIRED, UNKNOWN
+--
+-- No DDL required — data stored in existing JSON column.
+-- This file serves as documentation only.
+SELECT 1;

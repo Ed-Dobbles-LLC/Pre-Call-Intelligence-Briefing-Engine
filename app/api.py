@@ -712,6 +712,87 @@ def debug_calendar():
     }
 
 
+@app.post(
+    "/profiles/{profile_id}/enrich",
+    dependencies=[Depends(verify_api_key)],
+)
+async def enrich_profile(profile_id: int):
+    """Enrich a contact using People Data Labs (PDL).
+
+    Calls PDL's person/enrich endpoint with the best available identifier
+    (email > linkedin_url > name+company > name+location).
+
+    If photo_url is returned, downloads it server-side and stores locally.
+    NEVER wipes an existing RESOLVED photo unless download succeeds.
+
+    Returns: success, fields_updated, photo_updated, match_confidence.
+    """
+    from app.services.enrichment_service import enrich_contact
+
+    if not settings.pdl_enabled:
+        raise HTTPException(
+            status_code=400,
+            detail="PDL enrichment is not enabled. Set PDL_ENABLED=true.",
+        )
+    if not settings.pdl_api_key:
+        raise HTTPException(
+            status_code=400,
+            detail="PDL_API_KEY is not configured.",
+        )
+
+    session = get_session()
+    try:
+        entity = session.query(EntityRecord).filter(
+            EntityRecord.id == profile_id,
+        ).first()
+        if not entity:
+            raise HTTPException(status_code=404, detail="Profile not found")
+
+        profile_data = json.loads(entity.domains or "{}")
+
+        result = await enrich_contact(
+            profile_data=profile_data,
+            contact_id=profile_id,
+            contact_name=entity.name,
+        )
+
+        if result["success"]:
+            entity.domains = json.dumps(profile_data)
+            session.commit()
+
+        return result
+
+    except HTTPException:
+        raise
+    except Exception:
+        session.rollback()
+        logger.exception("PDL enrichment failed for profile %d", profile_id)
+        raise HTTPException(status_code=500, detail="Enrichment failed")
+    finally:
+        session.close()
+
+
+@app.get("/debug/enrichment")
+def debug_enrichment():
+    """Debug endpoint: PDL enrichment status and rate limiter state."""
+    from app.clients.pdl_client import get_enrichment_log, get_rate_limiter
+
+    log = get_enrichment_log()
+    limiter = get_rate_limiter()
+
+    total_enriched = sum(1 for e in log if e.get("status") == "success")
+    total_failed = sum(1 for e in log if e.get("status") != "success")
+
+    return {
+        "pdl_enabled": settings.pdl_enabled,
+        "pdl_configured": bool(settings.pdl_api_key),
+        "total_enriched": total_enriched,
+        "total_failed": total_failed,
+        "last_10_attempts": log[-10:],
+        "rate_limiter_state": limiter.state,
+    }
+
+
 @app.get("/profiles", dependencies=[Depends(verify_api_key)])
 def list_profiles():
     """Return all auto-generated contact profiles."""

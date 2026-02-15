@@ -2122,9 +2122,13 @@
               ${p.linkedin_pdf_path ? 'Re-upload PDF' : 'Upload LinkedIn PDF'}
             </button>
             ${p.artifact_dossier_markdown ? '<button class="btn-research-secondary" onclick="scrollToArtifactDossier(' + p.id + ')"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>View Artifact Dossier</button>' : (p.linkedin_pdf_raw_text ? '<button class="btn-research-secondary" onclick="generateArtifactDossier(' + p.id + ')"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>Generate Artifact Dossier</button>' : '')}
+            <button class="btn-research-secondary" onclick="enrichWithPDL(${p.id})">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/><line x1="18" y1="8" x2="23" y2="8"/><line x1="20.5" y1="5.5" x2="20.5" y2="10.5"/></svg>
+              ${p.enriched_at ? 'Re-enrich (PDL)' : 'Enrich (PDL)'}
+            </button>
             <input type="file" id="pdf-upload-${p.id}" accept=".pdf" style="display:none" onchange="handlePdfUpload(${p.id}, this)">
           </div>
-          ${p.linkedin_pdf_path ? '<div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap">' + '<span class="profile-tag" style="background:var(--info-bg);color:var(--info)">PDF Uploaded</span>' + (p.photo_source === 'linkedin_pdf_crop' ? '<span class="profile-tag" style="background:var(--success-bg);color:var(--success)">Photo: LinkedIn PDF</span>' : '') + (p.artifact_dossier_markdown ? '<span class="profile-tag" style="background:var(--accent-glow);color:var(--accent)">Artifact Dossier</span>' : '') + '</div>' : ''}
+          ${(p.linkedin_pdf_path || p.enriched_at) ? '<div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap">' + (p.linkedin_pdf_path ? '<span class="profile-tag" style="background:var(--info-bg);color:var(--info)">PDF Uploaded</span>' : '') + (p.photo_source === 'linkedin_pdf_crop' ? '<span class="profile-tag" style="background:var(--success-bg);color:var(--success)">Photo: LinkedIn PDF</span>' : '') + (p.enriched_at ? '<span class="profile-tag" style="background:var(--success-bg);color:var(--success)">PDL Enriched</span>' : '') + (p.pdl_match_confidence ? '<span class="profile-tag" style="background:var(--info-bg);color:var(--info)">Confidence: ' + Math.round(p.pdl_match_confidence * 100) + '%</span>' : '') + (p.artifact_dossier_markdown ? '<span class="profile-tag" style="background:var(--accent-glow);color:var(--accent)">Artifact Dossier</span>' : '') + '</div>' : ''}
         </div>`;
 
       if (p.interactions && p.interactions.length) {
@@ -2475,6 +2479,57 @@
             <div style="color:var(--danger);padding:16px">Artifact dossier generation failed: ${err.message}</div>
             <button class="btn-research-secondary" onclick="generateArtifactDossier(${profileId})">Retry</button>`;
         }
+      }
+    }
+
+    async function enrichWithPDL(profileId) {
+      const btn = event.target.closest('button');
+      const origText = btn ? btn.innerHTML : '';
+      if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<div class="loading-spinner" style="width:14px;height:14px;display:inline-block;vertical-align:middle"></div> Enriching...';
+      }
+
+      try {
+        const res = await fetch(API_BASE + '/profiles/' + profileId + '/enrich', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...authHeaders() }
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Enrichment failed');
+
+        if (data.success) {
+          const fields = data.fields_updated || [];
+          const conf = data.match_confidence ? Math.round(data.match_confidence * 100) + '%' : '';
+          const photoMsg = data.photo_updated ? ' + photo updated' : '';
+          if (btn) {
+            btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--success)" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg> Enriched' + (conf ? ' (' + conf + ')' : '');
+            btn.style.borderColor = 'var(--success)';
+            btn.style.color = 'var(--success)';
+          }
+          // Show toast
+          const toast = document.createElement('div');
+          toast.style.cssText = 'position:fixed;bottom:24px;right:24px;background:var(--bg-card);border:1px solid var(--success);color:var(--success);padding:12px 20px;border-radius:8px;z-index:10000;font-size:13px;box-shadow:0 4px 12px rgba(0,0,0,0.3)';
+          toast.textContent = 'PDL enrichment: ' + fields.length + ' fields updated' + photoMsg;
+          document.body.appendChild(toast);
+          setTimeout(function() { toast.remove(); }, 4000);
+          // Refresh profiles after short delay to show updated data
+          setTimeout(function() { loadProfiles(); }, 1500);
+        } else {
+          throw new Error(data.error || 'No match found');
+        }
+      } catch (err) {
+        if (btn) {
+          btn.innerHTML = origText;
+          btn.disabled = false;
+          btn.style.borderColor = 'var(--danger)';
+          btn.style.color = 'var(--danger)';
+        }
+        const toast = document.createElement('div');
+        toast.style.cssText = 'position:fixed;bottom:24px;right:24px;background:var(--bg-card);border:1px solid var(--danger);color:var(--danger);padding:12px 20px;border-radius:8px;z-index:10000;font-size:13px;box-shadow:0 4px 12px rgba(0,0,0,0.3)';
+        toast.textContent = 'PDL enrichment failed: ' + err.message;
+        document.body.appendChild(toast);
+        setTimeout(function() { toast.remove(); }, 5000);
       }
     }
 

@@ -50,6 +50,12 @@ class Settings(BaseSettings):
     # Logging
     log_level: str = "INFO"
 
+    # People Data Labs (PDL) enrichment
+    pdl_api_key: str = ""
+    pdl_enabled: bool = False
+    pdl_max_requests_per_min: int = 10
+    pdl_timeout_ms: int = 6000
+
     # Image proxy
     linkedin_proxy_enabled: bool = False  # OFF by default — ToS risk
 
