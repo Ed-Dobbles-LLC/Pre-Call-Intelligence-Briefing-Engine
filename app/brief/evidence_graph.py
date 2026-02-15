@@ -96,6 +96,16 @@ class EvidenceGraph:
         """Add a PUBLIC-type EvidenceNode."""
         return self.add_node(type="PUBLIC", source=source, snippet=snippet, ref=ref, date=date)
 
+    def add_pdf_node(
+        self,
+        source: str,
+        snippet: str,
+        date: str = "UNKNOWN",
+        ref: str = "",
+    ) -> EvidenceNode:
+        """Add a PDF-type EvidenceNode (user-supplied LinkedIn PDF)."""
+        return self.add_node(type="PDF", source=source, snippet=snippet, ref=ref, date=date)
+
     # --- Claim management ---
 
     def add_claim(
@@ -182,8 +192,8 @@ class EvidenceGraph:
 
 # Tags that count as "evidenced" (not UNKNOWN)
 _VALID_EVIDENCE_TAGS = {
-    "VERIFIED-MEETING", "VERIFIED-PUBLIC",
-    "VERIFIED_MEETING", "VERIFIED_PUBLIC",
+    "VERIFIED-MEETING", "VERIFIED-PUBLIC", "VERIFIED-PDF",
+    "VERIFIED_MEETING", "VERIFIED_PUBLIC", "VERIFIED_PDF",
     "INFERRED-H", "INFERRED-M", "INFERRED-L",
     "INFERRED_HIGH", "INFERRED_MEDIUM", "INFERRED_LOW",
 }
@@ -217,7 +227,7 @@ def compute_evidence_coverage_from_text(text: str) -> float:
     A covered line has an evidence tag pattern like [VERIFIED-*] or [INFERRED-*].
     """
     tag_pattern = re.compile(
-        r"\[(?:VERIFIED[–-](?:MEETING|PUBLIC)|INFERRED[–-][HML]|UNKNOWN)\]",
+        r"\[(?:VERIFIED[–-](?:MEETING|PUBLIC|PDF)|INFERRED[–-][HML]|UNKNOWN)\]",
         re.IGNORECASE,
     )
     lines = text.strip().split("\n")

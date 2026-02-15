@@ -479,13 +479,201 @@ async def image_proxy(url: str = Query(..., description="Remote image URL to pro
         raise HTTPException(status_code=502, detail=f"Failed to fetch image: {e}")
 
 
+@app.post(
+    "/profiles/{profile_id}/ingest-linkedin-pdf",
+    dependencies=[Depends(verify_api_key)],
+)
+async def ingest_linkedin_pdf_endpoint(
+    profile_id: int,
+    pdf_data: dict | None = None,
+):
+    """Ingest a LinkedIn profile PDF for a contact.
+
+    Accepts JSON body: {"pdf_base64": "<base64 encoded PDF>"}.
+
+    Extracts:
+    1. Structured text (stored for artifact-first dossier)
+    2. Headshot image (updates contact photo if crop succeeds)
+
+    Photo update rules:
+    - If crop succeeds: set photo_source=linkedin_pdf_crop, photo_status=RESOLVED
+    - If crop fails: do NOT overwrite existing photo
+    - Never regress: only update photo if it improves the situation
+    """
+    import base64
+
+    from app.services.linkedin_pdf import ingest_linkedin_pdf
+    from app.services.photo_resolution import PhotoSource, PhotoStatus
+
+    if not pdf_data or not pdf_data.get("pdf_base64"):
+        raise HTTPException(
+            status_code=422,
+            detail="Request body must include 'pdf_base64' field with base64-encoded PDF",
+        )
+
+    try:
+        pdf_bytes = base64.b64decode(pdf_data["pdf_base64"])
+    except Exception:
+        raise HTTPException(status_code=422, detail="Invalid base64 encoding")
+
+    if not pdf_bytes:
+        raise HTTPException(status_code=422, detail="Empty PDF data")
+
+    session = get_session()
+    try:
+        entity = session.query(EntityRecord).filter(
+            EntityRecord.id == profile_id,
+        ).first()
+        if not entity:
+            raise HTTPException(status_code=404, detail="Profile not found")
+
+        profile_data = json.loads(entity.domains or "{}")
+
+        # Run ingestion pipeline
+        result = ingest_linkedin_pdf(
+            pdf_bytes=pdf_bytes,
+            contact_id=profile_id,
+            contact_name=entity.name,
+        )
+
+        # Store PDF metadata in profile
+        profile_data["linkedin_pdf_path"] = result.pdf_path
+        profile_data["linkedin_pdf_hash"] = result.pdf_hash
+        profile_data["linkedin_pdf_ingested_at"] = result.ingested_at
+        profile_data["linkedin_pdf_page_count"] = result.text_result.page_count
+        profile_data["linkedin_pdf_text_length"] = len(result.text_result.raw_text)
+
+        # Store structured text sections for dossier
+        profile_data["linkedin_pdf_sections"] = result.text_result.sections
+        profile_data["linkedin_pdf_raw_text"] = result.text_result.raw_text[:50000]
+
+        # Update profile fields from PDF if not already set
+        if result.text_result.headline and not profile_data.get("headline"):
+            profile_data["headline"] = result.text_result.headline
+        if result.text_result.location and not profile_data.get("location"):
+            profile_data["location"] = result.text_result.location
+
+        # Store experience/education for dossier
+        if result.text_result.experience:
+            profile_data["linkedin_pdf_experience"] = result.text_result.experience
+        if result.text_result.education:
+            profile_data["linkedin_pdf_education"] = result.text_result.education
+        if result.text_result.skills:
+            profile_data["linkedin_pdf_skills"] = result.text_result.skills
+
+        # Update photo if crop succeeded — NEVER regress
+        photo_updated = False
+        if result.crop_result.success:
+            existing_status = profile_data.get("photo_status", "")
+            existing_source = profile_data.get("photo_source", "")
+
+            # Only update if:
+            # 1. No existing photo, OR
+            # 2. Existing photo is from a lower-priority source, OR
+            # 3. Existing photo is broken (FAILED_RENDER)
+            should_update_photo = (
+                not profile_data.get("photo_url")
+                or existing_status in (
+                    PhotoStatus.MISSING, PhotoStatus.FAILED,
+                    PhotoStatus.FAILED_RENDER, PhotoStatus.BLOCKED,
+                    PhotoStatus.EXPIRED, "",
+                )
+                or existing_source in (
+                    PhotoSource.GRAVATAR, PhotoSource.COMPANY_LOGO,
+                    PhotoSource.INITIALS, "",
+                )
+            )
+
+            if should_update_photo:
+                # Serve cropped image via local image proxy
+                profile_data["photo_url"] = (
+                    f"/api/local-image/{result.crop_result.image_path}"
+                )
+                profile_data["photo_source"] = PhotoSource.LINKEDIN_PDF_CROP
+                profile_data["photo_status"] = PhotoStatus.RESOLVED
+                profile_data["photo_last_checked_at"] = result.ingested_at
+                photo_updated = True
+
+        entity.domains = json.dumps(profile_data)
+        session.commit()
+
+        return {
+            "status": "ok",
+            "pdf_stored": bool(result.pdf_path),
+            "text_extracted": bool(result.text_result.raw_text),
+            "text_length": len(result.text_result.raw_text),
+            "page_count": result.text_result.page_count,
+            "sections_found": list(result.text_result.sections.keys()),
+            "headshot_cropped": result.crop_result.success,
+            "crop_method": result.crop_result.method,
+            "crop_error": (
+                result.crop_result.error if not result.crop_result.success else None
+            ),
+            "photo_updated": photo_updated,
+            "experience_entries": len(result.text_result.experience),
+            "education_entries": len(result.text_result.education),
+            "skills_count": len(result.text_result.skills),
+        }
+    except HTTPException:
+        raise
+    except Exception:
+        session.rollback()
+        logger.exception("LinkedIn PDF ingestion failed for profile %d", profile_id)
+        raise HTTPException(status_code=500, detail="PDF ingestion failed")
+    finally:
+        session.close()
+
+
+@app.get("/api/local-image/{file_path:path}")
+async def serve_local_image(file_path: str):
+    """Serve a locally cached image (e.g., LinkedIn PDF crop).
+
+    Only serves files from the image_cache directory for security.
+    """
+    from fastapi.responses import Response
+
+    safe_path = Path(file_path)
+    # Security: reject path traversal
+    if ".." in str(safe_path):
+        raise HTTPException(status_code=403, detail="Invalid path")
+
+    if not safe_path.exists():
+        raise HTTPException(status_code=404, detail="Image not found")
+
+    # Only serve from allowed directories
+    allowed_prefixes = [str(Path("./image_cache").resolve())]
+    resolved = str(safe_path.resolve())
+    if not any(resolved.startswith(p) for p in allowed_prefixes):
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    content = safe_path.read_bytes()
+    ct = "image/jpeg"
+    if file_path.endswith(".png"):
+        ct = "image/png"
+    elif file_path.endswith(".webp"):
+        ct = "image/webp"
+    return Response(content=content, media_type=ct)
+
+
 @app.get("/debug/photos")
 def debug_photos():
     """Debug endpoint: photo resolution status across all contacts."""
     from app.services.photo_resolution import PhotoResolutionService
     profiles = get_all_profiles()
     service = PhotoResolutionService()
-    return service.get_debug_stats(profiles)
+    stats = service.get_debug_stats(profiles)
+    # Add PDF crop stats
+    pdf_crops = sum(
+        1 for p in profiles
+        if p.get("photo_source") == "linkedin_pdf_crop"
+    )
+    crop_attempts = sum(1 for p in profiles if p.get("linkedin_pdf_path"))
+    stats["linkedin_pdf_crops"] = pdf_crops
+    stats["linkedin_pdf_uploads"] = crop_attempts
+    stats["crop_success_rate"] = (
+        f"{pdf_crops}/{crop_attempts}" if crop_attempts else "0/0"
+    )
+    return stats
 
 
 @app.get("/debug/calendar")
@@ -859,9 +1047,87 @@ async def generate_meeting_prep(profile_id: int):
         session.close()
 
 
+@app.post(
+    "/profiles/{profile_id}/artifact-dossier",
+    dependencies=[Depends(verify_api_key)],
+)
+async def generate_artifact_dossier_endpoint(profile_id: int):
+    """Generate an artifact-first "Public Statements & Positions" dossier.
+
+    Path B1: Uses PDF text + meeting evidence only. No SerpAPI required.
+    Works even without a confirmed LinkedIn profile.
+
+    Requires a LinkedIn PDF to have been uploaded first via /ingest-linkedin-pdf.
+    If OpenAI API key is configured, uses LLM for enhanced synthesis.
+    Otherwise falls back to template-based dossier.
+    """
+    from app.services.artifact_dossier import run_artifact_dossier_pipeline
+
+    session = get_session()
+    try:
+        entity = session.query(EntityRecord).get(profile_id)
+        if not entity:
+            raise HTTPException(status_code=404, detail="Profile not found")
+
+        profile_data = json.loads(entity.domains or "{}")
+        p_name = entity.name
+
+        # Check if PDF has been uploaded
+        if not profile_data.get("linkedin_pdf_raw_text"):
+            raise HTTPException(
+                status_code=422,
+                detail="No LinkedIn PDF uploaded. Upload a PDF first via "
+                       "/profiles/{profile_id}/ingest-linkedin-pdf",
+            )
+
+        # Run the artifact-first pipeline
+        use_llm = bool(settings.openai_api_key)
+        result = run_artifact_dossier_pipeline(
+            profile_data=profile_data,
+            person_name=p_name,
+            use_llm=use_llm,
+        )
+
+        # Persist
+        profile_data["artifact_dossier_markdown"] = result["dossier_markdown"]
+        profile_data["artifact_dossier_generated_at"] = result["generated_at"]
+        profile_data["artifact_dossier_mode"] = result["mode"]
+        profile_data["artifact_dossier_coverage"] = result["coverage_pct"]
+        profile_data["artifact_evidence_graph"] = result["evidence_graph"]
+        entity.domains = json.dumps(profile_data)
+        session.commit()
+
+        return {
+            "status": "ok",
+            "mode": result["mode"],
+            "dossier": result["dossier_markdown"],
+            "generated_at": result["generated_at"],
+            "artifact_count": result["artifact_count"],
+            "meeting_count": result["meeting_count"],
+            "total_evidence_nodes": result["total_evidence_nodes"],
+            "coverage_pct": result["coverage_pct"],
+            "passes_coverage": result["passes_coverage"],
+            "evidence_graph": result["evidence_graph"],
+        }
+    except HTTPException:
+        raise
+    except Exception:
+        session.rollback()
+        logger.exception("Artifact dossier failed for profile %d", profile_id)
+        raise HTTPException(
+            status_code=500, detail="Artifact dossier generation failed"
+        )
+    finally:
+        session.close()
+
+
 @app.post("/profiles/{profile_id}/deep-profile", dependencies=[Depends(verify_api_key)])
 async def generate_profile_research(profile_id: int):
     """Generate a Mode B Deep Research Dossier for a verified contact.
+
+    Dual-path pipeline:
+    - If LinkedIn PDF uploaded: includes PDF EvidenceNodes (artifact-first enrichment)
+    - Always: SerpAPI retrieval → LLM synthesis → QA gates
 
     Pipeline: Entity Lock → SerpAPI retrieval → LLM synthesis → QA gates.
     Returns the dossier, entity lock report, QA report, and search queries.
@@ -904,6 +1170,37 @@ async def generate_profile_research(profile_id: int):
 
         # --- Initialize Evidence Graph ---
         graph = EvidenceGraph()
+
+        # Add PDF evidence nodes if LinkedIn PDF was uploaded (dual-path)
+        pdf_artifact_count = 0
+        if profile_data.get("linkedin_pdf_raw_text"):
+            from app.services.linkedin_pdf import (
+                LinkedInPDFTextResult,
+                build_evidence_nodes_from_pdf,
+            )
+            text_result = LinkedInPDFTextResult(
+                raw_text=profile_data.get("linkedin_pdf_raw_text", ""),
+                headline=profile_data.get("headline", ""),
+                location=profile_data.get("location", ""),
+                about=profile_data.get("linkedin_pdf_sections", {}).get("about", ""),
+                experience=profile_data.get("linkedin_pdf_experience", []),
+                education=profile_data.get("linkedin_pdf_education", []),
+                skills=profile_data.get("linkedin_pdf_skills", []),
+                sections=profile_data.get("linkedin_pdf_sections", {}),
+            )
+            pdf_nodes = build_evidence_nodes_from_pdf(text_result, contact_name=p_name)
+            for node_data in pdf_nodes:
+                graph.add_pdf_node(
+                    source=node_data["source"],
+                    snippet=node_data["snippet"],
+                    date=node_data.get("date", "UNKNOWN"),
+                    ref=node_data.get("ref", ""),
+                )
+            pdf_artifact_count = len(pdf_nodes)
+            logger.info(
+                "Added %d PDF evidence nodes for '%s' from LinkedIn PDF",
+                pdf_artifact_count, p_name,
+            )
 
         # Add meeting evidence nodes from interactions
         for interaction in profile_data.get("interactions", [])[:15]:
@@ -1089,6 +1386,16 @@ async def generate_profile_research(profile_id: int):
             }
 
         # --- STEP 3: Generate dossier via LLM (ONLY if pre-synthesis gates pass) ---
+        # If LinkedIn PDF available, include PDF text in the interactions summary
+        pdf_context = ""
+        if profile_data.get("linkedin_pdf_raw_text"):
+            pdf_text = profile_data["linkedin_pdf_raw_text"][:10000]
+            pdf_context = (
+                f"\n\n## USER-SUPPLIED LINKEDIN PDF (artifact evidence)\n"
+                f"The following was extracted from a LinkedIn profile PDF uploaded by the user. "
+                f"Tag claims from this source as [VERIFIED-PDF].\n\n{pdf_text}"
+            )
+
         result = generate_deep_profile(
             name=p_name,
             title=p_title,
@@ -1097,7 +1404,7 @@ async def generate_profile_research(profile_id: int):
             location=p_location,
             industry=profile_data.get("company_industry", ""),
             company_size=profile_data.get("company_size"),
-            interactions_summary=interactions_summary,
+            interactions_summary=interactions_summary + pdf_context,
             web_research=web_research,
             visibility_research=visibility_research,
         )
@@ -1239,6 +1546,11 @@ async def generate_profile_research(profile_id: int):
             "visibility_report": visibility_report,
             "fail_closed_status": fail_closed_status,
             "evidence_graph": graph.to_dict(),
+            "artifacts": {
+                "pdf_uploaded": bool(profile_data.get("linkedin_pdf_path")),
+                "pdf_evidence_nodes": pdf_artifact_count,
+                "pdf_ingested_at": profile_data.get("linkedin_pdf_ingested_at"),
+            },
         }
     except HTTPException:
         raise

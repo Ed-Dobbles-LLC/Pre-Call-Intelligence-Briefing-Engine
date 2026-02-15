@@ -2117,7 +2117,14 @@
               ${p.dossier_mode_a_markdown ? 'View Meeting Prep' : 'Meeting Prep'}
             </button>
             ${p.linkedin_status === 'confirmed' ? '<button class="btn-research-secondary" onclick="' + (p.deep_profile ? 'scrollToDeepProfile(' + p.id + ')' : 'generateDeepProfile(' + p.id + ')') + '"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/><path d="M11 8v6M8 11h6"/></svg>' + (p.deep_profile ? 'View Deep Research' : 'Run Deep Research') + '</button>' : ''}
+            <button class="btn-research-secondary" onclick="triggerPdfUpload(${p.id})">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><polyline points="9 15 12 12 15 15"/></svg>
+              ${p.linkedin_pdf_path ? 'Re-upload PDF' : 'Upload LinkedIn PDF'}
+            </button>
+            ${p.artifact_dossier_markdown ? '<button class="btn-research-secondary" onclick="scrollToArtifactDossier(' + p.id + ')"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>View Artifact Dossier</button>' : (p.linkedin_pdf_raw_text ? '<button class="btn-research-secondary" onclick="generateArtifactDossier(' + p.id + ')"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>Generate Artifact Dossier</button>' : '')}
+            <input type="file" id="pdf-upload-${p.id}" accept=".pdf" style="display:none" onchange="handlePdfUpload(${p.id}, this)">
           </div>
+          ${p.linkedin_pdf_path ? '<div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap">' + '<span class="profile-tag" style="background:var(--info-bg);color:var(--info)">PDF Uploaded</span>' + (p.photo_source === 'linkedin_pdf_crop' ? '<span class="profile-tag" style="background:var(--success-bg);color:var(--success)">Photo: LinkedIn PDF</span>' : '') + (p.artifact_dossier_markdown ? '<span class="profile-tag" style="background:var(--accent-glow);color:var(--accent)">Artifact Dossier</span>' : '') + '</div>' : ''}
         </div>`;
 
       if (p.interactions && p.interactions.length) {
@@ -2198,6 +2205,44 @@
           </div>`;
       }
       html += '</div>';
+
+      // Artifact Dossier section (PDF-based) — available when PDF uploaded
+      if (p.linkedin_pdf_raw_text) {
+        html += `<div class="modal-section" id="artifactDossierSection${p.id}">
+          <h4>Public Statements & Positions
+            <span style="font-size:10px;color:var(--info);margin-left:6px;font-weight:400">ARTIFACT-FIRST — PDF + Meetings</span>
+            ${p.linkedin_pdf_path ? '<span class="profile-tag" style="background:var(--info-bg);color:var(--info);margin-left:8px;font-size:10px">PDF</span>' : ''}
+          </h4>`;
+        if (p.artifact_dossier_markdown) {
+          const covPct = p.artifact_dossier_coverage || 0;
+          const covColor = covPct >= 85 ? 'var(--success)' : covPct >= 60 ? 'var(--warning)' : 'var(--danger)';
+          html += `
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+              <span style="font-size:12px;color:var(--text-muted)">
+                Generated ${formatRelative(p.artifact_dossier_generated_at)}
+                <span style="color:${covColor};margin-left:8px">Coverage: ${covPct}%</span>
+                <span style="color:var(--text-muted);margin-left:8px">Mode: ${p.artifact_dossier_mode || 'artifact_first'}</span>
+              </span>
+              <button class="btn-research-secondary" onclick="generateArtifactDossier(${p.id})">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/></svg>
+                Regenerate
+              </button>
+            </div>
+            <div class="deep-profile-content">${marked.parse(p.artifact_dossier_markdown)}</div>`;
+        } else {
+          html += `
+            <div style="text-align:center;padding:24px">
+              <div style="color:var(--text-muted);font-size:13px;margin-bottom:16px">
+                Generate a dossier from your uploaded LinkedIn PDF.<br>No web search needed — works with PDF text + meeting history.
+              </div>
+              <button class="btn-research" onclick="generateArtifactDossier(${p.id})">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+                Generate Artifact Dossier
+              </button>
+            </div>`;
+        }
+        html += '</div>';
+      }
 
       // Deep Research Dossier section (Mode B) — verified contacts only
       if (p.linkedin_status === 'confirmed') {
@@ -2322,6 +2367,115 @@
     function scrollToDeepProfile(profileId) {
       const section = document.getElementById('deepProfileSection' + profileId);
       if (section) section.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+
+    function scrollToArtifactDossier(profileId) {
+      const section = document.getElementById('artifactDossierSection' + profileId);
+      if (section) section.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+
+    function triggerPdfUpload(profileId) {
+      const input = document.getElementById('pdf-upload-' + profileId);
+      if (input) input.click();
+    }
+
+    async function handlePdfUpload(profileId, inputElement) {
+      const file = inputElement.files[0];
+      if (!file) return;
+      if (!file.name.toLowerCase().endsWith('.pdf')) {
+        alert('Please select a PDF file');
+        return;
+      }
+
+      // Read file as base64
+      const reader = new FileReader();
+      reader.onload = async function(e) {
+        const base64 = e.target.result.split(',')[1]; // Remove data:...;base64, prefix
+
+        // Show loading state
+        const section = document.getElementById('artifactDossierSection' + profileId);
+        const parent = inputElement.closest('.modal-section') || inputElement.parentElement;
+        const loadingEl = document.createElement('div');
+        loadingEl.id = 'pdfUploadLoading' + profileId;
+        loadingEl.style.cssText = 'padding:16px;text-align:center;color:var(--info)';
+        loadingEl.textContent = 'Uploading and processing PDF...';
+        parent.appendChild(loadingEl);
+
+        try {
+          const res = await fetch(API_BASE + '/profiles/' + profileId + '/ingest-linkedin-pdf', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...authHeaders() },
+            body: JSON.stringify({ pdf_base64: base64 })
+          });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.detail || 'Upload failed');
+
+          // Update loading with results
+          loadingEl.innerHTML = '<div style="color:var(--success)">' +
+            'PDF processed: ' + data.text_length + ' chars extracted, ' +
+            data.sections_found.length + ' sections found' +
+            (data.headshot_cropped ? ', headshot cropped' : ', no headshot found') +
+            (data.photo_updated ? ' (photo updated)' : '') +
+            '</div>';
+
+          // Refresh profiles and reopen modal
+          setTimeout(function() {
+            loadProfiles();
+            loadingEl.remove();
+          }, 2000);
+        } catch (err) {
+          loadingEl.innerHTML = '<div style="color:var(--danger)">Upload failed: ' + err.message + '</div>';
+          setTimeout(function() { loadingEl.remove(); }, 5000);
+        }
+      };
+      reader.readAsDataURL(file);
+    }
+
+    async function generateArtifactDossier(profileId) {
+      const section = document.getElementById('artifactDossierSection' + profileId);
+      if (section) {
+        section.innerHTML = `
+          <h4>Public Statements & Positions <span style="font-size:10px;color:var(--info);margin-left:6px;font-weight:400">ARTIFACT-FIRST</span></h4>
+          <div style="text-align:center;padding:24px">
+            <div class="loading-spinner"></div>
+            <div style="color:var(--text-secondary);font-size:14px;margin-top:12px">Generating artifact dossier from PDF...</div>
+          </div>`;
+      }
+
+      try {
+        const res = await fetch(API_BASE + '/profiles/' + profileId + '/artifact-dossier', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...authHeaders() }
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Generation failed');
+
+        if (section) {
+          const covPct = data.coverage_pct || 0;
+          const covColor = covPct >= 85 ? 'var(--success)' : covPct >= 60 ? 'var(--warning)' : 'var(--danger)';
+          section.innerHTML = `
+            <h4>Public Statements & Positions <span style="font-size:10px;color:var(--info);margin-left:6px;font-weight:400">ARTIFACT-FIRST</span></h4>
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+              <span style="font-size:12px;color:var(--text-muted)">
+                Just generated
+                <span style="color:${covColor};margin-left:8px">Coverage: ${covPct}%</span>
+                <span style="color:var(--text-muted);margin-left:8px">${data.artifact_count} PDF nodes, ${data.meeting_count} meeting nodes</span>
+              </span>
+              <button class="btn-research-secondary" onclick="generateArtifactDossier(${profileId})">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/></svg>
+                Regenerate
+              </button>
+            </div>
+            <div class="deep-profile-content">${marked.parse(data.dossier)}</div>`;
+        }
+      } catch (err) {
+        if (section) {
+          section.innerHTML = `
+            <h4>Public Statements & Positions</h4>
+            <div style="color:var(--danger);padding:16px">Artifact dossier generation failed: ${err.message}</div>
+            <button class="btn-research-secondary" onclick="generateArtifactDossier(${profileId})">Retry</button>`;
+        }
+      }
     }
 
     function renderEntityLockHtml(lock) {

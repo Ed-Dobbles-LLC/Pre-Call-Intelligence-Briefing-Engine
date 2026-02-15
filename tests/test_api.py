@@ -459,3 +459,224 @@ class TestDeepResearchStatus:
                 assert data["deep_research_status"] == "FAILED"
         finally:
             settings.openai_api_key = orig
+
+
+# ---------------------------------------------------------------------------
+# LinkedIn PDF Ingestion Endpoint Tests
+# ---------------------------------------------------------------------------
+
+
+def _create_profile_with_pdf(name="PDF Test Person"):
+    """Helper to create a profile with LinkedIn PDF data."""
+
+    session = get_session("sqlite:///./test_briefing_engine.db")
+    entity = EntityRecord(name=name, entity_type="person")
+    entity.set_emails(["pdftest@example.com"])
+    profile_data = {
+        "linkedin_status": "confirmed",
+        "linkedin_url": "https://linkedin.com/in/pdftest",
+        "company": "TestCo",
+        "title": "Director",
+        "linkedin_pdf_raw_text": f"{name}\nDirector at TestCo\nAbout\nExperienced professional.",
+        "linkedin_pdf_sections": {"about": "Experienced professional.", "header": name},
+        "linkedin_pdf_path": "/tmp/test.pdf",
+        "linkedin_pdf_page_count": 1,
+        "linkedin_pdf_text_length": 100,
+    }
+    entity.domains = json.dumps(profile_data)
+    session.add(entity)
+    session.commit()
+    session.refresh(entity)
+    pid = entity.id
+    session.close()
+    return pid
+
+
+class TestLinkedInPdfIngestion:
+    def test_ingest_requires_pdf_base64(self):
+        """Endpoint requires pdf_base64 in request body."""
+        pid = _create_confirmed_profile()
+        response = client.post(f"/profiles/{pid}/ingest-linkedin-pdf", json={})
+        assert response.status_code == 422
+
+    def test_ingest_invalid_base64(self):
+        """Invalid base64 returns 422."""
+        pid = _create_confirmed_profile()
+        response = client.post(
+            f"/profiles/{pid}/ingest-linkedin-pdf",
+            json={"pdf_base64": "!!!not-base64!!!"},
+        )
+        assert response.status_code == 422
+
+    def test_ingest_nonexistent_profile(self):
+        """Nonexistent profile returns 404."""
+        response = client.post(
+            "/profiles/99999/ingest-linkedin-pdf",
+            json={"pdf_base64": "dGVzdA=="},
+        )
+        assert response.status_code == 404
+
+    @patch("app.services.linkedin_pdf.ingest_linkedin_pdf")
+    def test_ingest_success(self, mock_ingest):
+        """Successful ingestion returns expected fields."""
+        from app.services.linkedin_pdf import (
+            LinkedInPDFCropResult,
+            LinkedInPDFIngestResult,
+            LinkedInPDFTextResult,
+        )
+
+        mock_ingest.return_value = LinkedInPDFIngestResult(
+            text_result=LinkedInPDFTextResult(
+                raw_text="Test Person\nCTO\nAbout\nLeading innovation.",
+                name="Test Person",
+                headline="CTO",
+                page_count=2,
+                sections={"about": "Leading innovation.", "header": "Test Person"},
+                experience=[{"title": "CTO", "company": "TestCo"}],
+                education=[{"school": "MIT", "details": "MSc"}],
+                skills=["Python", "Leadership"],
+            ),
+            crop_result=LinkedInPDFCropResult(
+                success=False, method="failed", error="No fitz",
+            ),
+            pdf_path="/tmp/test_42.pdf",
+            pdf_hash="abc123",
+            ingested_at="2026-02-15T12:00:00",
+        )
+
+        pid = _create_confirmed_profile()
+        import base64
+        pdf_b64 = base64.b64encode(b"fake pdf").decode()
+        response = client.post(
+            f"/profiles/{pid}/ingest-linkedin-pdf",
+            json={"pdf_base64": pdf_b64},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "ok"
+        assert data["text_extracted"] is True
+        assert data["headshot_cropped"] is False
+        assert data["photo_updated"] is False
+        assert "header" in data["sections_found"]
+
+    @patch("app.services.linkedin_pdf.ingest_linkedin_pdf")
+    def test_ingest_crop_success_updates_photo(self, mock_ingest):
+        """When crop succeeds, photo should be updated."""
+        from app.services.linkedin_pdf import (
+            LinkedInPDFCropResult,
+            LinkedInPDFIngestResult,
+            LinkedInPDFTextResult,
+        )
+
+        mock_ingest.return_value = LinkedInPDFIngestResult(
+            text_result=LinkedInPDFTextResult(raw_text="Test", page_count=1),
+            crop_result=LinkedInPDFCropResult(
+                success=True,
+                image_path="./image_cache/linkedin_crop_99.jpg",
+                width=200,
+                height=200,
+                method="pillow_crop",
+            ),
+            pdf_path="/tmp/test.pdf",
+            pdf_hash="def456",
+            ingested_at="2026-02-15T12:00:00",
+        )
+
+        pid = _create_confirmed_profile()
+        import base64
+        pdf_b64 = base64.b64encode(b"fake pdf").decode()
+        response = client.post(
+            f"/profiles/{pid}/ingest-linkedin-pdf",
+            json={"pdf_base64": pdf_b64},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["headshot_cropped"] is True
+        assert data["photo_updated"] is True
+
+
+# ---------------------------------------------------------------------------
+# Artifact Dossier Endpoint Tests
+# ---------------------------------------------------------------------------
+
+
+class TestArtifactDossierEndpoint:
+    def test_requires_uploaded_pdf(self):
+        """Endpoint requires LinkedIn PDF to be uploaded first."""
+        pid = _create_confirmed_profile()
+        response = client.post(f"/profiles/{pid}/artifact-dossier")
+        assert response.status_code == 422
+        assert "No LinkedIn PDF" in response.json()["detail"]
+
+    def test_nonexistent_profile_404(self):
+        response = client.post("/profiles/99999/artifact-dossier")
+        assert response.status_code == 404
+
+    def test_generates_dossier_from_pdf(self):
+        """Generates artifact dossier when PDF data exists."""
+        pid = _create_profile_with_pdf()
+        response = client.post(f"/profiles/{pid}/artifact-dossier")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "ok"
+        assert data["dossier"]
+        assert data["mode"] in ("artifact_first", "artifact_llm")
+        assert data["artifact_count"] >= 1
+        assert data["evidence_graph"]
+
+    def test_dossier_contains_all_sections(self):
+        """Generated dossier has all required sections."""
+        pid = _create_profile_with_pdf()
+        response = client.post(f"/profiles/{pid}/artifact-dossier")
+        data = response.json()
+        dossier = data["dossier"]
+        assert "Executive Summary" in dossier
+        assert "Identity" in dossier
+        assert "Gaps" in dossier
+
+
+# ---------------------------------------------------------------------------
+# Deep Profile with PDF artifacts (dual-path)
+# ---------------------------------------------------------------------------
+
+
+class TestDeepProfileWithPdfArtifacts:
+    @patch("app.api.enforce_fail_closed_gates", return_value=(True, ""))
+    @patch("app.api.determine_dossier_mode", return_value=("full", "Test mode"))
+    @patch("app.api.generate_deep_profile")
+    def test_includes_pdf_artifact_count(self, mock_gen, mock_mode, mock_gates):
+        """Deep profile response includes PDF artifact info."""
+        mock_gen.return_value = (
+            "## 1. Strategic Snapshot\n"
+            "CTO at TestCo [VERIFIED-PDF] from PDF.\n"
+            "Revenue grew 32% [VERIFIED-PUBLIC] per filings."
+        )
+        pid = _create_profile_with_pdf("Deep Test Person")
+
+        from app.config import settings
+        orig = settings.openai_api_key
+        settings.openai_api_key = "test-key"
+        try:
+            response = client.post(f"/profiles/{pid}/deep-profile")
+            data = response.json()
+            if data["status"] == "ok":
+                assert "artifacts" in data
+                assert data["artifacts"]["pdf_uploaded"] is True
+                assert data["artifacts"]["pdf_evidence_nodes"] >= 1
+        finally:
+            settings.openai_api_key = orig
+
+
+# ---------------------------------------------------------------------------
+# Debug Photos with PDF stats
+# ---------------------------------------------------------------------------
+
+
+class TestDebugPhotosWithPdf:
+    def test_debug_photos_includes_pdf_stats(self):
+        response = client.get("/debug/photos")
+        assert response.status_code == 200
+        data = response.json()
+        assert "linkedin_pdf_crops" in data
+        assert "linkedin_pdf_uploads" in data
+        assert "crop_success_rate" in data
