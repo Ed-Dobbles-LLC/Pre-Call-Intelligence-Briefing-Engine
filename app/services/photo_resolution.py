@@ -34,6 +34,7 @@ class PhotoSource(str, Enum):
     UPLOADED = "uploaded"
     CACHED_PROXY = "cached_proxy"
     ENRICHMENT_PROVIDER = "enrichment_provider"
+    LINKEDIN_PDF_CROP = "linkedin_pdf_crop"
     GRAVATAR = "gravatar"
     COMPANY_LOGO = "company_logo"
     INITIALS = "initials"
@@ -175,6 +176,8 @@ class PhotoResolutionService:
                 source = PhotoSource.UPLOADED
             elif existing_photo_source == PhotoSource.CACHED_PROXY:
                 source = PhotoSource.CACHED_PROXY
+            elif existing_photo_source == PhotoSource.LINKEDIN_PDF_CROP:
+                source = PhotoSource.LINKEDIN_PDF_CROP
             elif existing_photo_source == PhotoSource.GRAVATAR:
                 source = PhotoSource.GRAVATAR
             elif existing_photo_source == PhotoSource.COMPANY_LOGO:
