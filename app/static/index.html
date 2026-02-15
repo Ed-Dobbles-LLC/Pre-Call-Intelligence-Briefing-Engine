@@ -1687,25 +1687,21 @@
       }
     }
 
-    function isBlockedPhotoUrl(url) {
-      if (!url) return false;
-      const blocked = ['media.licdn.com', 'media-exp1.licdn.com', 'static.licdn.com', 'platform-lookaside.fbsbx.com'];
-      const lower = url.toLowerCase();
-      return blocked.some(p => lower.includes(p));
-    }
+    // Track which contact photos rendered successfully (client-side)
+    const photoRenderStatus = {};
 
-    function avatarHtml(name, email, size, photoUrl, linkedinUrl) {
+    function avatarHtml(name, email, size, photoUrl, linkedinUrl, contactId) {
       size = size || 40;
       const initials = getInitials(name);
       const colorCls = avatarClass(name);
-      // Photo Resolution Decision Tree:
-      // 1. Non-blocked photo_url (uploaded, cached, or safe enrichment provider)
+      // Photo Resolution: NEVER block existing photo_url.
+      // Render as-is with robust fallback chain on error.
+      // 1. Existing photo_url (even LinkedIn CDN — let browser try)
       // 2. Gravatar (email hash)
       // 3. Clearbit company logo (domain fallback)
       // 4. Initials (always works)
-      // BLOCKED: LinkedIn CDN URLs (expire/auth-wall), unavatar.io/linkedin (scrapes)
       const sources = [];
-      if (photoUrl && !isBlockedPhotoUrl(photoUrl)) sources.push(photoUrl);
+      if (photoUrl) sources.push(photoUrl);
       // Gravatar: reliable, privacy-respecting, always available
       const gravatar = getGravatarUrl(email, size * 2);
       if (gravatar) sources.push(gravatar);
@@ -1719,10 +1715,27 @@
       }
       if (sources.length) {
         const fallbacks = sources.slice(1).join('|');
+        const cid = contactId || 0;
         return `<div class="profile-avatar ${colorCls}" style="width:${size}px;height:${size}px;font-size:${Math.round(size*0.4)}px">
-          <img class="profile-avatar-img" src="${sources[0]}" alt="" data-fallbacks="${fallbacks}" onerror="avatarFallback(this)">${initials}</div>`;
+          <img class="profile-avatar-img" src="${sources[0]}" alt="" data-fallbacks="${fallbacks}" data-contact-id="${cid}" onload="photoRenderStatus[${cid}]=true" onerror="avatarFallbackWithReport(this)">${initials}</div>`;
       }
       return `<div class="profile-avatar ${colorCls}" style="width:${size}px;height:${size}px;font-size:${Math.round(size*0.4)}px">${initials}</div>`;
+    }
+
+    function avatarFallbackWithReport(img) {
+      // If the original photo_url failed (first source), report FAILED_RENDER to server
+      const contactId = img.dataset.contactId;
+      const fallbacks = (img.dataset.fallbacks || '').split('|').filter(Boolean);
+      if (contactId && contactId !== '0' && !img.dataset.reportedFail) {
+        img.dataset.reportedFail = 'true';
+        photoRenderStatus[contactId] = false;
+        fetch('/profiles/' + contactId + '/photo-render-failed', {
+          method: 'POST',
+          headers: apiKey ? {'Authorization': 'Bearer ' + apiKey} : {},
+        }).catch(() => {});
+      }
+      // Continue with fallback chain
+      avatarFallback(img);
     }
 
     function contactLinksHtml(email, name, company, linkedinUrl) {
@@ -2034,7 +2047,7 @@
         return `
         <div class="profile-card" onclick="openProfileModal(${i})">
           <div class="profile-card-top">
-            ${avatarHtml(p.name, p.email, 40, p.photo_url || getCandidatePhoto(p), p.linkedin_url)}
+            ${avatarHtml(p.name, p.email, 40, p.photo_url || getCandidatePhoto(p), p.linkedin_url, p.id)}
             <div class="profile-info">
               <div class="profile-name">${p.name}</div>
               <div class="profile-company">${p.title ? p.title + (p.company ? ' @ ' + p.company : '') : (p.company || p.email || 'Unknown')}</div>
@@ -2084,7 +2097,7 @@
       let html = `
         <div class="modal-section">
           <div style="display:flex;align-items:center;gap:16px;margin-bottom:20px">
-            ${avatarHtml(p.name, p.email, 56, p.photo_url || getCandidatePhoto(p), p.linkedin_url)}
+            ${avatarHtml(p.name, p.email, 56, p.photo_url || getCandidatePhoto(p), p.linkedin_url, p.id)}
             <div>
               <div style="font-size:20px;font-weight:700">${p.name}</div>
               ${p.title ? '<div style="color:var(--text-primary);font-size:14px">' + p.title + (p.company ? ' @ ' + p.company : '') + '</div>' : (p.company ? '<div style="color:var(--text-secondary)">' + p.company + '</div>' : '')}
@@ -2316,7 +2329,7 @@
       const score = lock.entity_lock_score || 0;
       const locked = lock.is_locked;
       const color = locked ? 'var(--success)' : score >= 50 ? 'var(--warning, #f0ad4e)' : 'var(--danger)';
-      const label = locked ? 'LOCKED' : 'NOT LOCKED';
+      const label = locked ? 'LOCKED' : score >= 50 ? 'PARTIAL' : 'NOT LOCKED';
       let html = `<div style="border:1px solid ${color};border-radius:8px;padding:12px;margin-bottom:12px;background:rgba(0,0,0,0.2)">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
           <strong style="font-size:13px">Entity Lock</strong>
@@ -2326,11 +2339,13 @@
         html += `<div style="color:var(--danger);font-size:12px;margin-bottom:6px">${lock.disambiguation_risks[0]}</div>`;
       }
       const signals = lock.signals || {};
+      // LinkedIn: show both "URL present" and "verified via retrieval"
       const checks = [
-        ['Name match', signals.name_match],
+        ['LinkedIn URL present', signals.linkedin_url_present],
+        ['LinkedIn verified via retrieval', signals.linkedin_verified_by_retrieval],
+        ['Meeting confirmed', signals.meeting_confirmed],
         ['Company match', signals.company_match],
         ['Title match', signals.title_match],
-        ['LinkedIn confirmed', signals.linkedin_confirmed],
         ['Location match', signals.location_match],
         ['Multiple sources agree', signals.multiple_sources_agree],
       ];
@@ -2673,7 +2688,7 @@
 
         const headerHtml = `
           <div class="review-card-header">
-            ${avatarHtml(p.name, p.email, 48, p.photo_url || getCandidatePhoto(p), p.linkedin_url)}
+            ${avatarHtml(p.name, p.email, 48, p.photo_url || getCandidatePhoto(p), p.linkedin_url, p.id)}
             <div class="review-card-info">
               <div class="review-card-name">${p.name}</div>
               <div class="review-card-meta">

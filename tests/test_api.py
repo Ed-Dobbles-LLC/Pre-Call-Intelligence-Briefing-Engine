@@ -185,6 +185,8 @@ class TestDeepProfileEndpoint:
             assert isinstance(lock["signals"], dict)
             assert "name_match" in lock["signals"]
             assert "linkedin_confirmed" in lock["signals"]
+            assert "linkedin_url_present" in lock["signals"]
+            assert "linkedin_verified_by_retrieval" in lock["signals"]
         finally:
             settings.openai_api_key = orig
 

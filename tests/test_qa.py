@@ -330,16 +330,17 @@ class TestDisambiguationScorer:
         assert result.score == 0
         assert not result.is_locked
 
-    def test_linkedin_url_without_search_not_confirmed(self):
-        """LinkedIn URL alone (without public search results) is NOT confirmed."""
+    def test_linkedin_url_without_search_gives_10(self):
+        """LinkedIn URL present (without retrieval verification) gives +10 weak evidence."""
         result = score_disambiguation(
             name="Ben Titmus",
             linkedin_url="https://linkedin.com/in/bentitmus",
         )
-        # URL present but no search results to verify → 0 points, not confirmed
+        # URL present but not verified → +10 weak internal evidence
         assert result.linkedin_url_present
         assert not result.linkedin_confirmed
-        assert result.score == 0
+        assert not result.linkedin_verified_by_retrieval
+        assert result.score == 10
 
     def test_name_in_linkedin_results(self):
         search_results = {
@@ -434,14 +435,14 @@ class TestDisambiguationScorer:
         assert result.is_locked
         assert result.score >= 70
 
-    def test_meeting_data_alone_gives_zero_lock_points(self):
-        """Meeting data without public cross-confirm gives 0 lock points."""
+    def test_meeting_data_gives_20_internal_points(self):
+        """Meeting data gives +20 for internal confirmation."""
         result = score_disambiguation(
             name="Ben Titmus",
             has_meeting_data=True,
         )
         assert result.meeting_confirmed
-        assert result.score == 0  # No public cross-confirm available
+        assert result.score == 20  # Internal verified evidence
 
     def test_multiple_sources_bonus(self):
         search_results = {
@@ -490,9 +491,9 @@ class TestDisambiguationScorer:
             linkedin_url="https://linkedin.com/in/bentitmus",
         )
         assert len(result.evidence) > 0
-        # URL present but unverifiable → weight 0 for the first evidence entry
-        assert result.evidence[0]["weight"] == 0
-        assert "not verifiable" in result.evidence[0]["signal"]
+        # URL present but not yet verified → weight 10 (weak internal evidence)
+        assert result.evidence[0]["weight"] == 10
+        assert "not yet verified" in result.evidence[0]["signal"]
 
 
 # ---------------------------------------------------------------------------

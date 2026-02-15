@@ -319,13 +319,16 @@ async def trigger_meeting_enrichment():
 async def resolve_all_photos():
     """Run PhotoResolutionService on all contacts.
 
-    Applies the decision tree: uploaded → cached → provider → gravatar → logo → initials.
-    Blocks LinkedIn CDN URLs and tracks photo_status per contact.
+    RULE: Never wipe an existing photo_url. If a contact has a photo and it
+    hasn't been marked FAILED_RENDER, the resolver preserves it as-is.
+    Also runs backfill to restore UNKNOWN status on profiles that had their
+    status incorrectly set to MISSING.
     """
-    from app.services.photo_resolution import PhotoResolutionService
+    from app.services.photo_resolution import PhotoResolutionService, backfill_photo_status
     session = get_session()
     service = PhotoResolutionService()
     updated = 0
+    backfilled = 0
     try:
         entities = session.query(EntityRecord).filter(
             EntityRecord.entity_type == "person"
@@ -334,6 +337,13 @@ async def resolve_all_photos():
         for entity in entities:
             profile_data = json.loads(entity.domains or "{}")
             emails = entity.get_emails()
+
+            # Backfill: restore UNKNOWN status for profiles with URLs but MISSING status
+            old_status = profile_data.get("photo_status", "")
+            backfill_photo_status(profile_data)
+            if profile_data.get("photo_status") != old_status:
+                backfilled += 1
+
             result = service.resolve(
                 contact_id=entity.id,
                 contact_name=entity.name,
@@ -342,6 +352,7 @@ async def resolve_all_photos():
                 company_domain=profile_data.get("company_domain", ""),
                 existing_photo_url=profile_data.get("photo_url", ""),
                 existing_photo_source=profile_data.get("photo_source", ""),
+                existing_photo_status=profile_data.get("photo_status", ""),
             )
             profile_data["photo_url"] = result.photo_url
             profile_data["photo_source"] = result.photo_source
@@ -363,11 +374,109 @@ async def resolve_all_photos():
     return {
         "status": "ok",
         "contacts_processed": updated,
+        "backfilled_status": backfilled,
         "resolution_logs": [
             {"contact": log.contact_name, "source": log.resolved_source, "error": log.error}
             for log in service.resolution_logs
         ],
     }
+
+
+@app.post("/profiles/{profile_id}/photo-render-failed", dependencies=[Depends(verify_api_key)])
+async def report_photo_render_failed(profile_id: int):
+    """Client-side callback: photo failed to render in browser.
+
+    Sets photo_status to FAILED_RENDER so the next resolve-photos run
+    will attempt re-resolution instead of preserving the broken URL.
+    """
+    session = get_session()
+    try:
+        entity = session.query(EntityRecord).filter(
+            EntityRecord.id == profile_id,
+            EntityRecord.entity_type == "person",
+        ).first()
+        if not entity:
+            raise HTTPException(status_code=404, detail="Profile not found")
+
+        profile_data = json.loads(entity.domains or "{}")
+        profile_data["photo_status"] = "FAILED_RENDER"
+        entity.domains = json.dumps(profile_data)
+        session.commit()
+        return {"status": "ok", "photo_status": "FAILED_RENDER"}
+    except HTTPException:
+        raise
+    except Exception:
+        session.rollback()
+        logger.exception("Photo render-failed update failed")
+        raise HTTPException(status_code=500, detail="Update failed")
+    finally:
+        session.close()
+
+
+@app.get("/api/image-proxy")
+async def image_proxy(url: str = Query(..., description="Remote image URL to proxy")):
+    """Server-side image proxy with caching by URL hash.
+
+    Feature-flagged: LinkedIn CDN proxying is only enabled when
+    LINKEDIN_PROXY_ENABLED=true. Other domains are proxied freely.
+    Stores fetched images in a local cache directory.
+    """
+    import hashlib
+    import httpx
+    from fastapi.responses import Response
+
+    if not url or not url.startswith("http"):
+        raise HTTPException(status_code=400, detail="Invalid URL")
+
+    LINKEDIN_HOSTS = ["media.licdn.com", "media-exp1.licdn.com", "static.licdn.com"]
+    is_linkedin = any(h in url.lower() for h in LINKEDIN_HOSTS)
+
+    if is_linkedin and not settings.linkedin_proxy_enabled:
+        raise HTTPException(
+            status_code=403,
+            detail="LinkedIn image proxying is disabled. Set LINKEDIN_PROXY_ENABLED=true to enable.",
+        )
+
+    if is_linkedin:
+        logger.warning(
+            "Proxying LinkedIn CDN image — reliability/ToS risk. URL: %s",
+            url[:100],
+        )
+
+    # Check cache
+    url_hash = hashlib.sha256(url.encode()).hexdigest()[:16]
+    cache_dir = Path("./image_cache")
+    cache_dir.mkdir(exist_ok=True)
+    cache_path = cache_dir / url_hash
+
+    if cache_path.exists():
+        content = cache_path.read_bytes()
+        # Guess content type from extension or default
+        ct = "image/jpeg"
+        if url.lower().endswith(".png"):
+            ct = "image/png"
+        elif url.lower().endswith(".webp"):
+            ct = "image/webp"
+        return Response(content=content, media_type=ct)
+
+    # Fetch remote image
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(url, follow_redirects=True)
+            if resp.status_code != 200:
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"Remote server returned {resp.status_code}",
+                )
+            content_type = resp.headers.get("content-type", "image/jpeg")
+            if not content_type.startswith("image/"):
+                raise HTTPException(status_code=502, detail="Remote URL is not an image")
+
+            # Cache it
+            cache_path.write_bytes(resp.content)
+            return Response(content=resp.content, media_type=content_type)
+    except httpx.HTTPError as e:
+        raise HTTPException(status_code=502, detail=f"Failed to fetch image: {e}")
 
 
 @app.get("/debug/photos")
@@ -893,7 +1002,9 @@ async def generate_profile_research(profile_id: int):
                 "name_match": entity_lock.name_match,
                 "company_match": entity_lock.company_match,
                 "title_match": entity_lock.title_match,
+                "linkedin_url_present": entity_lock.linkedin_url_present,
                 "linkedin_confirmed": entity_lock.linkedin_confirmed,
+                "linkedin_verified_by_retrieval": entity_lock.linkedin_verified_by_retrieval,
                 "location_match": entity_lock.location_match,
                 "photo_available": entity_lock.photo_available,
                 "multiple_sources_agree": entity_lock.multiple_sources_agree,

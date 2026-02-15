@@ -971,12 +971,13 @@ def build_failure_report(
         parts.append("2. Get at least 1 public retrieval result to compute Entity Lock")
     elif entity_lock_score < 70:
         parts.append("2. Increase Entity Lock by confirming:")
-        parts.append("   - Public LinkedIn evidence → +30pts")
+        parts.append("   - LinkedIn URL present → +10pts (weak)")
+        parts.append("   - LinkedIn verified via retrieval → +30pts (strong)")
+        parts.append("   - Meeting confirms identity → +20pts")
         parts.append("   - Employer in public source → +20pts")
         parts.append("   - Multiple independent domains agree → +20pts")
         parts.append("   - Title in public source → +10pts")
         parts.append("   - Location in public source → +10pts")
-        parts.append("   - Meeting ↔ public cross-confirm → +10pts")
 
     parts.append("")
     parts.append("--- WHAT WILL CHANGE AFTER FIX ---")

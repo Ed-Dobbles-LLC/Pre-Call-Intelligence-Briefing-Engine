@@ -1173,8 +1173,10 @@ class TestBuildFailureReport:
             mode_reason="FAIL: TEST", entity_lock_score=55,
             visibility_confidence=10, graph=g, person_name="Ben",
         )
-        assert "Public LinkedIn evidence" in report
+        assert "LinkedIn verified via retrieval" in report
         assert "+30pts" in report
+        assert "Meeting confirms identity" in report
+        assert "+20pts" in report
 
 
 # ---------------------------------------------------------------------------
@@ -1492,7 +1494,7 @@ class TestEntityLockLinkedInEvidence:
     """LinkedIn confirmed must require an evidence node (public snippet/title)."""
 
     def test_linkedin_url_without_search_results_not_confirmed(self):
-        """LinkedIn URL present but no public results → not confirmed."""
+        """LinkedIn URL present but no public results → not confirmed, but +10 pts."""
         from app.brief.qa import score_disambiguation
 
         result = score_disambiguation(
@@ -1501,7 +1503,9 @@ class TestEntityLockLinkedInEvidence:
             search_results={},  # No search results at all
         )
         assert not result.linkedin_confirmed
+        assert not result.linkedin_verified_by_retrieval
         assert result.linkedin_url_present
+        assert result.score == 10  # Weak internal evidence
 
     def test_linkedin_url_with_matching_search_result_confirmed(self):
         """LinkedIn URL + matching search result → confirmed with 30 pts."""
@@ -1521,10 +1525,11 @@ class TestEntityLockLinkedInEvidence:
             },
         )
         assert result.linkedin_confirmed
+        assert result.linkedin_verified_by_retrieval
         assert result.score >= 30
 
     def test_linkedin_url_with_empty_title_snippet_not_confirmed(self):
-        """LinkedIn result with empty title AND snippet → not confirmed."""
+        """LinkedIn result with empty title AND snippet → not confirmed, +10 for URL present."""
         from app.brief.qa import score_disambiguation
 
         result = score_disambiguation(
@@ -1541,7 +1546,9 @@ class TestEntityLockLinkedInEvidence:
             },
         )
         assert not result.linkedin_confirmed
+        assert not result.linkedin_verified_by_retrieval
         assert result.linkedin_url_present
+        assert result.score == 10  # URL present gives weak +10
 
     def test_no_linkedin_url_but_search_finds_name(self):
         """No URL but search finds name → partial credit (15 pts, not 30)."""
@@ -1563,8 +1570,8 @@ class TestEntityLockLinkedInEvidence:
         assert result.score >= 15
         assert not result.linkedin_confirmed  # No URL → not "confirmed"
 
-    def test_evidence_includes_not_verifiable_message(self):
-        """Evidence should include auth-blocked message when URL exists but no results."""
+    def test_evidence_includes_not_verified_message(self):
+        """Evidence should include 'not yet verified' message when URL exists but no results."""
         from app.brief.qa import score_disambiguation
 
         result = score_disambiguation(
@@ -1573,9 +1580,11 @@ class TestEntityLockLinkedInEvidence:
             search_results={"linkedin": []},
         )
         assert not result.linkedin_confirmed
-        # Check evidence for the not-verifiable message
+        # Check evidence for the not-yet-verified message
         msgs = [e["signal"] for e in result.evidence]
-        assert any("not verifiable" in m for m in msgs)
+        assert any("not yet verified" in m for m in msgs)
+        # Should still get +10 for URL present
+        assert result.score == 10
 
 
 class TestEntityLockNewWeights:
@@ -1643,8 +1652,8 @@ class TestEntityLockNewWeights:
         )
         assert multi_weight >= 20
 
-    def test_meeting_cross_confirmation_requires_public(self):
-        """Meeting data alone gives 0 lock points (no public cross-confirm)."""
+    def test_meeting_alone_gives_20(self):
+        """Meeting data alone gives +20 internal confirmation points."""
         from app.brief.qa import score_disambiguation
 
         result = score_disambiguation(
@@ -1652,12 +1661,27 @@ class TestEntityLockNewWeights:
             has_meeting_data=True,
             search_results={},  # No public results
         )
-        # Meeting alone should give 0 points
-        assert result.score == 0
+        # Meeting gives +20 for internal confirmation
+        assert result.score == 20
         assert result.meeting_confirmed
 
-    def test_meeting_plus_public_gives_10(self):
-        """Meeting + public evidence gives 10 pts for cross-confirmation."""
+    def test_meeting_plus_linkedin_url_gives_30(self):
+        """Meeting (+20) + LinkedIn URL present (+10) = 30 without retrieval."""
+        from app.brief.qa import score_disambiguation
+
+        result = score_disambiguation(
+            name="Ben Titmus",
+            linkedin_url="https://linkedin.com/in/bentitmus",
+            has_meeting_data=True,
+            search_results={},  # No retrieval executed
+        )
+        assert result.meeting_confirmed
+        assert result.linkedin_url_present
+        # Meeting (20) + LinkedIn URL present (10) = 30
+        assert result.score == 30
+
+    def test_meeting_plus_verified_linkedin_gives_50(self):
+        """Meeting (+20) + LinkedIn verified (+30) = 50."""
         from app.brief.qa import score_disambiguation
 
         result = score_disambiguation(
@@ -1671,8 +1695,9 @@ class TestEntityLockNewWeights:
             },
         )
         assert result.meeting_confirmed
-        # Should have LinkedIn (30) + meeting cross-confirm (10) = 40
-        assert result.score >= 40
+        assert result.linkedin_verified_by_retrieval
+        # LinkedIn verified (30) + meeting (20) = 50
+        assert result.score >= 50
 
     def test_location_worth_10(self):
         from app.brief.qa import score_disambiguation
@@ -1732,6 +1757,8 @@ class TestFailureReportNewWeights:
             visibility_confidence=10, graph=g, person_name="Ben",
         )
         assert "+30pts" in report
+        assert "+10pts" in report  # LinkedIn URL present (weak)
+        assert "+20pts" in report  # Meeting confirms identity
 
     def test_includes_multiple_domains_weight(self):
         g = EvidenceGraph()
@@ -1742,3 +1769,73 @@ class TestFailureReportNewWeights:
         )
         assert "+20pts" in report
         assert "Multiple independent domains" in report
+
+
+# ---------------------------------------------------------------------------
+# REGRESSION PREVENTION — Entity Lock must not collapse to 0
+# ---------------------------------------------------------------------------
+
+
+class TestEntityLockRegressionPrevention:
+    """Tests that would have caught the Entity Lock score collapse to 0."""
+
+    def test_linkedin_url_plus_meeting_gives_nonzero(self):
+        """REGRESSION: linkedin_url_present + meeting data must not be 0."""
+        from app.brief.qa import score_disambiguation
+
+        result = score_disambiguation(
+            name="Andy Sweet",
+            linkedin_url="https://linkedin.com/in/andysweet",
+            has_meeting_data=True,
+            search_results={},  # No retrieval executed
+        )
+        # LinkedIn URL present (+10) + meeting (+20) = 30
+        assert result.score >= 30
+        assert result.score > 0  # The key invariant
+
+    def test_meeting_data_alone_gives_nonzero(self):
+        """REGRESSION: meeting data must not give 0 — it's real internal evidence."""
+        from app.brief.qa import score_disambiguation
+
+        result = score_disambiguation(
+            name="Michael Callero",
+            has_meeting_data=True,
+        )
+        assert result.score > 0
+        assert result.meeting_confirmed
+
+    def test_linkedin_url_present_gives_nonzero(self):
+        """REGRESSION: having a LinkedIn URL must give some points, not 0."""
+        from app.brief.qa import score_disambiguation
+
+        result = score_disambiguation(
+            name="Una Fox",
+            linkedin_url="https://linkedin.com/in/unafox",
+        )
+        assert result.score > 0
+        assert result.linkedin_url_present
+
+    def test_entity_lock_meaningful_without_retrieval(self):
+        """REGRESSION: entity lock should show meaningful breakdown without retrieval.
+
+        Scenario: contact with LinkedIn URL, meeting data, Apollo employer data.
+        Score must be > 0 and signals dict must not be all-false.
+        """
+        from app.brief.qa import score_disambiguation
+
+        result = score_disambiguation(
+            name="Ben Titmus",
+            company="Acme Corp",
+            linkedin_url="https://linkedin.com/in/bentitmus",
+            has_meeting_data=True,
+            apollo_data={
+                "name": "Ben Titmus",
+                "title": "CTO",
+                "organization": {"name": "Acme Corp"},
+            },
+        )
+        # LinkedIn URL (+10) + meeting (+20) + Apollo employer (+10) = 40
+        assert result.score >= 40
+        assert result.linkedin_url_present
+        assert result.meeting_confirmed
+        assert result.employer_match

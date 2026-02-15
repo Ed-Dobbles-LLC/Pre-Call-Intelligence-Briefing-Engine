@@ -288,6 +288,7 @@ class DisambiguationResult:
     # Each dict: {"signal": str, "weight": int, "source": str}
     linkedin_confirmed: bool = False
     linkedin_url_present: bool = False  # URL exists but may not be verified
+    linkedin_verified_by_retrieval: bool = False  # Verified via public evidence node
     employer_match: bool = False
     meeting_confirmed: bool = False
     title_match: bool = False
@@ -331,17 +332,19 @@ def score_disambiguation(
 ) -> DisambiguationResult:
     """Score identity lock confidence from 0-100.
 
-    New weights (100 total):
-    +30 Public evidence: LinkedIn profile resolved (must have public snippet/title)
+    Weights:
+    +10 LinkedIn URL present (weak internal evidence)
+    +30 LinkedIn verified by retrieval (strong public evidence; replaces +10)
+    +20 Meeting confirms name/employer (internal verified)
     +20 Employer confirmed by public source
     +10 Title confirmed by public source
     +10 Location confirmed by public source
     +20 Multiple independent domains agree
-    +10 Meeting <> public cross-confirmation
 
-    LinkedIn is only "confirmed" if at least a page title or snippet
-    is retrievable from a public result. Auth-blocked URLs get
-    "linkedin_url_present" but not "linkedin_confirmed".
+    LinkedIn URL present (+10) is REPLACED (not stacked) by verified (+30).
+    Meeting data gives +20 for internal confirmation regardless of public signals.
+    This prevents score collapse to 0 when we have a LinkedIn URL and meetings
+    but haven't run retrieval yet.
     """
     result = DisambiguationResult()
     search_results = search_results or {}
@@ -353,7 +356,7 @@ def score_disambiguation(
     # Track independent confirming domains for multi-domain bonus
     confirming_domains: set[str] = set()
 
-    # LinkedIn confirmation (30 pts) — requires public evidence node
+    # LinkedIn scoring: URL present (+10) OR verified by retrieval (+30)
     if linkedin_url and linkedin_url.startswith("http"):
         result.linkedin_url_present = True
 
@@ -367,12 +370,13 @@ def score_disambiguation(
             if name_lower in lr_text and (lr_title or lr_snippet):
                 linkedin_verified = True
                 result.linkedin_confirmed = True
+                result.linkedin_verified_by_retrieval = True
                 result.name_match = True
                 result.score += 30
                 confirming_domains.add("linkedin")
                 result.evidence.append({
                     "signal": (
-                        f"LinkedIn profile resolved: {lr_title[:80]}"
+                        f"LinkedIn verified via retrieval: {lr_title[:80]}"
                     ),
                     "weight": 30,
                     "source": lr.get("link", "LinkedIn"),
@@ -380,13 +384,14 @@ def score_disambiguation(
                 break
 
         if not linkedin_verified:
-            # URL present but not verifiable — no points
+            # URL present but not verified — weak internal evidence (+10)
+            result.score += 10
             result.evidence.append({
                 "signal": (
-                    "LinkedIn URL present but not verifiable without auth. "
+                    "LinkedIn URL present (not yet verified via retrieval). "
                     f"URL: {linkedin_url}"
                 ),
-                "weight": 0,
+                "weight": 10,
                 "source": "user_input",
             })
     else:
@@ -407,6 +412,29 @@ def score_disambiguation(
                     "source": lr.get("link", "LinkedIn"),
                 })
                 break
+
+    # Meeting confirmation (+20) — internal verified evidence
+    # Awarded whenever meeting data exists, regardless of public signals.
+    if has_meeting_data:
+        result.meeting_confirmed = True
+        result.score += 20
+        has_public_signal = bool(confirming_domains)
+        if has_public_signal:
+            result.evidence.append({
+                "signal": (
+                    "Meeting data confirms identity (cross-confirms with public evidence)"
+                ),
+                "weight": 20,
+                "source": "internal_data",
+            })
+        else:
+            result.evidence.append({
+                "signal": (
+                    "Meeting/email records confirm this person exists internally"
+                ),
+                "weight": 20,
+                "source": "internal_data",
+            })
 
     # Employer match (20 pts) — company confirmed across sources
     if company_lower:
@@ -523,31 +551,6 @@ def score_disambiguation(
             "weight": 10,
             "source": "cross-reference",
         })
-
-    # Meeting <> public cross-confirmation (10 pts)
-    # Only awarded if BOTH meeting data AND at least one public signal exist
-    if has_meeting_data:
-        result.meeting_confirmed = True
-        has_public_signal = bool(confirming_domains)
-        if has_public_signal:
-            result.score += 10
-            result.evidence.append({
-                "signal": (
-                    "Meeting data cross-confirms with public evidence"
-                ),
-                "weight": 10,
-                "source": "cross-reference",
-            })
-        else:
-            # Meeting data alone — informational only, no lock points
-            result.evidence.append({
-                "signal": (
-                    "Person appears in internal meeting/email records "
-                    "(no public cross-confirmation)"
-                ),
-                "weight": 0,
-                "source": "internal_data",
-            })
 
     # Photo available (informational, no points)
     if apollo_data and apollo_data.get("photo_url"):
