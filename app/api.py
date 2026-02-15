@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import threading
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -75,17 +76,23 @@ async def lifespan(app: FastAPI):
         init_db()
     except Exception:
         logger.exception("Database init failed – running in degraded mode")
-    # Repair linkedin_status in a background thread so it doesn't block
-    # the lifespan from yielding (which blocks the health-check).
-    def _deferred_repair():
-        try:
-            repaired = repair_linkedin_status()
-            if repaired:
-                logger.info("Repaired %d profiles with missing linkedin_status", repaired)
-        except Exception:
-            logger.exception("LinkedIn status repair failed")
+    # Repair linkedin_status only when explicitly opted-in via env var.
+    # This avoids blocking startup or crashlooping on lock-contention /
+    # schema-mismatch.  Run in a background thread so it never blocks
+    # the lifespan yield (and therefore the health-check).
+    if os.getenv("RUN_REPAIR_ON_STARTUP", "").lower() in ("1", "true", "yes"):
+        def _deferred_repair():
+            try:
+                repaired = repair_linkedin_status()
+                if repaired:
+                    logger.info("Repaired %d profiles with missing linkedin_status", repaired)
+            except Exception:
+                logger.exception("LinkedIn status repair failed")
 
-    threading.Thread(target=_deferred_repair, daemon=True).start()
+        threading.Thread(target=_deferred_repair, daemon=True).start()
+        logger.info("LinkedIn status repair scheduled (background thread)")
+    else:
+        logger.info("LinkedIn status repair skipped (RUN_REPAIR_ON_STARTUP not set)")
 
     # Start background auto-sync for Fireflies transcripts
     if settings.fireflies_api_key:
