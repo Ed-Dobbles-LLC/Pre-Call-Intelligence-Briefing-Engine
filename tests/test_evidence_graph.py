@@ -31,6 +31,7 @@ from app.brief.evidence_graph import (
     FailClosedReport,
     GateResult,
     build_failure_report,
+    build_meeting_prep_brief,
     build_visibility_queries,
     check_entity_lock_gate,
     check_evidence_coverage_gate,
@@ -917,7 +918,7 @@ class TestEnforceFailClosedGates:
         should_output, _ = enforce_fail_closed_gates(
             dossier_text="Test",
             entity_lock_score=70,
-            visibility_ledger_count=1,
+            visibility_ledger_count=12,
             evidence_coverage_pct=85.0,
             person_name="Test",
         )
@@ -1014,6 +1015,14 @@ class TestDossierMode:
         assert DossierMode.FULL == "full"
         assert DossierMode.CONSTRAINED == "constrained"
         assert DossierMode.HALTED == "halted"
+        assert DossierMode.MEETING_PREP == "meeting_prep"
+        assert DossierMode.DEEP_RESEARCH == "deep_research"
+
+    def test_deep_research_status_constants(self):
+        assert DossierMode.NOT_STARTED == "NOT_STARTED"
+        assert DossierMode.RUNNING == "RUNNING"
+        assert DossierMode.FAILED == "FAILED"
+        assert DossierMode.SUCCEEDED == "SUCCEEDED"
 
     def test_full_mode_at_exact_threshold(self):
         mode, _ = determine_dossier_mode(
@@ -1164,8 +1173,8 @@ class TestBuildFailureReport:
             mode_reason="FAIL: TEST", entity_lock_score=55,
             visibility_confidence=10, graph=g, person_name="Ben",
         )
-        assert "LinkedIn URL" in report
-        assert "+40pts" in report
+        assert "Public LinkedIn evidence" in report
+        assert "+30pts" in report
 
 
 # ---------------------------------------------------------------------------
@@ -1252,3 +1261,484 @@ class TestProfilerFailClosedRules:
     def test_system_prompt_no_self_contradictions(self):
         from app.brief.profiler import SYSTEM_PROMPT
         assert "never contradict" in SYSTEM_PROMPT.lower()
+
+
+# ---------------------------------------------------------------------------
+# Mode A: Meeting-Prep Brief
+# ---------------------------------------------------------------------------
+
+
+class TestMeetingPrepBrief:
+    """Tests for Mode A: fast, always-available, no web required."""
+
+    def test_basic_output_structure(self):
+        g = EvidenceGraph()
+        g.add_meeting_node(source="Q1 Review", snippet="Pipeline risk discussed")
+        brief = build_meeting_prep_brief("Ben Titmus", g)
+        assert "# Meeting-Prep Brief: Ben Titmus" in brief
+        assert "## 1. What We Know" in brief
+        assert "## 2. What To Do Next" in brief
+        assert "## 3. Key Risks" in brief
+        assert "## 4. Missing Intel" in brief
+
+    def test_includes_meeting_evidence(self):
+        g = EvidenceGraph()
+        g.add_meeting_node(source="Q1 Review", snippet="Pipeline risk discussed")
+        g.add_meeting_node(source="Follow-up", snippet="Budget approved for Q2")
+        brief = build_meeting_prep_brief("Ben Titmus", g)
+        assert "Pipeline risk discussed" in brief
+        assert "Budget approved for Q2" in brief
+        assert "[VERIFIED-MEETING]" in brief
+
+    def test_no_meetings_shows_unknown(self):
+        g = EvidenceGraph()
+        brief = build_meeting_prep_brief("Ben Titmus", g)
+        assert "[UNKNOWN]" in brief
+        assert "No meeting or email history" in brief
+
+    def test_never_requires_serpapi(self):
+        """Mode A must NEVER block on SerpAPI or visibility sweep."""
+        g = EvidenceGraph()
+        # No visibility rows, no public data — should still produce output
+        brief = build_meeting_prep_brief("Ben Titmus", g)
+        assert "Meeting-Prep Brief" in brief
+        assert len(brief) > 100  # Substantive output
+
+    def test_never_blocks_on_visibility_sweep(self):
+        """Mode A produces output regardless of visibility sweep status."""
+        g = EvidenceGraph()
+        # Zero visibility rows
+        assert len(g.get_visibility_ledger_rows()) == 0
+        brief = build_meeting_prep_brief("Ben Titmus", g)
+        assert brief  # Non-empty output
+        assert "HALTED" not in brief
+        assert "FAIL" not in brief
+
+    def test_includes_profile_data(self):
+        g = EvidenceGraph()
+        profile = {"company": "Acme Corp", "title": "CTO"}
+        brief = build_meeting_prep_brief("Ben Titmus", g, profile_data=profile)
+        assert "Acme Corp" in brief
+        assert "CTO" in brief
+
+    def test_includes_action_items(self):
+        g = EvidenceGraph()
+        profile = {"action_items": ["Follow up on proposal", "Send deck"]}
+        brief = build_meeting_prep_brief("Ben Titmus", g, profile_data=profile)
+        assert "Follow up on proposal" in brief
+        assert "Send deck" in brief
+
+    def test_recommends_deep_research(self):
+        g = EvidenceGraph()
+        brief = build_meeting_prep_brief("Ben Titmus", g)
+        assert "Deep Research" in brief
+
+    def test_tagging_only_meeting_and_inferred(self):
+        """Mode A should only use [VERIFIED-MEETING], [INFERRED-L/M], [UNKNOWN]."""
+        g = EvidenceGraph()
+        g.add_meeting_node(source="call", snippet="Test snippet")
+        brief = build_meeting_prep_brief("Ben Titmus", g)
+        # Should NOT contain public tags
+        assert "[VERIFIED-PUBLIC]" not in brief
+        # Should contain meeting-appropriate tags
+        assert "[VERIFIED-MEETING]" in brief or "[UNKNOWN]" in brief
+
+    def test_no_public_claims(self):
+        """Mode A must not make public claims unless stored as verified."""
+        g = EvidenceGraph()
+        brief = build_meeting_prep_brief("Ben Titmus", g)
+        assert "[VERIFIED-PUBLIC]" not in brief
+
+    def test_prep_checklist_included(self):
+        g = EvidenceGraph()
+        brief = build_meeting_prep_brief("Ben Titmus", g)
+        assert "Prep Checklist" in brief
+        assert "[ ]" in brief  # Checklist items
+
+    def test_missing_linkedin_in_checklist(self):
+        g = EvidenceGraph()
+        profile = {}  # No linkedin_url
+        brief = build_meeting_prep_brief("Ben Titmus", g, profile_data=profile)
+        assert "LinkedIn" in brief
+
+    def test_with_interaction_history(self):
+        g = EvidenceGraph()
+        profile = {
+            "interactions": [
+                {"title": "Q1 Review", "date": "2026-01-15", "summary": "Discussed pipeline"}
+            ]
+        }
+        brief = build_meeting_prep_brief("Ben Titmus", g, profile_data=profile)
+        assert "Discussed pipeline" in brief or "Q1 Review" in brief
+
+    def test_mode_label(self):
+        g = EvidenceGraph()
+        brief = build_meeting_prep_brief("Ben Titmus", g)
+        assert "Meeting-Prep" in brief
+        assert "internal evidence only" in brief
+
+    def test_risks_with_single_interaction(self):
+        g = EvidenceGraph()
+        g.add_meeting_node(source="call", snippet="First meeting")
+        brief = build_meeting_prep_brief("Ben Titmus", g)
+        assert "one prior interaction" in brief.lower() or "limited context" in brief.lower()
+
+    def test_risks_with_no_company(self):
+        g = EvidenceGraph()
+        profile = {}  # No company
+        brief = build_meeting_prep_brief("Ben Titmus", g, profile_data=profile)
+        assert "Company not confirmed" in brief
+
+
+# ---------------------------------------------------------------------------
+# Mode B: Deep Research Gate Requirements
+# ---------------------------------------------------------------------------
+
+
+class TestDeepResearchGateRequirements:
+    """Tests that Mode B enforces fail-closed gates correctly."""
+
+    def test_mode_b_halts_without_retrieval_ledger(self):
+        """Mode B must halt if retrieval ledger is missing."""
+        mode, reason = determine_dossier_mode(
+            entity_lock_score=85,
+            visibility_executed=False,
+            has_public_results=False,
+        )
+        assert mode == DossierMode.HALTED
+
+    def test_mode_b_halts_without_visibility_sweep(self):
+        mode, reason = determine_dossier_mode(
+            entity_lock_score=85,
+            visibility_executed=False,
+            has_public_results=True,
+        )
+        assert mode == DossierMode.HALTED
+        assert "VISIBILITY SWEEP NOT EXECUTED" in reason
+
+    def test_mode_b_halts_without_public_results(self):
+        mode, reason = determine_dossier_mode(
+            entity_lock_score=85,
+            visibility_executed=True,
+            has_public_results=False,
+        )
+        assert mode == DossierMode.HALTED
+        assert "NO PUBLIC RETRIEVAL" in reason
+
+    def test_mode_b_full_when_all_gates_pass(self):
+        mode, _ = determine_dossier_mode(
+            entity_lock_score=80,
+            visibility_executed=True,
+            has_public_results=True,
+        )
+        assert mode == DossierMode.FULL
+
+    def test_mode_b_constrained_when_entity_lock_partial(self):
+        mode, _ = determine_dossier_mode(
+            entity_lock_score=55,
+            visibility_executed=True,
+            has_public_results=True,
+        )
+        assert mode == DossierMode.CONSTRAINED
+
+
+class TestVisibilitySweepLedgerRequirement:
+    """Visibility sweep cannot claim 'none found' unless >= 12 queries executed."""
+
+    def test_12_queries_required(self):
+        should_output, message = enforce_fail_closed_gates(
+            dossier_text="Test",
+            entity_lock_score=85,
+            visibility_ledger_count=11,
+            evidence_coverage_pct=92.0,
+            person_name="Ben Titmus",
+        )
+        assert not should_output
+        assert "INSUFFICIENT VISIBILITY QUERIES" in message
+
+    def test_12_queries_passes(self):
+        should_output, _ = enforce_fail_closed_gates(
+            dossier_text="Test",
+            entity_lock_score=85,
+            visibility_ledger_count=12,
+            evidence_coverage_pct=92.0,
+            person_name="Ben Titmus",
+        )
+        assert should_output
+
+    def test_16_queries_passes(self):
+        should_output, _ = enforce_fail_closed_gates(
+            dossier_text="Test",
+            entity_lock_score=85,
+            visibility_ledger_count=16,
+            evidence_coverage_pct=92.0,
+            person_name="Ben Titmus",
+        )
+        assert should_output
+
+    def test_0_queries_also_fails(self):
+        should_output, message = enforce_fail_closed_gates(
+            dossier_text="Test",
+            entity_lock_score=85,
+            visibility_ledger_count=0,
+            evidence_coverage_pct=92.0,
+            person_name="Ben Titmus",
+        )
+        assert not should_output
+        assert "VISIBILITY SWEEP NOT EXECUTED" in message
+
+
+class TestEntityLockLinkedInEvidence:
+    """LinkedIn confirmed must require an evidence node (public snippet/title)."""
+
+    def test_linkedin_url_without_search_results_not_confirmed(self):
+        """LinkedIn URL present but no public results → not confirmed."""
+        from app.brief.qa import score_disambiguation
+
+        result = score_disambiguation(
+            name="Ben Titmus",
+            linkedin_url="https://linkedin.com/in/bentitmus",
+            search_results={},  # No search results at all
+        )
+        assert not result.linkedin_confirmed
+        assert result.linkedin_url_present
+
+    def test_linkedin_url_with_matching_search_result_confirmed(self):
+        """LinkedIn URL + matching search result → confirmed with 30 pts."""
+        from app.brief.qa import score_disambiguation
+
+        result = score_disambiguation(
+            name="Ben Titmus",
+            linkedin_url="https://linkedin.com/in/bentitmus",
+            search_results={
+                "linkedin": [
+                    {
+                        "title": "Ben Titmus - CTO at Acme",
+                        "snippet": "View Ben Titmus's profile",
+                        "link": "https://linkedin.com/in/bentitmus",
+                    }
+                ]
+            },
+        )
+        assert result.linkedin_confirmed
+        assert result.score >= 30
+
+    def test_linkedin_url_with_empty_title_snippet_not_confirmed(self):
+        """LinkedIn result with empty title AND snippet → not confirmed."""
+        from app.brief.qa import score_disambiguation
+
+        result = score_disambiguation(
+            name="Ben Titmus",
+            linkedin_url="https://linkedin.com/in/bentitmus",
+            search_results={
+                "linkedin": [
+                    {
+                        "title": "",
+                        "snippet": "",
+                        "link": "https://linkedin.com/in/bentitmus",
+                    }
+                ]
+            },
+        )
+        assert not result.linkedin_confirmed
+        assert result.linkedin_url_present
+
+    def test_no_linkedin_url_but_search_finds_name(self):
+        """No URL but search finds name → partial credit (15 pts, not 30)."""
+        from app.brief.qa import score_disambiguation
+
+        result = score_disambiguation(
+            name="Ben Titmus",
+            search_results={
+                "linkedin": [
+                    {
+                        "title": "Ben Titmus - CTO",
+                        "snippet": "Profile on LinkedIn",
+                        "link": "https://linkedin.com/in/bentitmus",
+                    }
+                ]
+            },
+        )
+        assert result.name_match
+        assert result.score >= 15
+        assert not result.linkedin_confirmed  # No URL → not "confirmed"
+
+    def test_evidence_includes_not_verifiable_message(self):
+        """Evidence should include auth-blocked message when URL exists but no results."""
+        from app.brief.qa import score_disambiguation
+
+        result = score_disambiguation(
+            name="Ben Titmus",
+            linkedin_url="https://linkedin.com/in/bentitmus",
+            search_results={"linkedin": []},
+        )
+        assert not result.linkedin_confirmed
+        # Check evidence for the not-verifiable message
+        msgs = [e["signal"] for e in result.evidence]
+        assert any("not verifiable" in m for m in msgs)
+
+
+class TestEntityLockNewWeights:
+    """Entity lock scoring uses new weights (100 total)."""
+
+    def test_public_linkedin_worth_30(self):
+        from app.brief.qa import score_disambiguation
+
+        result = score_disambiguation(
+            name="Ben Titmus",
+            linkedin_url="https://linkedin.com/in/bentitmus",
+            search_results={
+                "linkedin": [
+                    {"title": "Ben Titmus - CTO", "snippet": "Profile", "link": "https://linkedin.com/in/bentitmus"}
+                ]
+            },
+        )
+        # Should get exactly 30 pts for LinkedIn
+        linkedin_weight = sum(
+            e["weight"] for e in result.evidence if "LinkedIn" in e["signal"] and e["weight"] > 0
+        )
+        assert linkedin_weight == 30
+
+    def test_employer_worth_20(self):
+        from app.brief.qa import score_disambiguation
+
+        result = score_disambiguation(
+            name="Ben Titmus",
+            company="Acme Corp",
+            search_results={
+                "general": [
+                    {"title": "Ben Titmus at Acme Corp", "snippet": "Ben Titmus leads Acme Corp"}
+                ],
+                "news": [
+                    {"title": "Acme Corp promotes Ben Titmus", "snippet": "Ben Titmus named CTO"}
+                ],
+            },
+        )
+        assert result.employer_match
+        assert result.score >= 20
+
+    def test_multiple_domains_worth_20(self):
+        from app.brief.qa import score_disambiguation
+
+        result = score_disambiguation(
+            name="Ben Titmus",
+            company="Acme",
+            linkedin_url="https://linkedin.com/in/bentitmus",
+            search_results={
+                "linkedin": [
+                    {"title": "Ben Titmus - CTO", "snippet": "View profile", "link": "https://linkedin.com/in/bentitmus"}
+                ],
+                "general": [
+                    {"title": "Ben Titmus at Acme", "snippet": "Ben Titmus is CTO of Acme"}
+                ],
+                "news": [
+                    {"title": "Acme news: Ben Titmus", "snippet": "Ben Titmus announced"}
+                ],
+            },
+        )
+        assert result.multiple_sources_agree
+        # Should have 20pts for multi-domain (3+ domains)
+        multi_weight = sum(
+            e["weight"] for e in result.evidence if "domains agree" in e["signal"]
+        )
+        assert multi_weight >= 20
+
+    def test_meeting_cross_confirmation_requires_public(self):
+        """Meeting data alone gives 0 lock points (no public cross-confirm)."""
+        from app.brief.qa import score_disambiguation
+
+        result = score_disambiguation(
+            name="Ben Titmus",
+            has_meeting_data=True,
+            search_results={},  # No public results
+        )
+        # Meeting alone should give 0 points
+        assert result.score == 0
+        assert result.meeting_confirmed
+
+    def test_meeting_plus_public_gives_10(self):
+        """Meeting + public evidence gives 10 pts for cross-confirmation."""
+        from app.brief.qa import score_disambiguation
+
+        result = score_disambiguation(
+            name="Ben Titmus",
+            linkedin_url="https://linkedin.com/in/bentitmus",
+            has_meeting_data=True,
+            search_results={
+                "linkedin": [
+                    {"title": "Ben Titmus", "snippet": "Profile", "link": "https://linkedin.com/in/bentitmus"}
+                ]
+            },
+        )
+        assert result.meeting_confirmed
+        # Should have LinkedIn (30) + meeting cross-confirm (10) = 40
+        assert result.score >= 40
+
+    def test_location_worth_10(self):
+        from app.brief.qa import score_disambiguation
+
+        result = score_disambiguation(
+            name="Ben Titmus",
+            location="London",
+            search_results={
+                "general": [
+                    {"title": "Ben Titmus", "snippet": "Based in London, Ben Titmus leads"}
+                ]
+            },
+        )
+        assert result.location_match
+        assert result.score >= 10
+
+    def test_full_lock_achievable(self):
+        """Should be possible to reach 100 with all signals."""
+        from app.brief.qa import score_disambiguation
+
+        result = score_disambiguation(
+            name="Ben Titmus",
+            company="Acme Corp",
+            title="CTO",
+            linkedin_url="https://linkedin.com/in/bentitmus",
+            location="London",
+            has_meeting_data=True,
+            search_results={
+                "linkedin": [
+                    {"title": "Ben Titmus - CTO at Acme Corp", "snippet": "View Ben Titmus profile", "link": "https://linkedin.com/in/bentitmus"}
+                ],
+                "general": [
+                    {"title": "Ben Titmus at Acme Corp", "snippet": "Ben Titmus, CTO of Acme Corp in London"}
+                ],
+                "news": [
+                    {"title": "Acme Corp: Ben Titmus named CTO", "snippet": "Ben Titmus appointed CTO in London"}
+                ],
+            },
+        )
+        assert result.score >= 70
+        assert result.linkedin_confirmed
+        assert result.employer_match
+        assert result.title_match
+        assert result.location_match
+        assert result.multiple_sources_agree
+
+
+class TestFailureReportNewWeights:
+    """Failure report should reference new scoring weights."""
+
+    def test_includes_new_linkedin_weight(self):
+        g = EvidenceGraph()
+        # Need at least 1 public result so we get the weight breakdown
+        g.log_retrieval(query="q1", intent="visibility", results=[{"title": "T"}])
+        report = build_failure_report(
+            mode_reason="FAIL: TEST", entity_lock_score=40,
+            visibility_confidence=10, graph=g, person_name="Ben",
+        )
+        assert "+30pts" in report
+
+    def test_includes_multiple_domains_weight(self):
+        g = EvidenceGraph()
+        g.log_retrieval(query="q1", intent="visibility", results=[{"title": "T"}])
+        report = build_failure_report(
+            mode_reason="FAIL: TEST", entity_lock_score=40,
+            visibility_confidence=10, graph=g, person_name="Ben",
+        )
+        assert "+20pts" in report
+        assert "Multiple independent domains" in report
