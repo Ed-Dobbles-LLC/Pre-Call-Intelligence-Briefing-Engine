@@ -1,4 +1,4 @@
-"""Tests for the SerpAPI web search client."""
+"""Tests for the SerpAPI web search client with tiered retrieval."""
 
 from __future__ import annotations
 
@@ -16,8 +16,11 @@ import pytest
 
 from app.clients.serpapi import (
     SerpAPIClient,
+    SourceTier,
     _normalize_result,
+    classify_source_tier,
     format_web_results_for_prompt,
+    generate_search_plan,
 )
 
 
@@ -48,6 +51,31 @@ SAMPLE_ORGANIC_RESULTS = [
 ]
 
 
+class TestSourceTierClassification:
+    def test_linkedin_is_primary(self):
+        assert classify_source_tier("https://www.linkedin.com/in/someone") == SourceTier.PRIMARY
+
+    def test_companies_house_is_primary(self):
+        assert classify_source_tier(
+            "https://find-and-update.company-information.service.gov.uk/company/12345"
+        ) == SourceTier.PRIMARY
+
+    def test_crunchbase_is_primary(self):
+        assert classify_source_tier("https://www.crunchbase.com/person/test") == SourceTier.PRIMARY
+
+    def test_techcrunch_is_secondary(self):
+        assert classify_source_tier("https://techcrunch.com/article") == SourceTier.SECONDARY
+
+    def test_unknown_domain_defaults_to_secondary(self):
+        assert classify_source_tier("https://randomsite.com/page") == SourceTier.SECONDARY
+
+    def test_empty_url_is_low(self):
+        assert classify_source_tier("") == SourceTier.LOW
+
+    def test_press_release_is_primary(self):
+        assert classify_source_tier("https://www.businesswire.com/news/123") == SourceTier.PRIMARY
+
+
 class TestNormalizeResult:
     def test_extracts_all_fields(self):
         result = _normalize_result(SAMPLE_ORGANIC_RESULTS[0])
@@ -56,6 +84,13 @@ class TestNormalizeResult:
         assert "VP Engineering" in result["snippet"]
         assert result["source"] == "LinkedIn"
         assert result["date"] == "2026-01-15"
+
+    def test_includes_tier(self):
+        result = _normalize_result(SAMPLE_ORGANIC_RESULTS[0])
+        assert result["tier"] == SourceTier.PRIMARY  # LinkedIn
+
+        result2 = _normalize_result(SAMPLE_ORGANIC_RESULTS[1])
+        assert result2["tier"] == SourceTier.SECONDARY  # TechCrunch
 
     def test_handles_missing_fields(self):
         result = _normalize_result({"title": "Test", "link": "https://example.com"})
@@ -74,7 +109,8 @@ class TestNormalizeResult:
 class TestFormatWebResults:
     def test_empty_results(self):
         result = format_web_results_for_prompt({
-            "general": [], "linkedin": [], "news": [], "talks": []
+            "general": [], "linkedin": [], "news": [],
+            "talks": [], "company_site": [], "registry": [],
         })
         assert result == ""
 
@@ -90,6 +126,16 @@ class TestFormatWebResults:
         assert "Jane Doe - VP Engineering" in formatted
         assert "TechCrunch" in formatted
         assert "URL:" in formatted
+
+    def test_includes_tier_labels(self):
+        results = {
+            "general": [_normalize_result(SAMPLE_ORGANIC_RESULTS[0])],
+            "linkedin": [],
+            "news": [],
+            "talks": [],
+        }
+        formatted = format_web_results_for_prompt(results)
+        assert "[PRIMARY]" in formatted
 
     def test_includes_urls(self):
         results = {
@@ -144,6 +190,35 @@ class TestFormatWebResults:
         formatted = format_web_results_for_prompt(results)
         assert "primary sources" in formatted
 
+    def test_company_site_category(self):
+        results = {
+            "general": [],
+            "linkedin": [],
+            "news": [],
+            "talks": [],
+            "company_site": [_normalize_result(SAMPLE_ORGANIC_RESULTS[0])],
+            "registry": [],
+        }
+        formatted = format_web_results_for_prompt(results)
+        assert "Company Website Results" in formatted
+
+    def test_registry_category(self):
+        results = {
+            "general": [],
+            "linkedin": [],
+            "news": [],
+            "talks": [],
+            "company_site": [],
+            "registry": [_normalize_result({
+                "title": "JANE DOE - Companies House",
+                "link": "https://find-and-update.company-information.service.gov.uk/officers/abc",
+                "snippet": "Director of Acme Ltd",
+            })],
+        }
+        formatted = format_web_results_for_prompt(results)
+        assert "Corporate Registry Results" in formatted
+        assert "[PRIMARY]" in formatted
+
 
 class TestSerpAPIClient:
     def test_no_api_key_returns_empty(self):
@@ -160,7 +235,14 @@ class TestSerpAPIClient:
         result = asyncio.get_event_loop().run_until_complete(
             client.search_person(name="Test Person")
         )
-        assert result == {"general": [], "linkedin": [], "news": [], "talks": []}
+        # Must have all expected keys
+        assert "general" in result
+        assert "linkedin" in result
+        assert "news" in result
+        assert "talks" in result
+        assert "company_site" in result
+        assert "registry" in result
+        assert all(v == [] for v in result.values())
 
     @pytest.mark.asyncio
     async def test_search_calls_serpapi(self):
@@ -236,7 +318,7 @@ class TestSerpAPIClient:
 
     @pytest.mark.asyncio
     async def test_search_person_runs_multiple_queries(self):
-        """search_person should run 4 categorised searches."""
+        """search_person should run 6 categorised searches (with company)."""
         mock_response = MagicMock()
         mock_response.status_code = 200
         mock_response.json.return_value = {"organic_results": SAMPLE_ORGANIC_RESULTS[:1]}
@@ -258,8 +340,10 @@ class TestSerpAPIClient:
             assert "linkedin" in results
             assert "news" in results
             assert "talks" in results
-            # 4 categories = 4 searches
-            assert mock_client.get.call_count == 4
+            assert "company_site" in results
+            assert "registry" in results
+            # 6 categories with company = 6 searches
+            assert mock_client.get.call_count == 6
 
     @pytest.mark.asyncio
     async def test_search_person_query_includes_company(self):
@@ -290,6 +374,51 @@ class TestSerpAPIClient:
             assert '"Acme Corp"' in captured_queries[0]
             # LinkedIn query should be site-scoped
             assert "site:linkedin.com" in captured_queries[1]
+            # Company site search should include site:
+            assert any("site:acmecorp" in q for q in captured_queries)
+            # Registry search
+            assert any("company-information.service.gov.uk" in q for q in captured_queries)
+
+
+class TestSearchPlan:
+    def test_generates_plan_with_company(self):
+        plan = generate_search_plan(
+            name="Jane Doe",
+            company="Acme Corp",
+            title="VP Engineering",
+        )
+        assert len(plan) >= 6
+        categories = [p["category"] for p in plan]
+        assert "identity" in categories
+        assert "linkedin" in categories
+        assert "company_site" in categories
+        assert "news" in categories
+        assert "talks" in categories
+        assert "registry" in categories
+
+    def test_plan_has_rationale(self):
+        plan = generate_search_plan(name="Jane Doe", company="Acme Corp")
+        for entry in plan:
+            assert "query" in entry
+            assert "category" in entry
+            assert "rationale" in entry
+            assert len(entry["rationale"]) > 10
+
+    def test_plan_includes_name_in_queries(self):
+        plan = generate_search_plan(name="Jane Doe")
+        for entry in plan:
+            assert "Jane Doe" in entry["query"]
+
+    def test_plan_includes_company_site_search(self):
+        plan = generate_search_plan(name="Jane Doe", company="Acme Corp")
+        company_site = [p for p in plan if p["category"] == "company_site"]
+        assert len(company_site) == 1
+        assert "acmecorp" in company_site[0]["query"]
+
+    def test_plan_includes_registry_searches(self):
+        plan = generate_search_plan(name="Jane Doe")
+        registry_plans = [p for p in plan if "registry" in p["category"]]
+        assert len(registry_plans) >= 2  # UK + US
 
 
 class TestProfilerWebIntegration:

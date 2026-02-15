@@ -1,9 +1,14 @@
-"""Deep profile generation: executive intelligence dossier for verified contacts.
+"""Decision-grade intelligence dossier generation.
 
-Generates a structured intelligence profile using LLM analysis of public
-information and internal evidence (meetings, emails). Output is a rigorous
-markdown report with explicit source attribution, gap flagging, and
-interview questions tied to specific claims.
+Replaces generic profile summaries with a Strategic Operating Model.
+Every claim is evidence-tagged. Every section is structured for
+executive decision-making: negotiation, pressure-testing, and
+incentive alignment.
+
+Three inputs are integrated:
+1. Meeting notes / transcripts (internal)
+2. Public statements & positions (web search)
+3. System inferences (LLM analytical layer)
 """
 
 from __future__ import annotations
@@ -15,43 +20,55 @@ from app.clients.openai_client import LLMClient
 logger = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = """\
-You are a senior executive intelligence analyst producing a decision-grade \
-dossier on a business contact. This dossier will be used to prepare for a \
-high-stakes meeting or hiring conversation.
+You are a Strategic Intelligence Analyst. You produce decision-grade \
+executive dossiers, not summaries.
 
-## CRITICAL RULES
+## ABSOLUTE RULES
 
-1. **Separate facts from inference.** Every claim must be tagged:
-   - [FACT] — verifiable from a named public source (LinkedIn profile, \
-press release, company website, SEC filing, podcast transcript, conference \
-talk, news article, corporate registry, etc.)
-   - [INFERENCE] — your analytical interpretation based on patterns. \
-State your confidence: HIGH / MEDIUM / LOW.
-   - [INTERNAL] — derived from the user's own meeting/email records.
+1. **Evidence tagging** — every non-trivial claim must carry ONE tag:
+   - [VERIFIED-MEETING] — explicitly stated in meeting transcript/email
+   - [VERIFIED-PUBLIC] — explicitly documented in a cited public source (URL required)
+   - [INFERRED-HIGH] — high-confidence inference from multiple converging signals
+   - [INFERRED-MEDIUM] — medium-confidence inference from limited signals
+   - [INFERRED-LOW] — low-confidence inference from weak or single signal
+   - [UNKNOWN] — no supporting evidence. State it. Do not guess.
 
-2. **Flag gaps explicitly.** If you have no information on a topic, write: \
-"**No public evidence found in available sources.**" Do NOT fill gaps with \
-generic executive language. An explicit gap is more valuable than plausible \
-fiction.
+2. **Citation format** — every [VERIFIED-PUBLIC] claim must include:
+   (Source: [publisher/platform], URL: [url], Date: [date if known])
+   Every [VERIFIED-MEETING] claim must reference the meeting context.
 
-3. **Cite source types.** For every factual claim, indicate the source \
-category in parentheses: (LinkedIn profile), (LinkedIn post), (press \
-release), (company blog), (podcast: [name]), (conference talk: [name]), \
-(news: [outlet]), (SEC filing), (corporate registry), (Crunchbase), etc. \
-When web search results are provided with URLs, cite the specific URL. \
-Otherwise, name the source type so the user can verify.
+3. **No hallucination** — if you have no evidence for something, write \
+"**No evidence available.**" An explicit gap is worth more than plausible fiction.
 
-4. **No generic executive fluff.** Phrases like "proven leader," \
-"passionate about innovation," or "track record of success" are banned. \
-If you cannot say something specific and evidenced, say nothing.
+4. **No generic filler** — before writing any sentence, apply this test: \
+"Could this sentence describe 50% of executives in this industry?" \
+If yes, DELETE IT. Specific or nothing.
 
-5. **Prioritize what is actionable for the meeting.** The user needs to \
-know: How does this person think? What do they care about? What will \
-they react to? What should the user ask, say, and avoid?
+   BANNED phrases (unless directly quoting the subject with citation):
+   - "strategic leader", "visionary", "thought leader"
+   - "data-driven", "results-driven", "outcome-driven"
+   - "passionate about", "deeply committed to"
+   - "transformative", "game-changing", "cutting-edge"
+   - "proven track record", "extensive experience"
+   - "empowers teams", "bridges the gap"
+   - "at the intersection of"
+   - "holistic approach", "synergies"
 
-6. **Disambiguation.** If the name is common, explicitly note what \
-identifiers distinguish this person (company, location, LinkedIn URL) and \
-flag any ambiguity risk."""
+5. **Use the subject's own words** — when you have quotes, use them. \
+Verbatim quotes in > blockquotes with source attribution. \
+Language patterns are evidence. Generic descriptions are not.
+
+6. **Distinguish source tiers** — primary sources (company site, \
+registry, direct talks) outweigh secondary sources (news articles, \
+conference pages). Low-quality sources (forums, SEO content) should \
+be flagged and never used for key claims.
+
+7. **Recency matters** — prefer evidence from the last 24 months for \
+career/bio claims. Older evidence should be labeled with its date.
+
+8. **Disambiguation** — if the name is common, note what identifiers \
+lock the identity (company, LinkedIn URL, location, photo) and flag \
+any ambiguity risk."""
 
 USER_PROMPT_TEMPLATE = """\
 ## SUBJECT IDENTIFIERS
@@ -66,175 +83,191 @@ USER_PROMPT_TEMPLATE = """\
 ## INTERNAL CONTEXT (from our meetings and emails)
 {internal_context}
 
-## WEB RESEARCH (real-time search results)
+## WEB RESEARCH (real-time search results with source tiers)
 {web_research}
 
-## REQUIRED DELIVERABLES
+---
 
-Produce ALL of the following sections. For each section, follow the \
-evidence rules strictly. If a section has no available evidence, include \
-the section header with an explicit gap statement.
+## REQUIRED OUTPUT: DECISION-GRADE INTELLIGENCE DOSSIER
+
+Produce ALL sections below. Follow evidence rules strictly. \
+If a section has no evidence, include the header with an explicit \
+gap statement. Do NOT pad with generic language.
 
 ---
 
-### 1. Executive Summary
+### 1. Strategic Snapshot (5-7 bullets max)
 
-Write 3–5 sentences that would let someone walk into a meeting with this \
-person in 60 seconds. Cover:
-- Who they are (role, company, career stage)
-- What they care about (based on public statements, not assumptions)
-- How to approach them (conversation strategy in one sentence)
-- Key information gaps that limit confidence
+Answer ONLY these questions with evidence-backed statements:
+- What game is this person playing? (career trajectory, company stage)
+- What incentives are visible? (revenue targets, growth mandates, board pressure)
+- What constraints are visible? (budget, headcount, organizational politics)
+- What outcomes are they measured on? (KPIs, deliverables, quotas)
+- What risks are they managing? (delivery, reputation, competition)
 
----
-
-### 2. Identity & Disambiguation
-
-- Full name variations found in public records
-- Current and recent employers with date ranges
-- Location and nationality signals
-- Corporate registry entries (e.g., Companies House directorships, SEC \
-officer listings) if any are known
-- Other public profiles or affiliations
-- **Disambiguation note**: If the name is shared by others, note how to \
-distinguish this person
+No adjectives. Only structural observations with evidence tags.
 
 ---
 
-### 3. Career Timeline
+### 2. Verified Facts Table
 
-Produce a **chronological table** of career moves and public appearances:
+| # | Fact | Tag | Source | URL / Reference | Confidence |
+|---|------|-----|--------|-----------------|------------|
 
-| Date/Period | Event | Source Type | Significance |
-|---|---|---|---|
-
-Include: role changes, company moves, public speaking, publications, \
-certifications, notable projects. Flag which are [FACT] vs [INFERENCE].
-
----
-
-### 4. Public Statements & Positions
-
-For each topic area below, report what THIS PERSON has actually said or \
-written publicly. Use verbatim quotes (in > blockquotes) where possible. \
-If no public statement exists, write "**No public evidence found.**"
-
-**Topic areas to cover:**
-- Technology strategy and AI/data
-- Business outcomes and ROI philosophy
-- Governance, risk, and ethics
-- Leadership and organizational design
-- Industry-specific positions
-- Anything else notable from their public record
-
-For each topic, include:
-- What they said (verbatim if possible)
-- Where/when they said it (source type)
-- What it reveals about their thinking
+Include: name, title, company, location, education, notable affiliations, \
+quantified outcomes, projects, clients (if stated), timeline events. \
+Every row must have a source. If a fact is self-reported and unverified, note that.
 
 ---
 
-### 5. Rhetorical & Cognitive Patterns
+### 3. Power & Influence Map
 
-Analyze their **communication style** based on available public content:
-- Preferred frameworks and mental models
-- Rhetorical patterns (triads? contrasts? storytelling? data-first?)
-- Language register (executive/strategic? technical? operational? \
-academic?)
-- Persuasion strategy (credibility via scale? novelty? authority? \
-social proof?)
-- Implicit audience (who are they writing/speaking for?)
+For each dimension, state what is known and tag it:
+- **Formal authority**: Title, reporting line, org chart position
+- **Informal influence**: Network, reputation, expertise leverage
+- **Revenue control**: P&L ownership, budget authority, sales targets
+- **Decision gate ownership**: What they can approve/veto
+- **Who they need to impress**: Board, CEO, investors, customers
+- **Who can veto them**: Stakeholders with override power
 
-Provide specific examples with source attribution.
-
----
-
-### 6. Tone & Behavioral Forecast
-
-Based on the evidence, predict:
-- What they screen for in conversations (and why you think so)
-- Red flags that will lose their attention
-- Topics that will energize them
-- Language patterns to mirror
-- How they likely make decisions (consensus? data? gut? authority?)
-- How they handle disagreement (based on evidence, not assumptions)
-
-Each prediction must cite the evidence behind it.
+If unknown, write [UNKNOWN] explicitly. Do not infer org charts you haven't seen.
 
 ---
 
-### 7. Cross-Topic Position Map
+### 4. Incentive & Scorecard Hypothesis
 
-Produce a summary table:
+Based on meeting + public positioning:
+- **Short-term incentives** (0-3 months): What they need to deliver NOW
+- **Medium-term incentives** (3-12 months): What success looks like this year
+- **Career incentives**: Where they want to be in 2-3 years
+- **Risk exposure**: What could go wrong for them personally
+- **Where they personally win**: Outcomes that advance their career
+- **Where they personally lose**: Outcomes that damage their position
 
-| Topic Area | Most Defensible Position | Evidence Type | What to Probe |
-|---|---|---|---|
-
----
-
-### 8. Gaps, Risks & Inconsistencies
-
-- **Information gaps**: What important things do we NOT know about this \
-person? Be specific about what's missing and why it matters.
-- **Potential inconsistencies**: Any tensions between their stated \
-positions and their career moves?
-- **Identity/attribution risks**: Could any information be about a \
-different person with the same name?
-- **Self-reported claims to verify**: List any specific claims (savings \
-figures, team sizes, project outcomes) that are self-reported and should \
-be probed.
+Each must be tagged with evidence and confidence level. \
+If you're inferring, state the upstream signals explicitly.
 
 ---
 
-### 9. Targeted Interview Questions
+### 5. Strategic Tensions & Fault Lines
 
-Generate 8–12 high-yield questions. CRITICAL: Each question must be \
-**tied to a specific claim, pattern, or gap** identified in the sections \
-above. Do not generate generic questions.
+Identify live tensions from the evidence. Examples:
+- Consulting revenue vs product margin
+- Growth targets vs delivery capacity
+- Regional expansion vs core market focus
+- AI hype in positioning vs implementation realism
+- Public optimism vs private caution
 
-Format each question as:
-
-**[Topic]** Question text
-> *Why this question*: Explanation of what specific claim/gap/pattern \
-this probes, and what a strong vs weak answer looks like.
-
-Group questions into:
-- **Probing self-reported claims** (test specificity behind stated achievements)
-- **Testing depth behind rhetoric** (force concreteness on their repeated themes)
-- **Exploring gaps** (surface information not available in public record)
-- **Stress-testing positioning** (contrarian or challenging angles)
+Each tension MUST cite specific evidence that reveals it. \
+If you infer a tension, state what signals led you there.
 
 ---
 
-### 10. Conversation Strategy
+### 6. Cognitive & Rhetorical Patterns (Evidence-Based Only)
 
-- **3 positioning angles** that align with their demonstrated values \
-(cite which values and why)
-- **3 positioning mistakes** to avoid (cite what would trigger them \
-and why)
-- **2 contrarian hooks** — intelligent challenges that will earn \
-respect rather than defensiveness
-- **Opening move**: Suggested first 2 minutes of conversation
+Extract from meeting transcripts AND public content:
+- **Repeated language**: Phrases they use multiple times (quote them)
+- **Framing devices**: How they structure arguments
+- **Growth vs control bias**: Do they lean toward expansion or risk management?
+- **Product vs services bias**: Where do they see value creation?
+- **Optimism vs realism**: How do they handle uncertainty?
+- **Abstraction level**: Do they operate at strategy, tactics, or execution?
+- **Comfort with numbers**: Do they cite metrics or stay qualitative?
+- **Comfort with ambiguity**: Do they need certainty or embrace uncertainty?
+
+Use direct quotes when available. \
+No generic personality typing. No MBTI. No "likely analytical."
+
+---
+
+### 7. Behavioral Forecast (Scenario-Based)
+
+Generate specific predictions with reasoning:
+
+**If [specific scenario] → Likely reaction:**
+- Prediction
+- Reasoning (cite evidence)
+
+Cover at minimum:
+- If challenged on a key claim → How they defend
+- If their revenue/delivery target slips → What they likely do
+- If asked for a commitment → How they respond
+- If presented with competing priorities → How they choose
+
+Each forecast must cite the evidence behind the prediction.
+
+---
+
+### 8. Conversation & Negotiation Playbook
+
+Produce:
+- **3 leverage angles** — mapped to their specific incentive structure
+- **2 stress tests** — pressure points that reveal real position
+- **2 credibility builders** — what earns trust with THIS person specifically
+- **1 contrarian wedge** — intelligent challenge that earns respect
+- **1 high-upside collaboration vector** — best partnership angle
+
+Each must reference the incentive or pattern that makes it effective.
+
+---
+
+### 9. Delta: Public Persona vs Meeting Persona
+
+Compare what their public positioning says vs what meeting signals reveal:
+- **Alignments**: Where public and private messages match
+- **Divergences**: Where they differ, and what the gap implies
+- **Implications**: What the delta tells us about their real priorities
+
+If only one source is available, state that and note what the other \
+source would add.
+
+---
+
+### 10. Unknowns That Matter
+
+ONLY include gaps that materially change strategy. Examples:
+- P&L ownership level → affects budget authority assumptions
+- Compensation structure → affects motivation analysis
+- Board reporting line → affects decision-making speed
+- Equity exposure → affects risk tolerance
+- Internal political dynamics → affects what they can commit to
+
+Do NOT include generic gaps like "education history unknown" unless \
+it specifically affects the meeting strategy.
+
+---
+
+### 11. Engine Improvement Recommendations
+
+After completing the dossier, specify:
+- **Missing signals**: What data was absent that would improve accuracy
+- **Recommended data sources**: Specific sources to fetch next time
+- **Capture fields**: Structured fields the meeting tool should record \
+in future calls (e.g., risk appetite signals, growth pressure markers, \
+incentive cues, timeline commitments, tone markers, interruptions, \
+deflection patterns)
 
 ---
 
 ## OUTPUT CONSTRAINTS
 - Use markdown with clear ## section headers
 - Use tables where specified
-- Use > blockquotes for direct quotes
+- Use > blockquotes for direct quotes (with source)
 - Bold key terms and names
-- Tag every claim: [FACT], [INFERENCE], or [INTERNAL]
-- Flag every gap: "**No public evidence found.**"
-- Do NOT pad sections with generic language when evidence is thin. \
-Short and honest beats long and fabricated.
+- Tag EVERY non-trivial claim
+- Flag EVERY gap explicitly
+- NO padding. Short and honest beats long and fabricated.
+- If the output could describe 50% of enterprise AI leaders, rewrite it.
 
-## QUALITY SELF-CHECK (do this before finalizing)
-- [ ] Every factual claim has a source type in parentheses
-- [ ] Every inference is labeled with confidence level
+## QUALITY SELF-CHECK (run before finalizing)
+- [ ] Every factual claim has a source citation
+- [ ] Every inference states confidence + upstream signals
 - [ ] Every section with insufficient evidence says so explicitly
-- [ ] Interview questions reference specific claims/gaps from above
-- [ ] No generic executive clichés survived
-- [ ] The dossier distinguishes what is KNOWN vs INFERRED vs UNKNOWN
+- [ ] Behavioral forecasts cite specific evidence
+- [ ] Conversation strategy maps to specific incentives
+- [ ] No generic executive cliches survived
+- [ ] The dossier distinguishes VERIFIED vs INFERRED vs UNKNOWN
+- [ ] Unknowns are strategically material, not generic
 """
 
 
@@ -249,12 +282,11 @@ def generate_deep_profile(
     interactions_summary: str = "",
     web_research: str = "",
 ) -> str:
-    """Generate a deep intelligence profile for a verified contact.
+    """Generate a decision-grade intelligence dossier for a contact.
 
-    Returns the profile as a markdown string.
+    Returns the dossier as a markdown string.
     Raises RuntimeError if the LLM client is not available.
     """
-    # Build internal context from our data
     if interactions_summary:
         internal_context = interactions_summary
     else:
@@ -263,7 +295,9 @@ def generate_deep_profile(
     if not web_research:
         web_research = (
             "No web search results available. Rely on your training data and "
-            "flag all claims with appropriate confidence levels."
+            "flag all claims with appropriate confidence levels. "
+            "Tag every claim sourced from training data as [INFERRED-LOW] "
+            "since it cannot be verified against current public sources."
         )
 
     user_prompt = USER_PROMPT_TEMPLATE.format(
@@ -283,7 +317,10 @@ def generate_deep_profile(
 
 
 def build_interactions_summary(profile_data: dict) -> str:
-    """Build a text summary of internal interactions for the LLM prompt."""
+    """Build a text summary of internal interactions for the LLM prompt.
+
+    Includes meeting signals, behavioral observations, and action items.
+    """
     parts = []
 
     interactions = profile_data.get("interactions", [])
