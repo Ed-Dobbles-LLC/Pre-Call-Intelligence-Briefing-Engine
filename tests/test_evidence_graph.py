@@ -26,9 +26,11 @@ from app.brief.evidence_graph import (
     ENTITY_LOCK_THRESHOLD,
     VISIBILITY_CATEGORY_GROUPS,
     VISIBILITY_QUERY_TEMPLATES,
+    DossierMode,
     EvidenceGraph,
     FailClosedReport,
     GateResult,
+    build_failure_report,
     build_visibility_queries,
     check_entity_lock_gate,
     check_evidence_coverage_gate,
@@ -36,7 +38,9 @@ from app.brief.evidence_graph import (
     compute_evidence_coverage,
     compute_evidence_coverage_from_text,
     compute_visibility_coverage_confidence,
+    determine_dossier_mode,
     extract_highest_signal_artifacts,
+    filter_prose_by_mode,
     run_fail_closed_gates,
 )
 from app.brief.qa import enforce_fail_closed_gates
@@ -772,6 +776,8 @@ class TestHighestSignalArtifacts:
 
 
 class TestVisibilityCoverageConfidence:
+    """Scoring: +10 per query family with results, +10 for TED/TEDx execution, cap 100."""
+
     def test_empty_graph_zero(self):
         g = EvidenceGraph()
         assert compute_visibility_coverage_confidence(g) == 0
@@ -783,32 +789,31 @@ class TestVisibilityCoverageConfidence:
 
     def test_all_categories_with_results(self):
         g = EvidenceGraph()
-        # Log 15+ visibility rows with results in each category group
+        # 15 visibility rows with results → 10 families × 10 + 10 TED bonus = 110 → cap 100
         for i in range(15):
             g.log_retrieval(
                 query=f"q{i}", intent="visibility",
                 results=[{"title": f"R{i}", "link": f"https://x.com/{i}"}],
             )
-        score = compute_visibility_coverage_confidence(g)
-        assert score == 100
+        assert compute_visibility_coverage_confidence(g) == 100
 
-    def test_one_category_with_results(self):
+    def test_ted_tedx_only_with_results(self):
         g = EvidenceGraph()
-        # Only first 4 queries (ted_tedx group) have results
+        # Queries 0-3 (ted/tedx families) have results, rest empty
+        # Families with results: {ted, tedx} = 2 × 10 = 20 + 10 TED bonus = 30
         for i in range(4):
             g.log_retrieval(
                 query=f"q{i}", intent="visibility",
                 results=[{"title": f"R{i}", "link": f"https://x.com/{i}"}],
             )
-        # Remaining queries return no results
         for i in range(4, 15):
             g.log_retrieval(query=f"q{i}", intent="visibility", results=[])
-        score = compute_visibility_coverage_confidence(g)
-        assert score == 25
+        assert compute_visibility_coverage_confidence(g) == 30
 
-    def test_two_categories_50(self):
+    def test_ted_and_keynotes_with_results(self):
         g = EvidenceGraph()
-        # ted_tedx (indices 0-3) and keynote_conference (indices 4-7)
+        # Queries 0-7 (ted/tedx + keynote/conference/summit/panel) have results, rest empty
+        # Families: ted, tedx, keynote, conference, summit, panel = 6 × 10 = 60 + 10 TED = 70
         for i in range(8):
             g.log_retrieval(
                 query=f"q{i}", intent="visibility",
@@ -816,8 +821,30 @@ class TestVisibilityCoverageConfidence:
             )
         for i in range(8, 15):
             g.log_retrieval(query=f"q{i}", intent="visibility", results=[])
-        score = compute_visibility_coverage_confidence(g)
-        assert score == 50
+        assert compute_visibility_coverage_confidence(g) == 70
+
+    def test_ted_executed_but_no_results_gives_bonus(self):
+        g = EvidenceGraph()
+        # TED/TEDx queries executed with 0 results → +10 bonus only
+        for i in range(4):
+            g.log_retrieval(query=f"q{i}", intent="visibility", results=[])
+        assert compute_visibility_coverage_confidence(g) == 10
+
+    def test_podcasts_only_no_ted_bonus(self):
+        g = EvidenceGraph()
+        # Skip first 8 queries (TED + keynote) — no TED bonus
+        for i in range(8):
+            g.log_retrieval(query=f"q{i}", intent="visibility", results=[])
+        # Only podcast/webinar queries (8-11) have results
+        for i in range(8, 12):
+            g.log_retrieval(
+                query=f"q{i}", intent="visibility",
+                results=[{"title": f"R{i}", "link": f"https://x.com/{i}"}],
+            )
+        for i in range(12, 15):
+            g.log_retrieval(query=f"q{i}", intent="visibility", results=[])
+        # Families: podcast, webinar, interview_video = 3 × 10 = 30 + 10 TED exec = 40
+        assert compute_visibility_coverage_confidence(g) == 40
 
 
 # ---------------------------------------------------------------------------
@@ -906,6 +933,294 @@ class TestEnforceFailClosedGates:
         )
         assert not should_output
         assert "EVIDENCE COVERAGE" in message
+
+
+# ---------------------------------------------------------------------------
+# Profiler fail-closed prompt rules
+# ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# Dossier Mode Determination (Pre-Synthesis Gates)
+# ---------------------------------------------------------------------------
+
+
+class TestDossierMode:
+    def test_full_mode_when_locked(self):
+        mode, reason = determine_dossier_mode(
+            entity_lock_score=85,
+            visibility_executed=True,
+            has_public_results=True,
+        )
+        assert mode == DossierMode.FULL
+        assert "LOCKED" in reason
+
+    def test_constrained_mode_when_partial(self):
+        mode, reason = determine_dossier_mode(
+            entity_lock_score=55,
+            visibility_executed=True,
+            has_public_results=True,
+        )
+        assert mode == DossierMode.CONSTRAINED
+        assert "PARTIAL DOSSIER" in reason
+
+    def test_constrained_mode_when_not_locked(self):
+        mode, reason = determine_dossier_mode(
+            entity_lock_score=30,
+            visibility_executed=True,
+            has_public_results=True,
+        )
+        assert mode == DossierMode.CONSTRAINED
+        assert "NOT LOCKED" in reason
+
+    def test_halted_when_no_visibility(self):
+        mode, reason = determine_dossier_mode(
+            entity_lock_score=85,
+            visibility_executed=False,
+            has_public_results=True,
+        )
+        assert mode == DossierMode.HALTED
+        assert "VISIBILITY SWEEP NOT EXECUTED" in reason
+
+    def test_halted_when_no_public_results(self):
+        mode, reason = determine_dossier_mode(
+            entity_lock_score=85,
+            visibility_executed=True,
+            has_public_results=False,
+        )
+        assert mode == DossierMode.HALTED
+        assert "NO PUBLIC RETRIEVAL" in reason
+
+    def test_halted_when_both_missing(self):
+        mode, _ = determine_dossier_mode(
+            entity_lock_score=85,
+            visibility_executed=False,
+            has_public_results=False,
+        )
+        assert mode == DossierMode.HALTED
+
+    def test_halted_includes_queries_to_run(self):
+        mode, reason = determine_dossier_mode(
+            entity_lock_score=85,
+            visibility_executed=False,
+            has_public_results=True,
+            person_name="Ben Titmus",
+        )
+        assert mode == DossierMode.HALTED
+        assert '"Ben Titmus" TED' in reason
+        assert '"Ben Titmus" podcast' in reason
+
+    def test_mode_constants(self):
+        assert DossierMode.FULL == "full"
+        assert DossierMode.CONSTRAINED == "constrained"
+        assert DossierMode.HALTED == "halted"
+
+    def test_full_mode_at_exact_threshold(self):
+        mode, _ = determine_dossier_mode(
+            entity_lock_score=70,
+            visibility_executed=True,
+            has_public_results=True,
+        )
+        assert mode == DossierMode.FULL
+
+    def test_constrained_at_50(self):
+        mode, _ = determine_dossier_mode(
+            entity_lock_score=50,
+            visibility_executed=True,
+            has_public_results=True,
+        )
+        assert mode == DossierMode.CONSTRAINED
+
+
+# ---------------------------------------------------------------------------
+# Prose Filtering by Mode
+# ---------------------------------------------------------------------------
+
+
+class TestFilterProseByMode:
+    def test_full_mode_no_change(self):
+        text = "Ben is CTO at Acme. [VERIFIED-PUBLIC]\nHe leads AI strategy. [INFERRED-H]"
+        result = filter_prose_by_mode(text, DossierMode.FULL, entity_lock_score=85)
+        assert result == text
+
+    def test_constrained_partial_strips_inferred_h(self):
+        text = (
+            "Ben is CTO at Acme. [VERIFIED-PUBLIC]\n"
+            "He leads AI strategy. [INFERRED-H]\n"
+            "Unknown fact remains. [UNKNOWN]\n"
+            "Low confidence inference. [INFERRED-L]\n"
+        )
+        result = filter_prose_by_mode(text, DossierMode.CONSTRAINED, entity_lock_score=55)
+        assert "[VERIFIED-PUBLIC]" in result
+        assert "[INFERRED-H]" not in result
+        assert "[UNKNOWN]" in result
+        assert "[INFERRED-L]" in result
+        assert "PARTIAL DOSSIER" in result
+
+    def test_constrained_partial_strips_inferred_m(self):
+        text = "Medium inference claim here. [INFERRED-M]\nVerified. [VERIFIED-MEETING]"
+        result = filter_prose_by_mode(text, DossierMode.CONSTRAINED, entity_lock_score=60)
+        assert "[INFERRED-M]" not in result
+        assert "[VERIFIED-MEETING]" in result
+
+    def test_constrained_not_locked_strips_all_inferred(self):
+        text = (
+            "Ben is CTO. [VERIFIED-PUBLIC]\n"
+            "He leads AI. [INFERRED-H]\n"
+            "Maybe a board member. [INFERRED-M]\n"
+            "Possibly in London. [INFERRED-L]\n"
+        )
+        result = filter_prose_by_mode(text, DossierMode.CONSTRAINED, entity_lock_score=30)
+        assert "[VERIFIED-PUBLIC]" in result
+        assert "[INFERRED-H]" not in result
+        assert "[INFERRED-M]" not in result
+        assert "[INFERRED-L]" not in result
+        assert "NOT LOCKED" in result
+
+    def test_constrained_preserves_headers(self):
+        text = "### Section 1\n---\nBen is CTO. [VERIFIED-PUBLIC]\nInferred. [INFERRED-H]\n"
+        result = filter_prose_by_mode(text, DossierMode.CONSTRAINED, entity_lock_score=55)
+        assert "### Section 1" in result
+        assert "---" in result
+
+    def test_constrained_adds_banner(self):
+        text = "Verified fact. [VERIFIED-PUBLIC]\n"
+        result = filter_prose_by_mode(text, DossierMode.CONSTRAINED, entity_lock_score=55)
+        assert "PARTIAL DOSSIER" in result
+        assert "PARTIAL LOCK" in result
+
+    def test_halted_mode_passthrough(self):
+        text = "This should pass through unchanged."
+        result = filter_prose_by_mode(text, DossierMode.HALTED, entity_lock_score=0)
+        assert result == text
+
+
+# ---------------------------------------------------------------------------
+# Failure Report Building
+# ---------------------------------------------------------------------------
+
+
+class TestBuildFailureReport:
+    def test_includes_header(self):
+        g = EvidenceGraph()
+        report = build_failure_report(
+            mode_reason="FAIL: TEST", entity_lock_score=40,
+            visibility_confidence=0, graph=g, person_name="Ben",
+        )
+        assert "HALTED" in report
+        assert "FAIL-CLOSED" in report
+
+    def test_includes_current_state(self):
+        g = EvidenceGraph()
+        g.add_meeting_node(source="call", snippet="test")
+        g.log_retrieval(query="q1", intent="bio", results=[])
+        report = build_failure_report(
+            mode_reason="FAIL: TEST", entity_lock_score=40,
+            visibility_confidence=0, graph=g, person_name="Ben",
+        )
+        assert "Entity Lock:           40/100" in report
+        assert "Evidence Nodes:        1" in report
+        assert "Retrieval Ledger Rows: 1" in report
+
+    def test_includes_ledger_when_present(self):
+        g = EvidenceGraph()
+        g.log_retrieval(query='"Ben" TED', intent="visibility", results=[])
+        report = build_failure_report(
+            mode_reason="FAIL: TEST", entity_lock_score=40,
+            visibility_confidence=10, graph=g, person_name="Ben",
+        )
+        assert "RETRIEVAL LEDGER" in report
+        assert '"Ben" TED' in report
+
+    def test_includes_visibility_queries_when_missing(self):
+        g = EvidenceGraph()
+        report = build_failure_report(
+            mode_reason="FAIL: TEST", entity_lock_score=40,
+            visibility_confidence=0, graph=g, person_name="Ben Titmus",
+        )
+        assert '"Ben Titmus" TED' in report
+        assert '"Ben Titmus" podcast' in report
+
+    def test_includes_what_to_do_next(self):
+        g = EvidenceGraph()
+        report = build_failure_report(
+            mode_reason="FAIL: TEST", entity_lock_score=40,
+            visibility_confidence=0, graph=g, person_name="Ben",
+        )
+        assert "WHAT TO DO NEXT" in report
+
+    def test_includes_what_will_change(self):
+        g = EvidenceGraph()
+        report = build_failure_report(
+            mode_reason="FAIL: TEST", entity_lock_score=40,
+            visibility_confidence=0, graph=g, person_name="Ben",
+        )
+        assert "WHAT WILL CHANGE" in report
+
+    def test_entity_lock_fix_guidance_when_low(self):
+        g = EvidenceGraph()
+        g.log_retrieval(query="q1", intent="visibility", results=[{"title": "T"}])
+        report = build_failure_report(
+            mode_reason="FAIL: TEST", entity_lock_score=55,
+            visibility_confidence=10, graph=g, person_name="Ben",
+        )
+        assert "LinkedIn URL" in report
+        assert "+40pts" in report
+
+
+# ---------------------------------------------------------------------------
+# enforce_fail_closed_gates — public results requirement
+# ---------------------------------------------------------------------------
+
+
+class TestEnforceFailClosedGatesPublicResults:
+    def test_fails_without_public_results(self):
+        should_output, message = enforce_fail_closed_gates(
+            dossier_text="Test",
+            entity_lock_score=85,
+            visibility_ledger_count=16,
+            evidence_coverage_pct=92.0,
+            person_name="Ben Titmus",
+            has_public_results=False,
+        )
+        assert not should_output
+        assert "NO PUBLIC RETRIEVAL" in message
+
+    def test_passes_with_public_results(self):
+        should_output, _ = enforce_fail_closed_gates(
+            dossier_text="Test",
+            entity_lock_score=85,
+            visibility_ledger_count=16,
+            evidence_coverage_pct=92.0,
+            person_name="Ben Titmus",
+            has_public_results=True,
+        )
+        assert should_output
+
+    def test_no_public_results_combined_with_other_failures(self):
+        should_output, message = enforce_fail_closed_gates(
+            dossier_text="Test",
+            entity_lock_score=85,
+            visibility_ledger_count=0,
+            evidence_coverage_pct=50.0,
+            person_name="Ben Titmus",
+            has_public_results=False,
+        )
+        assert not should_output
+        assert "NO PUBLIC RETRIEVAL" in message
+        assert "VISIBILITY SWEEP" in message
+        assert "EVIDENCE COVERAGE" in message
+
+    def test_default_has_public_results_true(self):
+        """Default parameter value should be True (backward compat)."""
+        should_output, _ = enforce_fail_closed_gates(
+            dossier_text="Test",
+            entity_lock_score=85,
+            visibility_ledger_count=16,
+            evidence_coverage_pct=92.0,
+            person_name="Test",
+        )
+        assert should_output
 
 
 # ---------------------------------------------------------------------------

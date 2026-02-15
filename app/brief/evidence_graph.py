@@ -532,27 +532,47 @@ def extract_highest_signal_artifacts(
 
 
 def compute_visibility_coverage_confidence(graph: EvidenceGraph) -> int:
-    """Compute a 0-100 confidence score based on how many visibility categories returned results.
+    """Compute 0-100 confidence score for visibility sweep coverage.
 
-    Each of the 4 category groups is worth 25 points.
+    Per spec:
+    - +10 per query family with >=1 relevant result
+    - +10 if TED/TEDx queries were explicitly executed (even with 0 results)
+    - Cap at 100
+
+    Query family mapping:
+    0-1: ted/tedx, 2-3: ted/tedx (site-specific), 4: keynote, 5: conference,
+    6: summit, 7: panel, 8: podcast, 9: webinar, 10-11: interview,
+    12-14: youtube/video
     """
     visibility_rows = graph.get_visibility_ledger_rows()
     if not visibility_rows:
         return 0
 
-    rows_with_results = {i for i, row in enumerate(visibility_rows) if row.result_count > 0}
+    # Map query indices to category families
+    _QUERY_TO_FAMILY: dict[int, str] = {
+        0: "ted", 1: "tedx", 2: "ted", 3: "tedx",
+        4: "keynote", 5: "conference", 6: "summit", 7: "panel",
+        8: "podcast", 9: "webinar", 10: "interview_video", 11: "interview_video",
+        12: "youtube_talk", 13: "youtube_talk", 14: "youtube_talk",
+    }
 
-    score = 0
-    for group_name, indices in VISIBILITY_CATEGORY_GROUPS.items():
-        # Check if any query in this group had results
-        group_has_results = any(
-            i < len(visibility_rows) and i in rows_with_results
-            for i in indices
-        )
-        if group_has_results:
-            score += 25
+    families_with_results: set[str] = set()
+    ted_tedx_executed = False
 
-    return score
+    for i, row in enumerate(visibility_rows):
+        family = _QUERY_TO_FAMILY.get(i)
+        if family in ("ted", "tedx"):
+            ted_tedx_executed = True
+        if row.result_count > 0 and family:
+            families_with_results.add(family)
+
+    score = len(families_with_results) * 10
+
+    # Bonus +10 for TED/TEDx execution (even 0 results — the point is it was checked)
+    if ted_tedx_executed:
+        score += 10
+
+    return min(100, score)
 
 
 def _infer_venue(title: str, url: str) -> str:
@@ -581,3 +601,183 @@ def _infer_signal_value(priority: int) -> str:
     if priority >= 4:
         return "Interview/webinar — topical engagement signal"
     return "Presentation material — expertise claim"
+
+
+# ---------------------------------------------------------------------------
+# Dossier Output Mode (A / B / C)
+# ---------------------------------------------------------------------------
+
+
+class DossierMode:
+    """Output mode determined by pre-synthesis gate results.
+
+    FULL (Mode C):        entity_lock >= 70 AND visibility executed.
+    CONSTRAINED (Mode B): entity_lock 50-69 AND visibility executed.
+    HALTED (Mode A):      pre-synthesis gate failure — do NOT call LLM.
+    """
+    FULL = "full"
+    CONSTRAINED = "constrained"
+    HALTED = "halted"
+
+
+def determine_dossier_mode(
+    entity_lock_score: int,
+    visibility_executed: bool,
+    has_public_results: bool,
+    person_name: str = "",
+) -> tuple[str, str]:
+    """Determine dossier output mode BEFORE calling LLM synthesis.
+
+    Returns (mode, reason).
+    If mode == HALTED, the caller must NOT proceed to synthesis.
+    """
+    if not visibility_executed:
+        queries = _get_required_visibility_queries(person_name or "<name>")
+        query_text = "\n".join(f"  - {q}" for q in queries)
+        return DossierMode.HALTED, (
+            "FAIL: VISIBILITY SWEEP NOT EXECUTED\n"
+            "The retrieval ledger contains 0 visibility-intent rows.\n"
+            "Cannot generate dossier without executing the visibility sweep.\n\n"
+            "Run these queries:\n" + query_text
+        )
+
+    if not has_public_results:
+        return DossierMode.HALTED, (
+            "FAIL: NO PUBLIC RETRIEVAL RESULTS\n"
+            "Entity Lock cannot be computed without at least one public retrieval result.\n"
+            f"SerpAPI returned 0 results for \"{person_name}\".\n"
+            "Verify the person name and run retrieval again."
+        )
+
+    if entity_lock_score >= ENTITY_LOCK_THRESHOLD:
+        return DossierMode.FULL, f"Entity LOCKED ({entity_lock_score}/100) — full dossier"
+
+    if entity_lock_score >= 50:
+        return DossierMode.CONSTRAINED, (
+            f"PARTIAL DOSSIER — IDENTITY NOT LOCKED ({entity_lock_score}/100)\n"
+            "Restricting output to VERIFIED + UNKNOWN + INFERRED-L claims.\n"
+            "Strong person-level inferences suppressed."
+        )
+
+    return DossierMode.CONSTRAINED, (
+        f"PARTIAL DOSSIER — IDENTITY NOT LOCKED ({entity_lock_score}/100)\n"
+        "Restricting output to VERIFIED-MEETING facts and safe inferences only.\n"
+        "Prioritize disambiguation retrieval before generating a full dossier."
+    )
+
+
+def filter_prose_by_mode(dossier_text: str, mode: str, entity_lock_score: int) -> str:
+    """Filter dossier prose based on output mode.
+
+    Mode FULL: return as-is.
+    Mode CONSTRAINED (50-69): strip INFERRED-H/M claims, prepend banner.
+    Mode CONSTRAINED (<50): strip all INFERRED claims, prepend banner.
+    Mode HALTED: should not reach here (caller should not have generated prose).
+    """
+    if mode == DossierMode.FULL:
+        return dossier_text
+
+    if mode == DossierMode.HALTED:
+        return dossier_text  # Shouldn't happen, but don't crash
+
+    lines = dossier_text.split("\n")
+    filtered: list[str] = []
+
+    # Pattern for tags to strip
+    if entity_lock_score >= 50:
+        # CONSTRAINED (PARTIAL): strip INFERRED-H and INFERRED-M only
+        strip_pattern = re.compile(r"\[INFERRED[–\-][HM]\]", re.IGNORECASE)
+    else:
+        # CONSTRAINED (NOT LOCKED): strip ALL INFERRED
+        strip_pattern = re.compile(r"\[INFERRED[–\-][HML]\]", re.IGNORECASE)
+
+    for line in lines:
+        stripped = line.strip()
+        # Keep headers, separators, and non-substantive lines
+        if not stripped or len(stripped) <= 20 or stripped.startswith(("#", "|", "---", "*", ">")):
+            filtered.append(line)
+            continue
+        # Drop lines containing banned inference tags
+        if strip_pattern.search(stripped):
+            continue
+        filtered.append(line)
+
+    lock_label = "PARTIAL LOCK" if entity_lock_score >= 50 else "NOT LOCKED"
+    banner = (
+        f"> **PARTIAL DOSSIER — IDENTITY {lock_label} ({entity_lock_score}/100)**\n"
+        "> Strong person-level inferences have been suppressed.\n"
+        "> Only VERIFIED facts and low-confidence inferences are shown.\n"
+        "---\n"
+    )
+
+    return banner + "\n".join(filtered)
+
+
+def build_failure_report(
+    mode_reason: str,
+    entity_lock_score: int,
+    visibility_confidence: int,
+    graph: EvidenceGraph,
+    person_name: str = "",
+) -> str:
+    """Build a Mode A failure report when pre-synthesis gates halt output.
+
+    Includes: which stage failed, why, exact queries to run, and what evidence is needed.
+    """
+    lock_label = (
+        "LOCKED" if entity_lock_score >= 70
+        else "PARTIAL" if entity_lock_score >= 50
+        else "NOT LOCKED"
+    )
+
+    parts = [
+        "=" * 60,
+        "DOSSIER GENERATION HALTED — FAIL-CLOSED GATES",
+        "=" * 60,
+        "",
+        mode_reason,
+        "",
+        "--- CURRENT STATE ---",
+        f"Entity Lock:           {entity_lock_score}/100 ({lock_label})",
+        f"Visibility Confidence: {visibility_confidence}/100",
+        f"Evidence Nodes:        {len(graph.nodes)}",
+        f"Retrieval Ledger Rows: {len(graph.ledger)}",
+        "",
+    ]
+
+    # Retrieval Ledger summary
+    if graph.ledger:
+        parts.append("--- RETRIEVAL LEDGER ---")
+        for row in graph.ledger:
+            parts.append(
+                f"  {row.query_id}: [{row.intent}] {row.query} → "
+                f"{row.result_count} result(s)"
+            )
+        parts.append("")
+
+    # What's needed to proceed
+    parts.append("--- WHAT TO DO NEXT ---")
+    if not graph.get_visibility_ledger_rows():
+        parts.append("1. Execute the full visibility sweep query battery:")
+        for q in _get_required_visibility_queries(person_name or "<name>"):
+            parts.append(f"   - {q}")
+    else:
+        parts.append("1. Visibility sweep is logged (OK)")
+
+    total_public = sum(1 for row in graph.ledger if row.result_count > 0)
+    if total_public == 0:
+        parts.append("2. Get at least 1 public retrieval result to compute Entity Lock")
+    elif entity_lock_score < 70:
+        parts.append("2. Increase Entity Lock by confirming:")
+        parts.append("   - LinkedIn URL → +40pts")
+        parts.append("   - Employer in public source → +20pts")
+        parts.append("   - Title in public source → +10pts")
+
+    parts.append("")
+    parts.append("--- WHAT WILL CHANGE AFTER FIX ---")
+    parts.append("Once the above is resolved, the system will:")
+    parts.append("  - Re-run Evidence Graph assembly")
+    parts.append("  - Re-score Entity Lock with new evidence")
+    parts.append("  - Proceed to dossier synthesis (if gates pass)")
+
+    return "\n".join(parts)

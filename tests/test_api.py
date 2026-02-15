@@ -188,8 +188,9 @@ class TestDeepProfileEndpoint:
         finally:
             settings.openai_api_key = orig
 
+    @patch("app.api.determine_dossier_mode", return_value=("full", "Test mode"))
     @patch("app.api.generate_deep_profile")
-    def test_response_includes_qa_report(self, mock_gen):
+    def test_response_includes_qa_report(self, mock_gen, mock_mode):
         """Response should include qa_report with all gate results."""
         mock_gen.return_value = (
             "## 1. Strategic Snapshot\n"
@@ -262,8 +263,9 @@ class TestDeepProfileEndpoint:
         finally:
             settings.openai_api_key = orig
 
+    @patch("app.api.determine_dossier_mode", return_value=("full", "Test mode"))
     @patch("app.api.generate_deep_profile")
-    def test_qa_data_persisted_to_profile(self, mock_gen):
+    def test_qa_data_persisted_to_profile(self, mock_gen, mock_mode):
         """QA results should be stored in profile_data after generation."""
         mock_gen.return_value = "## Dossier [VERIFIED-PUBLIC] content."
         pid = _create_confirmed_profile()
@@ -289,8 +291,9 @@ class TestDeepProfileEndpoint:
         finally:
             settings.openai_api_key = orig
 
+    @patch("app.api.determine_dossier_mode", return_value=("full", "Test mode"))
     @patch("app.api.generate_deep_profile")
-    def test_generic_dossier_flags_qa(self, mock_gen):
+    def test_generic_dossier_flags_qa(self, mock_gen, mock_mode):
         """A generic dossier should trigger QA failure flags."""
         mock_gen.return_value = (
             "He is a strategic leader who drives innovation.\n"

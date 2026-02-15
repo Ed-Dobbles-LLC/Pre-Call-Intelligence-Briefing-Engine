@@ -23,9 +23,13 @@ from pydantic import BaseModel, Field
 from app.brief.pipeline import run_pipeline
 from app.brief.profiler import build_interactions_summary, generate_deep_profile
 from app.brief.evidence_graph import (
+    DossierMode,
     EvidenceGraph,
-    extract_highest_signal_artifacts,
+    build_failure_report,
     compute_visibility_coverage_confidence,
+    determine_dossier_mode,
+    extract_highest_signal_artifacts,
+    filter_prose_by_mode,
 )
 from app.brief.qa import (
     enforce_fail_closed_gates,
@@ -697,7 +701,69 @@ async def generate_profile_research(profile_id: int):
             },
         }
 
-        # --- STEP 3: Generate dossier via LLM ---
+        # --- PRE-SYNTHESIS GATE: Determine output mode BEFORE calling LLM ---
+        has_public_results = any(len(v) > 0 for v in search_results.values())
+        vis_coverage_confidence = compute_visibility_coverage_confidence(graph)
+
+        dossier_mode, mode_reason = determine_dossier_mode(
+            entity_lock_score=entity_lock.score,
+            visibility_executed=visibility_sweep_executed,
+            has_public_results=has_public_results,
+            person_name=p_name,
+        )
+
+        logger.info(
+            "Pre-synthesis gate for '%s': mode=%s, entity_lock=%d, "
+            "visibility_executed=%s, public_results=%s",
+            p_name, dossier_mode, entity_lock.score,
+            visibility_sweep_executed, has_public_results,
+        )
+
+        # If HALTED, do NOT call LLM — return failure report immediately
+        if dossier_mode == DossierMode.HALTED:
+            failure_report = build_failure_report(
+                mode_reason=mode_reason,
+                entity_lock_score=entity_lock.score,
+                visibility_confidence=vis_coverage_confidence,
+                graph=graph,
+                person_name=p_name,
+            )
+
+            fail_closed_status = {
+                "gates_passed": False,
+                "dossier_mode": dossier_mode,
+                "mode_reason": mode_reason,
+                "visibility_ledger_rows": len(graph.get_visibility_ledger_rows()),
+                "visibility_confidence": vis_coverage_confidence,
+                "entity_lock_score": entity_lock.score,
+                "entity_lock_status": entity_lock.lock_status,
+                "has_public_results": has_public_results,
+                "failure_message": failure_report,
+            }
+
+            generated_at = datetime.utcnow().isoformat()
+            profile_data["deep_profile"] = failure_report
+            profile_data["deep_profile_generated_at"] = generated_at
+            profile_data["entity_lock_score"] = entity_lock.score
+            profile_data["search_plan"] = search_plan
+            profile_data["fail_closed_status"] = fail_closed_status
+            profile_data["evidence_graph"] = graph.to_dict()
+            entity.domains = json.dumps(profile_data)
+            session.commit()
+
+            return {
+                "status": "halted",
+                "deep_profile": failure_report,
+                "generated_at": generated_at,
+                "entity_lock": entity_lock_report,
+                "qa_report": None,
+                "search_plan": search_plan,
+                "visibility_report": None,
+                "fail_closed_status": fail_closed_status,
+                "evidence_graph": graph.to_dict(),
+            }
+
+        # --- STEP 3: Generate dossier via LLM (ONLY if pre-synthesis gates pass) ---
         result = generate_deep_profile(
             name=p_name,
             title=p_title,
@@ -711,7 +777,7 @@ async def generate_profile_research(profile_id: int):
             visibility_research=visibility_research,
         )
 
-        # --- STEP 4: QA gates (with visibility sweep audit) ---
+        # --- STEP 4: Post-synthesis QA gates ---
         visibility_categories_searched = [
             cat for cat in VISIBILITY_CATEGORIES
             if visibility_results.get(cat) is not None
@@ -736,7 +802,7 @@ async def generate_profile_research(profile_id: int):
                 len(qa_report.contradictions),
             )
 
-        # --- STEP 4b: Fail-closed gate enforcement ---
+        # --- STEP 5: Post-synthesis fail-closed enforcement ---
         visibility_ledger_count = len(graph.get_visibility_ledger_rows())
         evidence_coverage = qa_report.evidence_coverage.coverage_pct
         should_output, fail_message = enforce_fail_closed_gates(
@@ -745,11 +811,15 @@ async def generate_profile_research(profile_id: int):
             visibility_ledger_count=visibility_ledger_count,
             evidence_coverage_pct=evidence_coverage,
             person_name=p_name,
+            has_public_results=has_public_results,
         )
+
+        # --- STEP 6: Apply mode-based prose filtering ---
+        if should_output:
+            result = filter_prose_by_mode(result, dossier_mode, entity_lock.score)
 
         # --- Build visibility report summary ---
         highest_signal = extract_highest_signal_artifacts(graph, max_artifacts=3)
-        vis_coverage_confidence = compute_visibility_coverage_confidence(graph)
         visibility_report = {
             "sweep_executed": visibility_sweep_executed,
             "categories_searched": visibility_categories_searched,
@@ -775,10 +845,14 @@ async def generate_profile_research(profile_id: int):
         # --- Evidence Graph + fail-closed status ---
         fail_closed_status = {
             "gates_passed": should_output,
+            "dossier_mode": dossier_mode,
+            "mode_reason": mode_reason,
             "visibility_ledger_rows": visibility_ledger_count,
+            "visibility_confidence": vis_coverage_confidence,
             "evidence_coverage_pct": round(evidence_coverage, 1),
             "entity_lock_score": entity_lock.score,
             "entity_lock_status": entity_lock.lock_status,
+            "has_public_results": has_public_results,
             "failure_message": fail_message if not should_output else None,
         }
 
@@ -802,6 +876,7 @@ async def generate_profile_research(profile_id: int):
 
         return {
             "status": "ok" if should_output else "halted",
+            "dossier_mode": dossier_mode,
             "deep_profile": result if should_output else fail_message,
             "generated_at": generated_at,
             "entity_lock": entity_lock_report,
