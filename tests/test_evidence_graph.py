@@ -1276,21 +1276,12 @@ class TestProfilerFailClosedRules:
         from app.brief.profiler import SYSTEM_PROMPT
         assert "FAIL-CLOSED" in SYSTEM_PROMPT
 
-    def test_system_prompt_has_genericness_linter(self):
+    def test_system_prompt_bans_generic_phrases(self):
         from app.brief.profiler import SYSTEM_PROMPT
-        assert "GENERICNESS LINTER" in SYSTEM_PROMPT
-
-    def test_system_prompt_bans_consultative_tempo(self):
-        from app.brief.profiler import SYSTEM_PROMPT
-        assert "consultative tempo" in SYSTEM_PROMPT
-
-    def test_system_prompt_bans_roi_focused(self):
-        from app.brief.profiler import SYSTEM_PROMPT
-        assert "ROI-focused" in SYSTEM_PROMPT
-
-    def test_system_prompt_bans_human_centered(self):
-        from app.brief.profiler import SYSTEM_PROMPT
-        assert "human-centered" in SYSTEM_PROMPT
+        assert "BANNED phrases" in SYSTEM_PROMPT
+        assert "strategic leader" in SYSTEM_PROMPT
+        assert "proven track record" in SYSTEM_PROMPT
+        assert "bridges the gap" in SYSTEM_PROMPT
 
     def test_system_prompt_no_self_contradictions(self):
         from app.brief.profiler import SYSTEM_PROMPT

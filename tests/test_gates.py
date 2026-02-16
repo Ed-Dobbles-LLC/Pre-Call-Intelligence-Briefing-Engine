@@ -954,12 +954,12 @@ class TestSerpAPIVisibility:
 
 
 # ---------------------------------------------------------------------------
-# Profiler 11-section prompt tests
+# Profiler 10-section prompt tests
 # ---------------------------------------------------------------------------
 
 
-class TestProfiler11Sections:
-    def test_prompt_has_11_sections(self):
+class TestProfilerSections:
+    def test_prompt_has_10_sections(self):
         from app.brief.profiler import USER_PROMPT_TEMPLATE
         assert "### 1." in USER_PROMPT_TEMPLATE
         assert "### 2." in USER_PROMPT_TEMPLATE
@@ -971,39 +971,41 @@ class TestProfiler11Sections:
         assert "### 8." in USER_PROMPT_TEMPLATE
         assert "### 9." in USER_PROMPT_TEMPLATE
         assert "### 10." in USER_PROMPT_TEMPLATE
-        assert "### 11." in USER_PROMPT_TEMPLATE
 
-    def test_prompt_has_public_visibility_section(self):
+    def test_prompt_has_executive_summary(self):
         from app.brief.profiler import USER_PROMPT_TEMPLATE
-        assert "Public Visibility Report" in USER_PROMPT_TEMPLATE
+        assert "Executive Summary" in USER_PROMPT_TEMPLATE
 
-    def test_prompt_has_deal_probability_section(self):
+    def test_prompt_has_career_timeline(self):
         from app.brief.profiler import USER_PROMPT_TEMPLATE
-        assert "Deal Probability Score" in USER_PROMPT_TEMPLATE
-        assert "Incentive alignment" in USER_PROMPT_TEMPLATE
-        assert "Authority scope" in USER_PROMPT_TEMPLATE
-        assert "Political friction" in USER_PROMPT_TEMPLATE
+        assert "Career Timeline" in USER_PROMPT_TEMPLATE
+        assert "Chronological list of roles" in USER_PROMPT_TEMPLATE
 
-    def test_prompt_has_influence_strategy_section(self):
+    def test_prompt_has_public_statements(self):
         from app.brief.profiler import USER_PROMPT_TEMPLATE
-        assert "Influence Strategy Recommendation" in USER_PROMPT_TEMPLATE
-        assert "Primary leverage" in USER_PROMPT_TEMPLATE
-        assert "Psychological tempo" in USER_PROMPT_TEMPLATE
-        assert "Early warning signs" in USER_PROMPT_TEMPLATE
+        assert "Public Statements & Positions" in USER_PROMPT_TEMPLATE
+        assert "blockquotes" in USER_PROMPT_TEMPLATE
+
+    def test_prompt_has_interview_strategy(self):
+        from app.brief.profiler import USER_PROMPT_TEMPLATE
+        assert "Interview Strategy Recommendations" in USER_PROMPT_TEMPLATE
+        assert "What to lead with" in USER_PROMPT_TEMPLATE
+        assert "Landmines" in USER_PROMPT_TEMPLATE
+        assert "Questions that will earn respect" in USER_PROMPT_TEMPLATE
+
+    def test_prompt_has_quantified_claims(self):
+        from app.brief.profiler import USER_PROMPT_TEMPLATE
+        assert "Quantified Claims Inventory" in USER_PROMPT_TEMPLATE
+        assert "personally owned" in USER_PROMPT_TEMPLATE
 
     def test_prompt_has_visibility_research_placeholder(self):
         from app.brief.profiler import USER_PROMPT_TEMPLATE
         assert "{visibility_research}" in USER_PROMPT_TEMPLATE
 
-    def test_prompt_has_adaptive_sections(self):
+    def test_prompt_has_visibility_categories(self):
         from app.brief.profiler import USER_PROMPT_TEMPLATE
-        assert "ADAPTIVE SECTIONS" in USER_PROMPT_TEMPLATE
-        assert "Sections 1-3 are always required" in USER_PROMPT_TEMPLATE
-
-    def test_prompt_qa_section_checks_visibility(self):
-        from app.brief.profiler import USER_PROMPT_TEMPLATE
-        assert "Public Visibility Sweep" in USER_PROMPT_TEMPLATE
-        assert "10 categories" in USER_PROMPT_TEMPLATE
+        assert "TED/TEDx" in USER_PROMPT_TEMPLATE
+        assert "Podcast" in USER_PROMPT_TEMPLATE
 
     def test_profiler_accepts_visibility_research(self):
         """generate_deep_profile should accept visibility_research param."""

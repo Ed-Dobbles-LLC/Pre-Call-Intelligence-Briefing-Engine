@@ -106,6 +106,35 @@ class TestBuildInteractionsSummary:
         result = build_interactions_summary(profile)
         assert "[EMAIL]" in result
 
+    def test_includes_participants(self):
+        profile = {
+            "interactions": [
+                {
+                    "type": "meeting",
+                    "title": "Team Call",
+                    "date": "2026-02-10",
+                    "participants": ["alice@test.com", "bob@test.com"],
+                },
+            ],
+        }
+        result = build_interactions_summary(profile)
+        assert "alice@test.com" in result
+        assert "bob@test.com" in result
+
+    def test_includes_key_points(self):
+        profile = {
+            "interactions": [
+                {
+                    "type": "meeting",
+                    "title": "Strategy Session",
+                    "date": "2026-02-10",
+                    "key_points": "Discussed Q1 targets and hiring plan",
+                },
+            ],
+        }
+        result = build_interactions_summary(profile)
+        assert "Q1 targets" in result
+
 
 class TestGenerateDeepProfile:
     def test_raises_without_openai(self):
@@ -177,18 +206,29 @@ class TestGenerateDeepProfile:
     @patch("app.brief.profiler.LLMClient")
     def test_returns_string(self, MockLLM):
         mock_instance = MagicMock()
-        mock_instance.chat.return_value = "## Strategic Snapshot\n- Career arc..."
+        mock_instance.chat.return_value = "## Executive Summary\n- Career arc..."
         MockLLM.return_value = mock_instance
 
         result = generate_deep_profile(name="Return Test")
         assert isinstance(result, str)
-        assert "Strategic Snapshot" in result
+        assert "Executive Summary" in result
+
+    @patch("app.brief.profiler.LLMClient")
+    def test_evidence_threshold_passed_to_prompt(self, MockLLM):
+        mock_instance = MagicMock()
+        mock_instance.chat.return_value = "# Profile"
+        MockLLM.return_value = mock_instance
+
+        generate_deep_profile(name="Threshold Test", evidence_threshold=60)
+
+        user_prompt = mock_instance.chat.call_args[0][1]
+        assert "60%" in user_prompt
 
 
 class TestPromptTemplates:
     def test_system_prompt_has_rules(self):
         assert "ABSOLUTE RULES" in SYSTEM_PROMPT
-        assert "Strategic Intelligence Analyst" in SYSTEM_PROMPT
+        assert "Pre-Call Intelligence Analyst" in SYSTEM_PROMPT
 
     def test_system_prompt_requires_evidence_tagging(self):
         assert "VERIFIED" in SYSTEM_PROMPT
@@ -210,35 +250,30 @@ class TestPromptTemplates:
     def test_system_prompt_supports_web_citations(self):
         assert "URL" in SYSTEM_PROMPT
 
-    def test_system_prompt_requires_source_tiers(self):
-        assert "source tiers" in SYSTEM_PROMPT.lower() or "primary sources" in SYSTEM_PROMPT.lower()
-
     def test_system_prompt_requires_recency(self):
         assert "24 months" in SYSTEM_PROMPT
 
     def test_user_prompt_template_has_all_sections(self):
         assert "SUBJECT IDENTIFIERS" in USER_PROMPT_TEMPLATE
         assert "INTERNAL CONTEXT" in USER_PROMPT_TEMPLATE
-        assert "Strategic Identity Snapshot" in USER_PROMPT_TEMPLATE
-        assert "Verified Fact Table" in USER_PROMPT_TEMPLATE
-        assert "Public Visibility Report" in USER_PROMPT_TEMPLATE
-        assert "Incentive & Pressure Model" in USER_PROMPT_TEMPLATE
-        assert "Power & Decision Rights Map" in USER_PROMPT_TEMPLATE
-        assert "Strategic Tensions" in USER_PROMPT_TEMPLATE
-        assert "Decision Consequence Forecast" in USER_PROMPT_TEMPLATE
-        assert "Deal Probability Score" in USER_PROMPT_TEMPLATE
-        assert "Influence Strategy Recommendation" in USER_PROMPT_TEMPLATE
-        assert "Unknowns That Matter" in USER_PROMPT_TEMPLATE
-        assert "QA Report" in USER_PROMPT_TEMPLATE
+        assert "Executive Summary" in USER_PROMPT_TEMPLATE
+        assert "Identity & Disambiguation" in USER_PROMPT_TEMPLATE
+        assert "Career Timeline" in USER_PROMPT_TEMPLATE
+        assert "Public Statements & Positions" in USER_PROMPT_TEMPLATE
+        assert "Public Visibility" in USER_PROMPT_TEMPLATE
+        assert "Quantified Claims Inventory" in USER_PROMPT_TEMPLATE
+        assert "Rhetorical & Decision Patterns" in USER_PROMPT_TEMPLATE
+        assert "Structural Pressure Model" in USER_PROMPT_TEMPLATE
+        assert "Interview Strategy Recommendations" in USER_PROMPT_TEMPLATE
+        assert "Primary Source Index" in USER_PROMPT_TEMPLATE
 
-    def test_user_prompt_requires_verified_facts_table(self):
-        assert "| # | Fact | Tag | Source |" in USER_PROMPT_TEMPLATE
+    def test_user_prompt_has_career_timeline(self):
+        assert "Chronological list of roles" in USER_PROMPT_TEMPLATE
 
-    def test_user_prompt_requires_scenario_forecasts(self):
-        assert "Revenue target slips" in USER_PROMPT_TEMPLATE
-        assert "Delivery strain" in USER_PROMPT_TEMPLATE
-        assert "Client escalates" in USER_PROMPT_TEMPLATE
-        assert "Rank 1" in USER_PROMPT_TEMPLATE
+    def test_user_prompt_has_interview_strategy(self):
+        assert "What to lead with" in USER_PROMPT_TEMPLATE
+        assert "Landmines" in USER_PROMPT_TEMPLATE
+        assert "Questions that will earn respect" in USER_PROMPT_TEMPLATE
 
     def test_user_prompt_template_format_fields(self):
         """Ensure all format placeholders can be filled."""
@@ -253,20 +288,23 @@ class TestPromptTemplates:
             internal_context="Test",
             web_research="Test",
             visibility_research="Test",
+            evidence_threshold=85,
         )
         assert "{" not in result  # no unfilled placeholders
 
-    def test_user_prompt_has_quality_self_check(self):
-        assert "Self-audit" in USER_PROMPT_TEMPLATE or "QA Report" in USER_PROMPT_TEMPLATE
+    def test_user_prompt_has_self_check(self):
+        assert "SELF-CHECK" in USER_PROMPT_TEMPLATE
 
     def test_user_prompt_has_web_research_section(self):
         assert "WEB RESEARCH" in USER_PROMPT_TEMPLATE
         assert "{web_research}" in USER_PROMPT_TEMPLATE
 
-    def test_user_prompt_bans_generic_gaps(self):
-        """Unknowns section should exclude generic gaps."""
-        assert "generic gaps" in USER_PROMPT_TEMPLATE.lower()
+    def test_user_prompt_has_pressure_model(self):
+        """Pressure model maps mandate and pressures to decision drivers."""
+        assert "Current mandate" in USER_PROMPT_TEMPLATE
+        assert "Key pressures" in USER_PROMPT_TEMPLATE
 
-    def test_user_prompt_requires_incentive_mapping(self):
-        """Conversation playbook must map to incentive structure."""
-        assert "incentive" in USER_PROMPT_TEMPLATE.lower()
+    def test_user_prompt_has_quantified_claims(self):
+        """Quantified claims section inventories specific numbers."""
+        assert "Quantified Claims" in USER_PROMPT_TEMPLATE
+        assert "personally owned" in USER_PROMPT_TEMPLATE
