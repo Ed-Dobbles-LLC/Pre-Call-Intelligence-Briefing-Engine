@@ -275,8 +275,10 @@ class TestPromptTemplates:
     def test_user_prompt_has_how_to_win(self):
         assert "How to Win This Decision-Maker" in USER_PROMPT_TEMPLATE
         assert "What makes them look smart internally" in USER_PROMPT_TEMPLATE
-        assert "What NOT to do" in USER_PROMPT_TEMPLATE
-        assert "What kind of narrative resonates" in USER_PROMPT_TEMPLATE
+        assert "WIN CONDITIONS" in USER_PROMPT_TEMPLATE
+        assert "LOSS CONDITIONS" in USER_PROMPT_TEMPLATE
+        assert "TAILORED QUESTIONS" in USER_PROMPT_TEMPLATE
+        assert "PROOF POINTS TO DEPLOY" in USER_PROMPT_TEMPLATE
 
     def test_user_prompt_template_format_fields(self):
         """Ensure all format placeholders can be filled."""
@@ -315,3 +317,52 @@ class TestPromptTemplates:
         assert "Engagement / Team Outcome Claims" in USER_PROMPT_TEMPLATE
         assert "Marketing-Level Claims" in USER_PROMPT_TEMPLATE
         assert "Claim Style Pattern" in USER_PROMPT_TEMPLATE
+
+
+class TestStrategicModelV2Prompts:
+    """Tests for Strategic Model v2 prompt enhancements."""
+
+    def test_reasoning_table_present(self):
+        """v2: Internal Reasoning Table must be in prompt template."""
+        assert "INTERNAL REASONING TABLE" in USER_PROMPT_TEMPLATE
+        assert "DO NOT include in final output" in USER_PROMPT_TEMPLATE
+        assert "Revenue model" in USER_PROMPT_TEMPLATE
+        assert "Reporting line" in USER_PROMPT_TEMPLATE
+        assert "Mandate / KPI" in USER_PROMPT_TEMPLATE
+        assert "Incentive alignment" in USER_PROMPT_TEMPLATE
+        assert "Failure consequence" in USER_PROMPT_TEMPLATE
+        assert "Budget authority" in USER_PROMPT_TEMPLATE
+        assert "Competitive landscape" in USER_PROMPT_TEMPLATE
+        assert "Consulting economics" in USER_PROMPT_TEMPLATE
+        assert "Buyer archetype" in USER_PROMPT_TEMPLATE
+
+    def test_section_9_pressure_matrix(self):
+        """v2: Section 9 must require a Pressure Matrix."""
+        assert "PRESSURE MATRIX" in USER_PROMPT_TEMPLATE
+        assert "Revenue Pressure" in USER_PROMPT_TEMPLATE
+        assert "Delivery Pressure" in USER_PROMPT_TEMPLATE
+        assert "Credibility / Politics Pressure" in USER_PROMPT_TEMPLATE
+        assert "Adoption Pressure" in USER_PROMPT_TEMPLATE
+        assert "Budget Authority Estimate" in USER_PROMPT_TEMPLATE
+
+    def test_section_10_names_competitors(self):
+        """v2: Section 10 must require naming specific competitors."""
+        assert "Named competitors" in USER_PROMPT_TEMPLATE
+        assert "why them" in USER_PROMPT_TEMPLATE
+
+    def test_section_11_structured_output(self):
+        """v2: Section 11 must require structured win/loss/questions/proof."""
+        assert "WIN CONDITIONS (exactly 3)" in USER_PROMPT_TEMPLATE
+        assert "LOSS CONDITIONS / LANDMINES (exactly 3)" in USER_PROMPT_TEMPLATE
+        assert "TAILORED QUESTIONS (exactly 5)" in USER_PROMPT_TEMPLATE
+        assert "PROOF POINTS TO DEPLOY (exactly 3)" in USER_PROMPT_TEMPLATE
+
+    def test_anti_generic_inference_language(self):
+        """v2: Prompt penalizes generic language in sections 9-11."""
+        assert "Do NOT use \"likely\", \"may\", or \"could\"" in USER_PROMPT_TEMPLATE
+
+    def test_factual_vs_strategic_coverage_instruction(self):
+        """v2: Coverage gate instruction distinguishes factual vs strategic."""
+        assert "FACTUAL SECTIONS (1" in USER_PROMPT_TEMPLATE
+        assert "STRATEGIC MODEL SECTIONS (9" in USER_PROMPT_TEMPLATE
+        assert "do NOT require per-sentence" in USER_PROMPT_TEMPLATE

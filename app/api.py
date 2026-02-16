@@ -29,12 +29,15 @@ from app.brief.evidence_graph import (
     EvidenceGraph,
     build_failure_report,
     build_meeting_prep_brief,
+    check_strategic_sources_present,
+    compute_factual_coverage_from_text,
     compute_visibility_coverage_confidence,
     determine_dossier_mode,
     extract_highest_signal_artifacts,
     filter_prose_by_mode,
 )
 from app.brief.qa import (
+    compute_decision_leverage_score,
     enforce_fail_closed_gates,
     generate_dossier_qa_report,
     render_qa_report_markdown,
@@ -1569,8 +1572,14 @@ async def deep_research_endpoint(profile_id: int):
         qa_markdown = render_qa_report_markdown(qa_report)
 
         # --- STEP 6: Post-synthesis fail-closed enforcement ---
+        # Evidence Coverage v2: compute factual-only coverage (sections 1-8, 12)
+        # and check strategic sections (9-11) have upstream evidence citations
         visibility_ledger_count = len(graph.get_visibility_ledger_rows())
         evidence_coverage = qa_report.evidence_coverage.coverage_pct
+        factual_coverage = compute_factual_coverage_from_text(result)
+        strat_sources_ok, strat_sources_missing = check_strategic_sources_present(
+            result
+        )
         total_web_results = sum(len(v) for v in search_results.values())
         should_output, fail_message = enforce_fail_closed_gates(
             dossier_text=result,
@@ -1580,6 +1589,9 @@ async def deep_research_endpoint(profile_id: int):
             person_name=p_name,
             has_public_results=has_public_results,
             web_results_count=total_web_results,
+            factual_coverage_pct=factual_coverage,
+            strategic_sources_present=strat_sources_ok,
+            strategic_sources_missing=strat_sources_missing,
         )
 
         # Apply mode-based prose filtering
@@ -1607,10 +1619,29 @@ async def deep_research_endpoint(profile_id: int):
             "visibility_ledger_rows": visibility_ledger_count,
             "visibility_confidence": vis_coverage_confidence,
             "evidence_coverage_pct": round(evidence_coverage, 1),
+            "factual_coverage_pct": round(factual_coverage, 1),
+            "strategic_sources_present": strat_sources_ok,
+            "strategic_sources_missing": strat_sources_missing,
             "entity_lock_score": entity_lock.score,
             "entity_lock_status": entity_lock.lock_status,
             "has_public_results": has_public_results,
             "failure_message": fail_message if not should_output else None,
+        }
+
+        # --- STEP 7: Decision Leverage Score ---
+        total_vis_results = sum(len(v) for v in visibility_results.values())
+        leverage = compute_decision_leverage_score(
+            identity_lock_score=entity_lock.score,
+            factual_coverage_pct=factual_coverage,
+            evidence_node_count=len(graph.nodes),
+            dossier_text=result if should_output else "",
+            visibility_results_count=total_vis_results,
+            title=p_title,
+        )
+        leverage_report = {
+            "decision_leverage_score": leverage.score,
+            "decision_leverage_drivers": leverage.drivers,
+            "decision_leverage_components": leverage.components,
         }
 
         # --- Persist ---
@@ -1635,6 +1666,7 @@ async def deep_research_endpoint(profile_id: int):
         profile_data["search_plan"] = search_plan
         profile_data["visibility_report"] = visibility_report
         profile_data["fail_closed_status"] = fail_closed_status
+        profile_data["decision_leverage"] = leverage_report
         profile_data["evidence_graph"] = graph.to_dict()
         profile_data["retrieval_ledger"] = [r.model_dump() for r in graph.ledger]
         profile_data["visibility_ledger"] = [
@@ -1660,11 +1692,13 @@ async def deep_research_endpoint(profile_id: int):
                 "evidence_coverage_pct": round(
                     qa_report.evidence_coverage.coverage_pct, 1,
                 ),
+                "factual_coverage_pct": round(factual_coverage, 1),
                 "person_level_pct": round(qa_report.person_level.person_pct, 1),
                 "contradictions": len(qa_report.contradictions),
                 "hallucination_risk_flags": qa_report.hallucination_risk_flags,
                 "markdown": qa_markdown,
             },
+            "decision_leverage": leverage_report,
             "search_plan": search_plan,
             "visibility_report": visibility_report,
             "fail_closed_status": fail_closed_status,
@@ -2461,8 +2495,13 @@ async def generate_profile_research(profile_id: int):
             )
 
         # --- STEP 5: Post-synthesis fail-closed enforcement ---
+        # Evidence Coverage v2: compute factual-only coverage
         visibility_ledger_count = len(graph.get_visibility_ledger_rows())
         evidence_coverage = qa_report.evidence_coverage.coverage_pct
+        factual_coverage = compute_factual_coverage_from_text(result)
+        strat_sources_ok, strat_sources_missing = check_strategic_sources_present(
+            result
+        )
         total_web_results_2 = sum(len(v) for v in search_results.values())
         should_output, fail_message = enforce_fail_closed_gates(
             dossier_text=result,
@@ -2472,6 +2511,9 @@ async def generate_profile_research(profile_id: int):
             person_name=p_name,
             has_public_results=has_public_results,
             web_results_count=total_web_results_2,
+            factual_coverage_pct=factual_coverage,
+            strategic_sources_present=strat_sources_ok,
+            strategic_sources_missing=strat_sources_missing,
         )
 
         # --- STEP 6: Apply mode-based prose filtering ---
@@ -2510,10 +2552,29 @@ async def generate_profile_research(profile_id: int):
             "visibility_ledger_rows": visibility_ledger_count,
             "visibility_confidence": vis_coverage_confidence,
             "evidence_coverage_pct": round(evidence_coverage, 1),
+            "factual_coverage_pct": round(factual_coverage, 1),
+            "strategic_sources_present": strat_sources_ok,
+            "strategic_sources_missing": strat_sources_missing,
             "entity_lock_score": entity_lock.score,
             "entity_lock_status": entity_lock.lock_status,
             "has_public_results": has_public_results,
             "failure_message": fail_message if not should_output else None,
+        }
+
+        # --- Decision Leverage Score ---
+        total_vis_results_2 = sum(len(v) for v in visibility_results.values())
+        leverage = compute_decision_leverage_score(
+            identity_lock_score=entity_lock.score,
+            factual_coverage_pct=factual_coverage,
+            evidence_node_count=len(graph.nodes),
+            dossier_text=result if should_output else "",
+            visibility_results_count=total_vis_results_2,
+            title=p_title,
+        )
+        leverage_report = {
+            "decision_leverage_score": leverage.score,
+            "decision_leverage_drivers": leverage.drivers,
+            "decision_leverage_components": leverage.components,
         }
 
         # --- Persist ---
@@ -2538,6 +2599,7 @@ async def generate_profile_research(profile_id: int):
         profile_data["search_plan"] = search_plan
         profile_data["visibility_report"] = visibility_report
         profile_data["fail_closed_status"] = fail_closed_status
+        profile_data["decision_leverage"] = leverage_report
         profile_data["evidence_graph"] = graph.to_dict()
         profile_data["retrieval_ledger"] = [
             r.model_dump() for r in graph.ledger
@@ -2565,11 +2627,13 @@ async def generate_profile_research(profile_id: int):
                 "evidence_coverage_pct": round(
                     qa_report.evidence_coverage.coverage_pct, 1
                 ),
+                "factual_coverage_pct": round(factual_coverage, 1),
                 "person_level_pct": round(qa_report.person_level.person_pct, 1),
                 "contradictions": len(qa_report.contradictions),
                 "hallucination_risk_flags": qa_report.hallucination_risk_flags,
                 "markdown": qa_markdown,
             },
+            "decision_leverage": leverage_report,
             "search_plan": search_plan,
             "visibility_report": visibility_report,
             "fail_closed_status": fail_closed_status,

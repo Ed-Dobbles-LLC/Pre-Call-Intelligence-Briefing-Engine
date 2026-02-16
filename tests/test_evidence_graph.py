@@ -1869,3 +1869,98 @@ class TestEntityLockRegressionPrevention:
         assert result.linkedin_url_present
         assert result.meeting_confirmed
         assert result.employer_match
+
+
+# ---------------------------------------------------------------------------
+# Strategic Model v2: Factual Coverage + Strategic Sources
+# ---------------------------------------------------------------------------
+
+
+class TestFactualCoverage:
+    """Test compute_factual_coverage_from_text excludes sections 9-11."""
+
+    def test_factual_only_100_when_all_tagged(self):
+        from app.brief.evidence_graph import compute_factual_coverage_from_text
+        text = (
+            "### 1. Executive Summary\n"
+            "Jane is VP of Engineering at Acme Corp. [VERIFIED-PDF]\n"
+            "She manages a team of 50 engineers. [VERIFIED-MEETING]\n"
+            "### 9. Structural Incentive & Power Model\n"
+            "[STRATEGIC MODEL — Derived from VERIFIED-PDF + VERIFIED-MEETING]\n"
+            "Untagged strategic reasoning that should be excluded from factual count.\n"
+            "### 12. Primary Source Index\n"
+            "LinkedIn profile used as primary source. [VERIFIED-PDF]\n"
+        )
+        pct = compute_factual_coverage_from_text(text)
+        assert pct == 100.0
+
+    def test_factual_ignores_section_9_10_11(self):
+        from app.brief.evidence_graph import compute_factual_coverage_from_text
+        text = (
+            "### 1. Executive Summary\n"
+            "Jane is VP of Engineering at Acme Corp. [VERIFIED-PDF]\n"
+            "Some untagged claim about her background.\n"
+            "### 9. Structural Incentive & Power Model\n"
+            "Untagged strategic reasoning line one.\n"
+            "Untagged strategic reasoning line two.\n"
+            "### 10. Competitive Positioning Context\n"
+            "Untagged competitive analysis.\n"
+            "### 11. How to Win This Decision-Maker\n"
+            "Untagged win strategy.\n"
+            "### 12. Primary Source Index\n"
+            "Source reference. [VERIFIED-PUBLIC]\n"
+        )
+        pct = compute_factual_coverage_from_text(text)
+        # Sections 1 and 12 have 3 lines: 2 tagged, 1 untagged
+        assert pct < 100.0
+        assert pct > 0.0
+
+    def test_factual_coverage_empty_text(self):
+        from app.brief.evidence_graph import compute_factual_coverage_from_text
+        assert compute_factual_coverage_from_text("") == 100.0
+
+
+class TestStrategicSourcesPresent:
+    """Test check_strategic_sources_present for Derived from headers."""
+
+    def test_all_present(self):
+        from app.brief.evidence_graph import check_strategic_sources_present
+        text = (
+            "### 9. Structural Incentive & Power Model\n"
+            "[STRATEGIC MODEL — Derived from VERIFIED-PDF + VERIFIED-MEETING]\n"
+            "Analysis content here.\n"
+            "### 10. Competitive Positioning Context\n"
+            "[STRATEGIC MODEL — Derived from VERIFIED-PUBLIC + INFERRED-H]\n"
+            "Analysis content here.\n"
+            "### 11. How to Win This Decision-Maker\n"
+            "[STRATEGIC MODEL — Derived from VERIFIED-MEETING + VERIFIED-PDF]\n"
+            "Analysis content here.\n"
+        )
+        ok, missing = check_strategic_sources_present(text)
+        assert ok is True
+        assert missing == []
+
+    def test_missing_section_10(self):
+        from app.brief.evidence_graph import check_strategic_sources_present
+        text = (
+            "### 9. Structural Incentive & Power Model\n"
+            "[STRATEGIC MODEL — Derived from VERIFIED-PDF + VERIFIED-MEETING]\n"
+            "### 10. Competitive Positioning Context\n"
+            "Some analysis without derived header.\n"
+            "### 11. How to Win This Decision-Maker\n"
+            "[STRATEGIC MODEL — Derived from VERIFIED-MEETING + INFERRED-H]\n"
+        )
+        ok, missing = check_strategic_sources_present(text)
+        assert ok is False
+        assert len(missing) == 1
+        assert "Section 10" in missing[0]
+
+    def test_all_missing(self):
+        from app.brief.evidence_graph import check_strategic_sources_present
+        text = (
+            "### 1. Executive Summary\n"
+            "Content only in section 1.\n"
+        )
+        ok, missing = check_strategic_sources_present(text)
+        assert ok is False
+        assert len(missing) == 3
