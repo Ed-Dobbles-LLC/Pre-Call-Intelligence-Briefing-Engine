@@ -928,11 +928,12 @@ async def _enrich_profiles_with_apollo() -> int:
             if profile_data.get("linkedin_status") == "no_match":
                 continue
 
-            # Previously auto-matched profiles should be re-reviewed —
-            # clear their stale data so the user can pick the right person.
+            # Previously auto-matched profiles should be re-reviewed.
+            # Mark for re-review but PRESERVE existing photo and LinkedIn
+            # data — the user can update them during review.  Wiping them
+            # here permanently destroys stored photos and headshots.
             if profile_data.get("linkedin_status") == "matched":
-                profile_data.pop("photo_url", None)
-                profile_data.pop("linkedin_url", None)
+                profile_data["linkedin_status"] = "pending_review"
 
             # Need at least some interactions
             if not profile_data.get("meeting_count") and not profile_data.get("email_count"):
