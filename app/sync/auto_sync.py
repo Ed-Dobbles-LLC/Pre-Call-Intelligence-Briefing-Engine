@@ -1177,6 +1177,38 @@ async def _re_enrich_confirmed_profiles() -> int:
     return updated_count
 
 
+def _auto_clean_garbled_fields(profile_data: dict) -> None:
+    """Silently clean garbled text fields before serving to the frontend.
+
+    Browser-saved LinkedIn PDFs with CIDFont encodings produce garbled text
+    that was stored before our garbled-text detection was added. This function
+    filters it out at read time so the UI never shows mojibake.
+    """
+    try:
+        from app.services.linkedin_pdf import _is_garbled_text
+    except ImportError:
+        return
+
+    # Clean fields that may contain garbled text from old PDF ingestion
+    for field in ("headline", "location", "linkedin_pdf_raw_text"):
+        val = profile_data.get(field, "")
+        if val and isinstance(val, str) and len(val) > 10 and _is_garbled_text(val):
+            profile_data[field] = ""
+
+    # If raw text was garbled, also clear dependent fields
+    if not profile_data.get("linkedin_pdf_raw_text"):
+        if profile_data.get("linkedin_pdf_sections"):
+            # Check if sections contain garbled text too
+            sections = profile_data.get("linkedin_pdf_sections", {})
+            if isinstance(sections, dict):
+                for key, val in list(sections.items()):
+                    text = val if isinstance(val, str) else str(val)
+                    if text and _is_garbled_text(text):
+                        profile_data["linkedin_pdf_sections"] = {}
+                        profile_data["linkedin_pdf_text_usable"] = False
+                        break
+
+
 def get_all_profiles() -> list[dict]:
     """Retrieve all person profiles from the database."""
     init_db()
@@ -1204,6 +1236,9 @@ def get_all_profiles() -> list[dict]:
             emails = json.loads(entity.emails or "[]")
             if _is_non_person(entity.name, emails[0] if emails else ""):
                 continue
+            # --- Auto-clean garbled text before serving to frontend ---
+            _auto_clean_garbled_fields(profile_data)
+
             profile = {
                 "id": entity.id,
                 "name": entity.name,
