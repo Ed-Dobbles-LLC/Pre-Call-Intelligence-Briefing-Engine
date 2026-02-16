@@ -283,6 +283,8 @@ def compute_factual_coverage_from_text(text: str) -> float:
     """Compute evidence coverage for FACTUAL sections only (1-8, 12).
 
     Strategic model sections (9-11) are excluded from this computation.
+    Lines that are structural (headers, formatting, tables, short labels,
+    bullet markers, bold-only labels) are excluded from the count.
     Returns coverage percentage 0-100.
     """
     tag_pattern = re.compile(
@@ -295,8 +297,23 @@ def compute_factual_coverage_from_text(text: str) -> float:
         r"no (public |internal )?data|no (public |internal )?evidence|"
         r"no appearances found|no results found|"
         r"unknown at this time|insufficient (evidence|data)|"
-        r"no supporting evidence|cannot be determined",
+        r"no supporting evidence|cannot be determined|"
+        r"no (relevant |applicable )?information|"
+        r"no (public )?record|not (publicly )?known|"
+        r"no (published |known )?sources|"
+        r"data not available|information not available|"
+        r"not (publicly )?documented|"
+        r"no (specific |direct )?evidence|"
+        r"unable to (verify|confirm|determine)",
         re.IGNORECASE,
+    )
+    # Lines that are structural formatting, not substantive claims
+    structural_pattern = re.compile(
+        r"^(\*\*[^*]+\*\*:?\s*$"  # Bold-only labels like "**VERIFIED**:"
+        r"|[-*]\s+\*\*[^*]+\*\*:?\s*$"  # Bullet with bold label only
+        r"|[-*]\s{0,2}$"  # Empty bullet
+        r"|\*\*[A-Z][A-Z\s/&]+\*\*"  # ALL-CAPS bold headers like **VERIFIED**
+        r"|^>\s)"  # Blockquote markers
     )
 
     lines = text.strip().split("\n")
@@ -315,14 +332,30 @@ def compute_factual_coverage_from_text(text: str) -> float:
             in_strategic_block = False
             continue
 
-        # Skip non-substantive lines
-        if len(stripped) <= 20:
+        # Skip non-substantive lines (bumped to 25 chars to exclude labels)
+        if len(stripped) <= 25:
             continue
-        if stripped.startswith("#") or stripped.startswith("---") or stripped.startswith("|"):
+        # Skip markdown structure: headers, rules, table rows
+        if stripped.startswith("#") or stripped.startswith("---"):
+            continue
+        # Table rows: skip header/separator rows but count data rows
+        if stripped.startswith("|"):
+            # Table separator rows (|---|---|)
+            if re.match(r"^\|[\s\-:|]+\|$", stripped):
+                continue
+            # Table rows with evidence tags count as covered
+            if current_section not in _STRATEGIC_SECTIONS:
+                total += 1
+                if tag_pattern.search(stripped) or gap_pattern.search(stripped):
+                    tagged += 1
             continue
 
         # Skip lines in strategic sections (9, 10, 11)
         if current_section in _STRATEGIC_SECTIONS:
+            continue
+
+        # Skip structural formatting lines (bold labels, empty bullets)
+        if structural_pattern.match(stripped):
             continue
 
         # Check for strategic model block headers in factual sections
