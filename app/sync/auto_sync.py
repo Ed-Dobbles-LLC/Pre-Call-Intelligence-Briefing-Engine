@@ -1235,6 +1235,49 @@ def get_all_profiles() -> list[dict]:
                 "deep_profile_generated_at": profile_data.get(
                     "deep_profile_generated_at", ""
                 ),
+                "deep_research_status": profile_data.get(
+                    "deep_research_status", ""
+                ),
+                "entity_lock_score": profile_data.get("entity_lock_score"),
+                "qa_passes_all": profile_data.get("qa_passes_all"),
+                # LinkedIn PDF
+                "linkedin_pdf_path": profile_data.get("linkedin_pdf_path", ""),
+                "linkedin_pdf_raw_text": profile_data.get(
+                    "linkedin_pdf_raw_text", ""
+                ),
+                "linkedin_pdf_ingested_at": profile_data.get(
+                    "linkedin_pdf_ingested_at", ""
+                ),
+                # Photo source
+                "photo_source": profile_data.get("photo_source", ""),
+                # Enrichment
+                "enriched_at": profile_data.get("enriched_at", ""),
+                "pdl_match_confidence": profile_data.get(
+                    "pdl_match_confidence"
+                ),
+                # Dossier modes
+                "dossier_mode_a_markdown": profile_data.get(
+                    "dossier_mode_a_markdown", ""
+                ),
+                "dossier_mode_a_generated_at": profile_data.get(
+                    "dossier_mode_a_generated_at", ""
+                ),
+                "artifact_dossier_markdown": profile_data.get(
+                    "artifact_dossier_markdown", ""
+                ),
+                "artifact_dossier_generated_at": profile_data.get(
+                    "artifact_dossier_generated_at", ""
+                ),
+                "artifact_dossier_coverage": profile_data.get(
+                    "artifact_dossier_coverage"
+                ),
+                "artifact_dossier_mode": profile_data.get(
+                    "artifact_dossier_mode", ""
+                ),
+                # Upcoming meetings
+                "upcoming_meetings": profile_data.get(
+                    "upcoming_meetings", []
+                ),
             }
             profiles.append(profile)
 

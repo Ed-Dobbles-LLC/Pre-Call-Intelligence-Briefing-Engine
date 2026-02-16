@@ -1261,6 +1261,119 @@
       text-align: center;
       padding: 80px 16px;
     }
+    .review-section-title {
+      font-size: 14px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--text-muted);
+      margin: 32px 0 16px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .review-section-title:first-child { margin-top: 0; }
+    .review-section-count {
+      background: var(--accent-glow);
+      color: var(--accent);
+      font-size: 11px;
+      padding: 2px 8px;
+      border-radius: 10px;
+      font-weight: 600;
+    }
+    .pdf-upload-zone {
+      border: 2px dashed var(--border);
+      border-radius: var(--radius-md);
+      padding: 20px;
+      text-align: center;
+      cursor: pointer;
+      transition: all 0.2s;
+      margin-top: 12px;
+      background: var(--bg-secondary);
+    }
+    .pdf-upload-zone:hover, .pdf-upload-zone.drag-over {
+      border-color: var(--accent);
+      background: var(--accent-glow);
+    }
+    .pdf-upload-zone .upload-icon {
+      opacity: 0.4;
+      margin-bottom: 8px;
+    }
+    .pdf-upload-zone:hover .upload-icon { opacity: 0.7; }
+    .pdf-upload-zone .upload-label {
+      font-size: 13px;
+      color: var(--text-secondary);
+      font-weight: 500;
+    }
+    .pdf-upload-zone .upload-hint {
+      font-size: 11px;
+      color: var(--text-muted);
+      margin-top: 4px;
+    }
+    .pdf-upload-zone.uploading {
+      border-color: var(--info);
+      background: var(--info-bg);
+      cursor: wait;
+    }
+    .pdf-upload-zone .upload-result {
+      font-size: 12px;
+      margin-top: 8px;
+      padding: 8px 12px;
+      border-radius: var(--radius-sm);
+    }
+    .pdf-upload-zone .upload-result.success {
+      background: var(--success-bg);
+      color: var(--success);
+    }
+    .pdf-upload-zone .upload-result.error {
+      background: var(--danger-bg, rgba(239,68,68,0.1));
+      color: var(--danger);
+    }
+    .pdf-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 3px 10px;
+      border-radius: 10px;
+      font-size: 11px;
+      font-weight: 600;
+    }
+    .pdf-badge.uploaded {
+      background: var(--success-bg);
+      color: var(--success);
+    }
+    .pdf-badge.missing {
+      background: var(--warning-bg, rgba(245,158,11,0.1));
+      color: var(--warning, #f59e0b);
+    }
+    .needs-pdf-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 20px;
+    }
+    .needs-pdf-card-header {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      margin-bottom: 4px;
+    }
+    .needs-pdf-card-info { flex: 1; min-width: 0; }
+    .needs-pdf-card-name {
+      font-size: 16px;
+      font-weight: 600;
+    }
+    .needs-pdf-card-meta {
+      font-size: 12px;
+      color: var(--text-secondary);
+      margin-top: 2px;
+    }
+    .needs-pdf-card-tags {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+      margin-top: 6px;
+    }
 
     /* ── Utility ── */
     .flex-center { display: flex; align-items: center; justify-content: center; }
@@ -1473,6 +1586,19 @@
           </div>
           <div class="empty-title">Loading...</div>
         </div>
+      </div>
+
+      <!-- Contacts needing LinkedIn PDF upload -->
+      <div id="needsPdfSection" style="display:none">
+        <div class="review-section-title">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><polyline points="9 15 12 12 15 15"/></svg>
+          Upload LinkedIn PDF
+          <span class="review-section-count" id="needsPdfCount">0</span>
+        </div>
+        <div style="font-size:13px;color:var(--text-secondary);margin-bottom:16px">
+          Upload a PDF of the contact's LinkedIn profile to dramatically improve research quality. Save the LinkedIn page as PDF from your browser, then drag it here or click to upload.
+        </div>
+        <div class="review-list" id="needsPdfList"></div>
       </div>
     </div>
   </div>
@@ -2907,18 +3033,32 @@
 
     // ── LinkedIn Review ──
     let pendingReviews = [];
+    let needsPdfProfiles = [];
     let selectedCandidates = {}; // profileId -> candidate index
 
     async function loadPendingReviews() {
       try {
         const res = await fetch(API_BASE + '/profiles/pending-review', { headers: authHeaders() });
         if (!res.ok) return;
-        pendingReviews = await res.json();
+        const data = await res.json();
+
+        // Handle both old (array) and new (object) response formats
+        if (Array.isArray(data)) {
+          pendingReviews = data;
+          needsPdfProfiles = [];
+        } else {
+          pendingReviews = data.linkedin_pending || [];
+          needsPdfProfiles = data.needs_pdf || [];
+        }
+
         renderPendingReviews();
-        // Update badge
-        if (pendingReviews.length > 0) {
+        renderNeedsPdf();
+
+        // Update badge — total of both sections
+        const totalCount = pendingReviews.length + needsPdfProfiles.length;
+        if (totalCount > 0) {
           $('reviewBadge').style.display = 'inline-flex';
-          $('reviewBadge').textContent = pendingReviews.length;
+          $('reviewBadge').textContent = totalCount;
         } else {
           $('reviewBadge').style.display = 'none';
         }
@@ -2927,23 +3067,38 @@
 
     function renderPendingReviews() {
       const container = $('reviewList');
-      $('reviewCount').textContent = pendingReviews.length
-        ? pendingReviews.length + ' contact' + (pendingReviews.length > 1 ? 's' : '') + ' need review'
+      const totalReviewCount = pendingReviews.length + needsPdfProfiles.length;
+      $('reviewCount').textContent = totalReviewCount
+        ? totalReviewCount + ' contact' + (totalReviewCount > 1 ? 's' : '') + ' need attention'
         : '';
 
-      if (!pendingReviews.length) {
+      if (!pendingReviews.length && !needsPdfProfiles.length) {
         container.innerHTML = `
           <div class="review-empty">
             <div style="margin-bottom: 12px; opacity: 0.3;">
               <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
             </div>
             <div class="empty-title">All caught up</div>
-            <div class="empty-subtitle">No contacts need LinkedIn profile review right now. When a sync finds contacts that can't be matched automatically, they'll appear here.</div>
+            <div class="empty-subtitle">No contacts need LinkedIn profile review or PDF upload right now. When a sync finds contacts that can't be matched automatically, they'll appear here.</div>
           </div>`;
+        $('needsPdfSection').style.display = 'none';
         return;
       }
 
-      container.innerHTML = pendingReviews.map((p, pi) => {
+      if (!pendingReviews.length) {
+        container.innerHTML = '';
+        return;
+      }
+
+      // Add section title when there are also PDF contacts
+      const sectionTitle = needsPdfProfiles.length ? `
+        <div class="review-section-title">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M20.5 2h-17A1.5 1.5 0 002 3.5v17A1.5 1.5 0 003.5 22h17a1.5 1.5 0 001.5-1.5v-17A1.5 1.5 0 0020.5 2zM8 19H5v-9h3zM6.5 8.25A1.75 1.75 0 118.3 6.5a1.78 1.78 0 01-1.8 1.75zM19 19h-3v-4.74c0-1.42-.6-1.93-1.38-1.93A1.74 1.74 0 0013 14.19V19h-3v-9h2.9v1.3a3.11 3.11 0 012.7-1.4c1.55 0 3.36.86 3.36 3.66z"/></svg>
+          LinkedIn Profile Disambiguation
+          <span class="review-section-count">${pendingReviews.length}</span>
+        </div>` : '';
+
+      container.innerHTML = sectionTitle + pendingReviews.map((p, pi) => {
         const candidates = p.linkedin_candidates || [];
         const selectedIdx = selectedCandidates[p.id];
         const isNoMatch = p.linkedin_status === 'no_match' || candidates.length === 0;
@@ -2993,6 +3148,24 @@
           </div>` : `
           <div class="review-label">No automatic matches found</div>`;
 
+        const hasPdf = p.linkedin_pdf_path || p.linkedin_pdf_ingested_at;
+        const pdfUploadHtml = `
+          <div class="manual-or" style="margin-top:12px;margin-bottom:8px">Or upload LinkedIn profile PDF</div>
+          <div class="pdf-upload-zone" id="pdfZone${p.id}"
+            onclick="document.getElementById('reviewPdfInput${p.id}').click()"
+            ondragover="event.preventDefault();this.classList.add('drag-over')"
+            ondragleave="this.classList.remove('drag-over')"
+            ondrop="event.preventDefault();this.classList.remove('drag-over');handleReviewPdfDrop(${p.id},event)">
+            <div class="upload-icon">
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><polyline points="9 15 12 12 15 15"/></svg>
+            </div>
+            <div class="upload-label">${hasPdf ? 'Re-upload LinkedIn PDF' : 'Drop LinkedIn PDF here or click to browse'}</div>
+            <div class="upload-hint">Save the LinkedIn profile page as PDF from your browser</div>
+            ${hasPdf ? '<div style="margin-top:6px"><span class="pdf-badge uploaded">PDF Uploaded</span></div>' : ''}
+            <div id="pdfResult${p.id}"></div>
+            <input type="file" id="reviewPdfInput${p.id}" accept=".pdf" style="display:none" onchange="handleReviewPdfUpload(${p.id},this)">
+          </div>`;
+
         const searchHtml = `
           <div class="${candidates.length ? 'manual-or' : ''}" style="margin-top:${candidates.length ? '12' : '4'}px;margin-bottom:8px;color:var(--text-muted);font-size:12px">${candidates.length ? 'Or search manually' : 'Search for this person'}</div>
           <div class="search-row">
@@ -3004,6 +3177,7 @@
             <input type="text" id="manualUrl${p.id}" placeholder="https://www.linkedin.com/in/..." onkeydown="if(event.key==='Enter')setManualLinkedIn(${p.id})" />
             <button onclick="setManualLinkedIn(${p.id})">Save</button>
           </div>
+          ${pdfUploadHtml}
           ${isNoMatch ? '<div class="review-actions"><button class="btn-none" onclick="dismissProfile(' + p.id + ')">Skip this contact</button></div>' : ''}`;
 
         return `
@@ -3044,8 +3218,9 @@
         delete selectedCandidates[profileId];
         pendingReviews = pendingReviews.filter(p => p.id !== profileId);
         renderPendingReviews();
-        if (pendingReviews.length > 0) {
-          $('reviewBadge').textContent = pendingReviews.length;
+        const totalAfterConfirm = pendingReviews.length + needsPdfProfiles.length;
+        if (totalAfterConfirm > 0) {
+          $('reviewBadge').textContent = totalAfterConfirm;
         } else {
           $('reviewBadge').style.display = 'none';
         }
@@ -3106,8 +3281,9 @@
         showToast('LinkedIn URL saved!', 'success');
         pendingReviews = pendingReviews.filter(p => p.id !== profileId);
         renderPendingReviews();
-        if (pendingReviews.length > 0) {
-          $('reviewBadge').textContent = pendingReviews.length;
+        const totalAfterManual = pendingReviews.length + needsPdfProfiles.length;
+        if (totalAfterManual > 0) {
+          $('reviewBadge').textContent = totalAfterManual;
         } else {
           $('reviewBadge').style.display = 'none';
         }
@@ -3128,8 +3304,9 @@
         showToast('Contact skipped', 'success');
         pendingReviews = pendingReviews.filter(p => p.id !== profileId);
         renderPendingReviews();
-        if (pendingReviews.length > 0) {
-          $('reviewBadge').textContent = pendingReviews.length;
+        const totalAfterSkip = pendingReviews.length + needsPdfProfiles.length;
+        if (totalAfterSkip > 0) {
+          $('reviewBadge').textContent = totalAfterSkip;
         } else {
           $('reviewBadge').style.display = 'none';
         }
@@ -3155,14 +3332,166 @@
           profile.linkedin_candidates = [];
         }
         renderPendingReviews();
-        if (pendingReviews.length > 0) {
-          $('reviewBadge').textContent = pendingReviews.length;
+        const totalCount = pendingReviews.length + needsPdfProfiles.length;
+        if (totalCount > 0) {
+          $('reviewBadge').textContent = totalCount;
         } else {
           $('reviewBadge').style.display = 'none';
         }
       } catch (e) {
         showToast(e.message);
       }
+    }
+
+    // ── Needs PDF Upload Section ──
+    function renderNeedsPdf() {
+      const section = $('needsPdfSection');
+      const container = $('needsPdfList');
+      if (!section || !container) return;
+
+      if (!needsPdfProfiles.length) {
+        section.style.display = 'none';
+        return;
+      }
+
+      section.style.display = 'block';
+      $('needsPdfCount').textContent = needsPdfProfiles.length;
+
+      container.innerHTML = needsPdfProfiles.map(p => {
+        const drStatus = p.deep_research_status || '';
+        const lockScore = p.entity_lock_score;
+        const hasMeetings = p.meeting_count > 0;
+
+        let tags = '';
+        if (hasMeetings) {
+          tags += '<span class="profile-tag meetings">' + p.meeting_count + ' meeting' + (p.meeting_count > 1 ? 's' : '') + '</span>';
+        }
+        if (p.email_count) {
+          tags += '<span class="profile-tag emails">' + p.email_count + ' email' + (p.email_count > 1 ? 's' : '') + '</span>';
+        }
+        if (drStatus === 'FAILED') {
+          tags += '<span class="profile-tag" style="background:var(--danger-bg, rgba(239,68,68,0.1));color:var(--danger)">Research Failed</span>';
+        }
+        if (typeof lockScore === 'number' && lockScore < 70) {
+          tags += '<span class="profile-tag" style="background:var(--warning-bg, rgba(245,158,11,0.1));color:var(--warning, #f59e0b)">Lock ' + lockScore + '/100</span>';
+        }
+        tags += '<span class="pdf-badge missing">No PDF</span>';
+
+        return `
+        <div class="needs-pdf-card" id="needsPdfCard${p.id}">
+          <div class="needs-pdf-card-header">
+            ${avatarHtml(p.name, p.email, 44, p.photo_url || getCandidatePhoto(p), p.linkedin_url, p.id)}
+            <div class="needs-pdf-card-info">
+              <div class="needs-pdf-card-name">${p.name}</div>
+              <div class="needs-pdf-card-meta">
+                ${p.title ? p.title + (p.company ? ' @ ' + p.company : '') : (p.company ? p.company + ' &middot; ' : '')}${p.email || ''}
+              </div>
+              <div class="needs-pdf-card-tags">${tags}</div>
+            </div>
+          </div>
+          <div class="pdf-upload-zone" id="pdfZoneNp${p.id}"
+            onclick="document.getElementById('npPdfInput${p.id}').click()"
+            ondragover="event.preventDefault();this.classList.add('drag-over')"
+            ondragleave="this.classList.remove('drag-over')"
+            ondrop="event.preventDefault();this.classList.remove('drag-over');handleReviewPdfDrop(${p.id},event)">
+            <div class="upload-icon">
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><polyline points="9 15 12 12 15 15"/></svg>
+            </div>
+            <div class="upload-label">Drop LinkedIn PDF here or click to browse</div>
+            <div class="upload-hint">Save their LinkedIn profile page as PDF from your browser</div>
+            <div id="pdfResultNp${p.id}"></div>
+            <input type="file" id="npPdfInput${p.id}" accept=".pdf" style="display:none" onchange="handleReviewPdfUpload(${p.id},this)">
+          </div>
+        </div>`;
+      }).join('');
+    }
+
+    function handleReviewPdfDrop(profileId, event) {
+      const files = event.dataTransfer.files;
+      if (!files.length) return;
+      const file = files[0];
+      if (!file.name.toLowerCase().endsWith('.pdf')) {
+        showToast('Please drop a PDF file');
+        return;
+      }
+      processReviewPdfFile(profileId, file);
+    }
+
+    function handleReviewPdfUpload(profileId, inputElement) {
+      const file = inputElement.files[0];
+      if (!file) return;
+      if (!file.name.toLowerCase().endsWith('.pdf')) {
+        showToast('Please select a PDF file');
+        return;
+      }
+      processReviewPdfFile(profileId, file);
+    }
+
+    function processReviewPdfFile(profileId, file) {
+      // Find the upload zone and result area (works for both review card and needs-pdf card)
+      const zone = document.getElementById('pdfZone' + profileId) || document.getElementById('pdfZoneNp' + profileId);
+      const resultEl = document.getElementById('pdfResult' + profileId) || document.getElementById('pdfResultNp' + profileId);
+
+      if (zone) {
+        zone.classList.add('uploading');
+        zone.querySelector('.upload-label').textContent = 'Uploading and processing...';
+      }
+      if (resultEl) {
+        resultEl.innerHTML = '';
+      }
+
+      const reader = new FileReader();
+      reader.onload = async function(e) {
+        const base64 = e.target.result.split(',')[1];
+
+        try {
+          const res = await fetch(API_BASE + '/profiles/' + profileId + '/ingest-linkedin-pdf', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...authHeaders() },
+            body: JSON.stringify({ pdf_base64: base64 })
+          });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.detail || 'Upload failed');
+
+          if (resultEl) {
+            resultEl.innerHTML = '<div class="upload-result success">' +
+              '<strong>PDF processed successfully</strong><br>' +
+              data.text_length + ' chars extracted &middot; ' +
+              data.sections_found.length + ' sections &middot; ' +
+              data.experience_entries + ' experience entries &middot; ' +
+              data.skills_count + ' skills' +
+              (data.headshot_cropped ? ' &middot; headshot cropped' : '') +
+              (data.photo_updated ? ' (photo updated)' : '') +
+              '</div>';
+          }
+          if (zone) {
+            zone.classList.remove('uploading');
+            zone.querySelector('.upload-label').textContent = 'PDF uploaded — drop another to replace';
+          }
+
+          showToast('LinkedIn PDF processed — ' + data.text_length + ' chars extracted', 'success');
+
+          // Remove from needs-pdf list since it now has a PDF
+          needsPdfProfiles = needsPdfProfiles.filter(p => p.id !== profileId);
+          renderNeedsPdf();
+
+          // Refresh data
+          setTimeout(function() {
+            loadProfiles();
+            loadPendingReviews();
+          }, 1500);
+        } catch (err) {
+          if (resultEl) {
+            resultEl.innerHTML = '<div class="upload-result error">Upload failed: ' + err.message + '</div>';
+          }
+          if (zone) {
+            zone.classList.remove('uploading');
+            zone.querySelector('.upload-label').textContent = 'Drop LinkedIn PDF here or click to browse';
+          }
+          showToast('PDF upload failed: ' + err.message);
+        }
+      };
+      reader.readAsDataURL(file);
     }
 
     // ── Init ──

@@ -103,7 +103,8 @@ class TestPendingReview:
     def test_no_pending_profiles(self):
         response = client.get("/profiles/pending-review")
         assert response.status_code == 200
-        assert response.json() == []
+        data = response.json()
+        assert data["linkedin_pending"] == []
 
     def test_pending_review_returned(self):
         _create_profile(
@@ -113,8 +114,8 @@ class TestPendingReview:
         response = client.get("/profiles/pending-review")
         assert response.status_code == 200
         data = response.json()
-        assert len(data) >= 1
-        assert data[0]["linkedin_status"] == "pending_review"
+        assert len(data["linkedin_pending"]) >= 1
+        assert data["linkedin_pending"][0]["linkedin_status"] == "pending_review"
 
     def test_no_match_included_in_pending(self):
         _create_profile(
@@ -125,7 +126,7 @@ class TestPendingReview:
         response = client.get("/profiles/pending-review")
         assert response.status_code == 200
         data = response.json()
-        names = [p["name"] for p in data]
+        names = [p["name"] for p in data["linkedin_pending"]]
         assert "Bob Smith" in names
 
     def test_confirmed_not_in_pending(self):
@@ -138,8 +139,21 @@ class TestPendingReview:
         response = client.get("/profiles/pending-review")
         assert response.status_code == 200
         data = response.json()
-        names = [p["name"] for p in data]
+        names = [p["name"] for p in data["linkedin_pending"]]
         assert "Alice Confirmed" not in names
+
+    def test_needs_pdf_section(self):
+        """Contacts with meetings but no PDF appear in needs_pdf."""
+        _create_profile(
+            name="No PDF Contact",
+            email="nopdf@test.com",
+            linkedin_status="confirmed",
+            linkedin_url="https://linkedin.com/in/nopdf",
+        )
+        response = client.get("/profiles/pending-review")
+        assert response.status_code == 200
+        data = response.json()
+        assert "needs_pdf" in data
 
 
 class TestConfirmLinkedIn:
