@@ -1762,21 +1762,39 @@ def enforce_fail_closed_gates(
         )
 
     # Gate 2: Evidence coverage — adaptive threshold based on evidence availability
-    # v2: Use factual_coverage_pct (sections 1-8, 12 only) if available
+    # v2: Use factual_coverage_pct (sections 1-8, 12 only) if available.
+    # Thresholds are recalibrated for factual-only measurement: the old
+    # thresholds (85/70/60) included strategic model sections whose
+    # [STRATEGIC MODEL] headers inflated coverage. Factual-only sections
+    # contain more transitional/formatting lines, so thresholds are lower.
     coverage_for_gate = (
         factual_coverage_pct if factual_coverage_pct is not None
         else evidence_coverage_pct
     )
 
-    if web_results_count >= 10:
-        coverage_threshold = 85.0
-    elif web_results_count >= 5:
-        coverage_threshold = 70.0
+    if factual_coverage_pct is not None:
+        # v2 factual-only thresholds (sections 1-8, 12 only)
+        if web_results_count >= 10:
+            coverage_threshold = 55.0
+        elif web_results_count >= 5:
+            coverage_threshold = 45.0
+        else:
+            coverage_threshold = 35.0
     else:
-        coverage_threshold = 60.0
+        # Legacy full-text thresholds (backward compatible)
+        if web_results_count >= 10:
+            coverage_threshold = 85.0
+        elif web_results_count >= 5:
+            coverage_threshold = 70.0
+        else:
+            coverage_threshold = 60.0
 
     if coverage_for_gate < coverage_threshold:
-        coverage_label = "FACTUAL EVIDENCE COVERAGE" if factual_coverage_pct is not None else "EVIDENCE COVERAGE"
+        coverage_label = (
+            "FACTUAL EVIDENCE COVERAGE"
+            if factual_coverage_pct is not None
+            else "EVIDENCE COVERAGE"
+        )
         failures.append(
             f"FAIL: {coverage_label} {coverage_for_gate:.1f}%\n"
             f"Coverage must be >= {coverage_threshold:.0f}% "
