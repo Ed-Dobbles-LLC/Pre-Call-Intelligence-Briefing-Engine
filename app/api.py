@@ -844,7 +844,8 @@ async def upload_photo_endpoint(profile_id: int, photo_data: dict | None = None)
         dest = cache_dir / filename
         dest.write_bytes(photo_bytes)
 
-        photo_url = f"./image_cache/{filename}"
+        local_path = f"./image_cache/{filename}"
+        photo_url = f"/api/local-image/{local_path}"
         photo_hash = hashlib.sha256(photo_bytes).hexdigest()[:16]
 
         # Update profile
