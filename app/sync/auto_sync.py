@@ -560,13 +560,26 @@ def _update_profiles(all_participants: dict[str, dict]) -> int:
                 "updated_at": datetime.utcnow().isoformat(),
             }
 
-            # Carry forward Apollo enrichment, LinkedIn verification, and deep profile
+            # Carry forward all enrichment data that shouldn't be lost on re-sync:
+            # Apollo, LinkedIn verification, deep profile, photos, dossiers,
+            # and LinkedIn PDF data (uploaded by user)
             for key in (
-                "apollo_enriched", "photo_url", "linkedin_url", "title",
+                "apollo_enriched", "photo_url", "photo_source", "photo_status",
+                "linkedin_url", "title",
                 "headline", "seniority", "location", "company_full",
                 "company_industry", "company_size", "company_linkedin",
                 "linkedin_status", "linkedin_candidates",
                 "deep_profile", "deep_profile_generated_at",
+                "deep_research_status", "entity_lock_score",
+                "dossier_mode_a_markdown", "dossier_mode_a_generated_at",
+                "artifact_dossier_markdown", "artifact_dossier_generated_at",
+                "artifact_dossier_coverage", "artifact_dossier_mode",
+                "linkedin_pdf_path", "linkedin_pdf_hash",
+                "linkedin_pdf_ingested_at", "linkedin_pdf_page_count",
+                "linkedin_pdf_text_usable", "linkedin_pdf_text_length",
+                "linkedin_pdf_sections", "linkedin_pdf_raw_text",
+                "linkedin_pdf_experience", "linkedin_pdf_education",
+                "linkedin_pdf_skills",
             ):
                 if key in existing_profile:
                     profile_data[key] = existing_profile[key]
