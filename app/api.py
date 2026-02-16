@@ -796,6 +796,95 @@ async def ingest_linkedin_pdf_endpoint(
         session.close()
 
 
+@app.post(
+    "/profiles/{profile_id}/upload-photo",
+    dependencies=[Depends(verify_api_key)],
+)
+async def upload_photo_endpoint(profile_id: int, photo_data: dict | None = None):
+    """Upload a JPG/PNG photo for a contact.
+
+    Accepts JSON body: {"photo_base64": "<base64 encoded image>"}.
+    Stores the image locally and sets photo_source=uploaded, photo_status=RESOLVED.
+    """
+    import base64
+    import hashlib
+
+    from app.services.photo_resolution import PhotoSource, PhotoStatus
+
+    if not photo_data or "photo_base64" not in photo_data:
+        raise HTTPException(status_code=400, detail="Missing photo_base64 in request body")
+
+    session = get_session()
+    try:
+        entity = session.query(EntityRecord).filter(EntityRecord.id == profile_id).first()
+        if not entity:
+            raise HTTPException(status_code=404, detail="Profile not found")
+
+        raw_b64 = photo_data["photo_base64"]
+        try:
+            photo_bytes = base64.b64decode(raw_b64)
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid base64 data")
+
+        if len(photo_bytes) < 100:
+            raise HTTPException(status_code=400, detail="Image too small — likely corrupted")
+
+        # Detect format from magic bytes
+        ext = "jpg"
+        if photo_bytes[:8] == b"\x89PNG\r\n\x1a\n":
+            ext = "png"
+        elif photo_bytes[:4] == b"RIFF" and photo_bytes[8:12] == b"WEBP":
+            ext = "webp"
+
+        # Save to image_cache
+        cache_dir = Path("./image_cache")
+        cache_dir.mkdir(exist_ok=True)
+        timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+        filename = f"uploaded_{profile_id}_{timestamp}.{ext}"
+        dest = cache_dir / filename
+        dest.write_bytes(photo_bytes)
+
+        photo_url = f"./image_cache/{filename}"
+        photo_hash = hashlib.sha256(photo_bytes).hexdigest()[:16]
+
+        # Update profile
+        profile_data = {}
+        try:
+            profile_data = json.loads(entity.domains or "{}")
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+        profile_data["photo_url"] = photo_url
+        profile_data["photo_source"] = PhotoSource.UPLOADED
+        profile_data["photo_status"] = PhotoStatus.RESOLVED
+        profile_data["photo_uploaded_at"] = datetime.utcnow().isoformat()
+        profile_data["photo_hash"] = photo_hash
+
+        entity.domains = json.dumps(profile_data)
+        session.commit()
+
+        logger.info(
+            "Photo uploaded for profile %d: %s (%d bytes)",
+            profile_id, filename, len(photo_bytes),
+        )
+
+        return {
+            "status": "ok",
+            "photo_url": photo_url,
+            "photo_source": "uploaded",
+            "file_size": len(photo_bytes),
+            "format": ext,
+        }
+    except HTTPException:
+        raise
+    except Exception:
+        session.rollback()
+        logger.exception("Photo upload failed for profile %d", profile_id)
+        raise HTTPException(status_code=500, detail="Photo upload failed")
+    finally:
+        session.close()
+
+
 @app.get("/api/local-image/{file_path:path}")
 async def serve_local_image(file_path: str):
     """Serve a locally cached image (e.g., LinkedIn PDF crop).

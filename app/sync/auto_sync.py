@@ -565,6 +565,7 @@ def _update_profiles(all_participants: dict[str, dict]) -> int:
             # and LinkedIn PDF data (uploaded by user)
             for key in (
                 "apollo_enriched", "photo_url", "photo_source", "photo_status",
+                "photo_uploaded_at", "photo_hash",
                 "linkedin_url", "title",
                 "headline", "seniority", "location", "company_full",
                 "company_industry", "company_size", "company_linkedin",
