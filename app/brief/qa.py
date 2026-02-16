@@ -1329,7 +1329,7 @@ def compute_gate_status(
 
     Returns one of:
     - ``"passed"``      — all gates pass
-    - ``"constrained"`` — identity lock < 70; brief must be limited to
+    - ``"constrained"`` — identity lock < 60; brief must be limited to
                           meeting/email evidence only
     - ``"failed"``      — evidence coverage below threshold or genericness > 20
     - ``"not_run"``     — default / indeterminate
@@ -1339,11 +1339,11 @@ def compute_gate_status(
     if evidence_coverage_pct < threshold or genericness_score > 20:
         return "failed"
 
-    if identity_lock_score < 70:
+    if identity_lock_score < 60:
         return "constrained"
 
     if (
-        identity_lock_score >= 70
+        identity_lock_score >= 60
         and evidence_coverage_pct >= threshold
         and genericness_score <= 20
     ):
@@ -1575,7 +1575,7 @@ def enforce_fail_closed_gates(
         header = "DOSSIER GENERATION HALTED — FAIL-CLOSED GATES FAILED\n"
         header += "=" * 60 + "\n"
         body = "\n\n".join(failures)
-        lock_status = "LOCKED" if entity_lock_score >= 70 else (
+        lock_status = "LOCKED" if entity_lock_score >= 60 else (
             "PARTIAL" if entity_lock_score >= 50 else "NOT LOCKED"
         )
         footer = (
