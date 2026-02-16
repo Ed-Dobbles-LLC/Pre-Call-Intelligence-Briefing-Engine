@@ -1440,6 +1440,15 @@ async def deep_research_endpoint(profile_id: int):
                 f"Tag claims from this source as [VERIFIED-PDF].\n\n{pdf_text}"
             )
 
+        # Compute adaptive evidence threshold for the LLM prompt
+        total_web_results = sum(len(v) for v in search_results.values())
+        if total_web_results >= 10:
+            evidence_threshold = 85
+        elif total_web_results >= 5:
+            evidence_threshold = 70
+        else:
+            evidence_threshold = 60
+
         result = generate_deep_profile(
             name=p_name,
             title=p_title,
@@ -1451,6 +1460,7 @@ async def deep_research_endpoint(profile_id: int):
             interactions_summary=interactions_summary + pdf_context,
             web_research=web_research,
             visibility_research=visibility_research,
+            evidence_threshold=evidence_threshold,
         )
 
         # --- STEP 5: Post-synthesis QA gates ---
@@ -2310,6 +2320,15 @@ async def generate_profile_research(profile_id: int):
                 f"Tag claims from this source as [VERIFIED-PDF].\n\n{pdf_text}"
             )
 
+        # Compute adaptive evidence threshold for the LLM prompt
+        total_web_results_2 = sum(len(v) for v in search_results.values())
+        if total_web_results_2 >= 10:
+            evidence_threshold_2 = 85
+        elif total_web_results_2 >= 5:
+            evidence_threshold_2 = 70
+        else:
+            evidence_threshold_2 = 60
+
         result = generate_deep_profile(
             name=p_name,
             title=p_title,
@@ -2321,6 +2340,7 @@ async def generate_profile_research(profile_id: int):
             interactions_summary=interactions_summary + pdf_context,
             web_research=web_research,
             visibility_research=visibility_research,
+            evidence_threshold=evidence_threshold_2,
         )
 
         # --- STEP 4: Post-synthesis QA gates ---

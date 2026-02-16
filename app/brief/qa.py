@@ -971,26 +971,32 @@ class SnapshotValidation:
 
 
 def check_snapshot_person_focus(text: str, person_name: str = "") -> SnapshotValidation:
-    """Validate that Strategic Snapshot bullets mention the person directly.
+    """Validate that Executive Summary / Strategic Snapshot bullets mention the person.
 
-    Extracts the Strategic Snapshot section and checks each bullet point.
-    Fails if more than 2 bullets don't mention the person.
+    Extracts the Executive Summary (or legacy Strategic Snapshot) section
+    and checks each bullet point. Fails if more than 2 bullets don't
+    mention the person.
     """
     result = SnapshotValidation()
     name_lower = person_name.lower() if person_name else ""
     name_parts = [p for p in name_lower.split() if len(p) > 2]
 
-    # Find the Strategic Snapshot section
+    # Find the Executive Summary or Strategic Snapshot section
     in_snapshot = False
     for line in text.split("\n"):
         stripped = line.strip()
 
-        # Detect section headers
-        if re.match(r"^#{1,4}\s.*\b(strategic\s+(identity\s+)?snapshot)\b", stripped, re.IGNORECASE):
+        # Detect section headers — match "Executive Summary" or "Strategic Snapshot"
+        if re.match(
+            r"^#{1,4}\s.*\b(executive\s+summary|strategic\s+(identity\s+)?snapshot)\b",
+            stripped,
+            re.IGNORECASE,
+        ):
             in_snapshot = True
             continue
-        if in_snapshot and re.match(r"^#{1,4}\s", stripped) and "snapshot" not in stripped.lower():
-            break  # Next section
+        if in_snapshot and re.match(r"^#{1,4}\s", stripped):
+            if "summary" not in stripped.lower() and "snapshot" not in stripped.lower():
+                break  # Next section
 
         if not in_snapshot:
             continue

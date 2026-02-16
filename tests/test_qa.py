@@ -734,11 +734,11 @@ class TestPersonLevelRatio:
 class TestSnapshotValidator:
     def test_all_person_bullets_pass(self):
         text = (
-            "### 1. Strategic Identity Snapshot\n"
+            "### 1. Executive Summary\n"
             "- Ben operates as a builder/scaler hybrid. [INFERRED-H]\n"
             "- He creates value through platform consolidation. [VERIFIED-MEETING]\n"
             "- Ben emphasizes technical credibility in public talks. [VERIFIED-PUBLIC]\n"
-            "### 2. Verified Fact Table\n"
+            "### 2. Identity & Disambiguation\n"
             "Other content here."
         )
         result = check_snapshot_person_focus(text, "Ben Titmus")
@@ -748,12 +748,12 @@ class TestSnapshotValidator:
 
     def test_too_many_non_person_bullets_fail(self):
         text = (
-            "### 1. Strategic Identity Snapshot\n"
+            "### 1. Executive Summary\n"
             "- The company focuses on enterprise SaaS.\n"
             "- Revenue growth driven by market expansion.\n"
             "- Industry consolidation creates opportunity.\n"
             "- Ben leads the engineering team. [VERIFIED-MEETING]\n"
-            "### 2. Verified Fact Table\n"
+            "### 2. Identity & Disambiguation\n"
         )
         result = check_snapshot_person_focus(text, "Ben Titmus")
         assert not result.passes
@@ -761,16 +761,27 @@ class TestSnapshotValidator:
 
     def test_two_non_person_bullets_still_passes(self):
         text = (
-            "### 1. Strategic Identity Snapshot\n"
+            "### 1. Executive Summary\n"
             "- The company has 200 employees.\n"
             "- Revenue is approximately $20M.\n"
             "- Ben operates as an optimizer. [VERIFIED-MEETING]\n"
             "- He focuses on platform stability. [INFERRED-M]\n"
-            "### 2. Verified Fact Table\n"
+            "### 2. Identity & Disambiguation\n"
         )
         result = check_snapshot_person_focus(text, "Ben Titmus")
         assert result.passes
         assert len(result.non_person_bullets) == 2
+
+    def test_legacy_strategic_snapshot_still_works(self):
+        """Backward compatibility: old section name still detected."""
+        text = (
+            "### 1. Strategic Identity Snapshot\n"
+            "- Ben operates as a builder. [INFERRED-H]\n"
+            "### 2. Verified Fact Table\n"
+        )
+        result = check_snapshot_person_focus(text, "Ben Titmus")
+        assert result.passes
+        assert result.total_bullets == 1
 
     def test_no_snapshot_section(self):
         text = "### Some other section\n- Bullet point here."
@@ -881,10 +892,10 @@ class TestQAReportNewGates:
 
     def test_generate_qa_report_includes_snapshot_validation(self):
         text = (
-            "### 1. Strategic Identity Snapshot\n"
+            "### 1. Executive Summary\n"
             "- Ben operates as a builder. [INFERRED-H]\n"
             "- He creates value through consolidation. [VERIFIED-MEETING]\n"
-            "### 2. Verified Fact Table\n"
+            "### 2. Identity & Disambiguation\n"
             "Ben is CTO. [VERIFIED-PUBLIC]"
         )
         report = generate_qa_report(text, person_name="Ben Titmus")
