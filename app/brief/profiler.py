@@ -84,7 +84,22 @@ say so. Do not backfill with plausible fiction.
 Instead, the section header must cite the source evidence nodes the \
 reasoning derives from (e.g., [STRATEGIC MODEL — Derived from \
 VERIFIED-PDF + VERIFIED-MEETING + INFERRED-H]). The reasoning chain \
-within the section must be explicit and traceable."""
+within the section must be explicit and traceable.
+
+9. **CANONICAL FIELD GUARDRAILS** — When stating the subject's current \
+company, title, or location in any section, ONLY use values that \
+appear in VERIFIED sources ([VERIFIED-PDF], [VERIFIED-PUBLIC], \
+[VERIFIED-MEETING]). If a field is only available from INFERRED \
+sources, prefix it with "Reported as" or "Believed to be" and cite \
+the inference tag. Never state an unverified field as fact.
+
+10. **INFERENCE LANGUAGE CONTROL** — Any sentence containing "likely", \
+"may", "could", "suggests", or "indicates" MUST end with a parenthetical \
+derivation: "(Derived from: [source ids])". Example: "He likely prioritizes \
+revenue growth (Derived from: VERIFIED-PDF role as CRO + VERIFIED-MEETING \
+discussion of pipeline targets)." INFERRED-H requires at least 2 converging \
+evidence nodes cited in the same sentence. Sentences using hedge words without \
+derivation will be flagged and rejected."""
 
 USER_PROMPT_TEMPLATE = """\
 ## SUBJECT IDENTIFIERS
@@ -115,6 +130,19 @@ Produce the 12 sections below. Follow evidence rules strictly.
 For each section: include what you can verify or reasonably infer. \
 If a section has no evidence, write "**No evidence available.**" \
 Keep the section header but do NOT pad with generic prose.
+
+---
+
+### Canonical Evidence (required preamble — do NOT skip)
+
+Before the numbered sections, output this block using ONLY VERIFIED sources:
+```
+**Canonical Company**: [value] — [VERIFIED-PDF|VERIFIED-PUBLIC|VERIFIED-MEETING]
+**Canonical Title**: [value] — [VERIFIED-PDF|VERIFIED-PUBLIC|VERIFIED-MEETING]
+**Canonical Location**: [value] — [VERIFIED-PDF|VERIFIED-PUBLIC|VERIFIED-MEETING]
+```
+If a field has no VERIFIED source, write: `**Canonical [Field]**: UNVERIFIED — [UNKNOWN]`
+Do NOT populate these from INFERRED sources. This block is machine-parsed.
 
 ---
 
@@ -168,6 +196,20 @@ This section reveals how {name} THINKS — prioritize their own words.
 For EACH visibility category (TED/TEDx, Keynote, Conference, Summit, \
 Podcast, Webinar, YouTube, Panel, Interview):
 - State results found or "No appearances found in search sweep"
+
+**VISIBILITY ARTIFACT TABLE (REQUIRED — minimum 5 rows or state total_visibility_artifacts=0):**
+You MUST include this markdown table. Every row must have a URL.
+
+| # | Type | Title | URL | Date | Signal |
+|---|------|-------|-----|------|--------|
+| 1 | [TED/Keynote/Podcast/etc.] | [Title of appearance] | [Full URL] | [Date or UNKNOWN] | [Why it matters] |
+
+If no public appearances are found in ANY category, output EXACTLY:
+```
+**total_visibility_artifacts=0**
+No public speaking, podcast, or conference appearances found across all 9 search categories.
+```
+Do NOT fabricate entries. Every URL must come from the search results provided above.
 
 Summary: Total visibility artifacts, dominant themes, positioning signal.
 
@@ -246,6 +288,16 @@ in those sections must trace back to a row in this table.
 
 [STRATEGIC MODEL — Derived from upstream evidence in sections 3, 4, 6, 8]
 
+**REASONING ANCHORS (required before narrative — list 3-7 evidence anchors):**
+Before writing the narrative, list the specific evidence nodes that ground \
+this section. Format:
+- Anchor 1: [evidence summary] — [VERIFIED-PDF|VERIFIED-PUBLIC|VERIFIED-MEETING] (Section X)
+- Anchor 2: [evidence summary] — [tag] (Section X)
+- ...
+If fewer than 3 anchors exist, state: "**Insufficient evidence for full \
+strategic model — downgrading to CONSTRAINED.**" and limit analysis to \
+only what the available anchors support.
+
 **You MUST produce a compact Pressure Matrix for {name}.** For each row, \
 state the level AND the explicit "why" derived from evidence. Do NOT \
 use "likely", "may", or "could" unless immediately followed by the \
@@ -292,6 +344,12 @@ If no evidence exists for a dimension, state [UNKNOWN] — do not fabricate.
 
 [STRATEGIC MODEL — Derived from upstream evidence in sections 3, 4, 5, 8, 9]
 
+**REASONING ANCHORS (required before narrative — list 3-7 evidence anchors):**
+- Anchor 1: [evidence summary] — [tag] (Section X)
+- ...
+If fewer than 3 anchors exist, state: "**Insufficient evidence for full \
+competitive model — downgrading to CONSTRAINED.**"
+
 Analyze {name}'s company and their role within the competitive landscape. \
 You MUST explicitly name competitors or competitor buckets — do NOT say \
 "various competitors" or "industry peers." For each competitor named, \
@@ -322,6 +380,12 @@ If evidence is insufficient to classify, state what signals would disambiguate.
 ### 11. How to Win This Decision-Maker
 
 [STRATEGIC MODEL — Derived from upstream evidence in sections 4, 6, 7, 8, 9, 10]
+
+**REASONING ANCHORS (required before narrative — list 3-7 evidence anchors):**
+- Anchor 1: [evidence summary] — [tag] (Section X)
+- ...
+If fewer than 3 anchors exist, state: "**Insufficient evidence for full \
+win strategy — downgrading to CONSTRAINED.**"
 
 This section must be specific to {name}. Every recommendation must \
 trace to evidence from THIS dossier. Generic advice is forbidden. \

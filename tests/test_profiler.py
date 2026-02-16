@@ -366,3 +366,46 @@ class TestStrategicModelV2Prompts:
         assert "FACTUAL SECTIONS (1" in USER_PROMPT_TEMPLATE
         assert "STRATEGIC MODEL SECTIONS (9" in USER_PROMPT_TEMPLATE
         assert "do NOT require per-sentence" in USER_PROMPT_TEMPLATE
+
+
+class TestHardeningV4Prompts:
+    """Tests for v4 hardening prompt enhancements."""
+
+    def test_canonical_evidence_preamble(self):
+        """v4: Prompt must require a Canonical Evidence preamble block."""
+        assert "Canonical Evidence" in USER_PROMPT_TEMPLATE
+        assert "Canonical Company" in USER_PROMPT_TEMPLATE
+        assert "Canonical Title" in USER_PROMPT_TEMPLATE
+        assert "Canonical Location" in USER_PROMPT_TEMPLATE
+        assert "UNVERIFIED" in USER_PROMPT_TEMPLATE
+        assert "machine-parsed" in USER_PROMPT_TEMPLATE
+
+    def test_visibility_artifact_table_required(self):
+        """v4: Section 5 must require a visibility artifact table with URLs."""
+        assert "VISIBILITY ARTIFACT TABLE" in USER_PROMPT_TEMPLATE
+        assert "minimum 5 rows" in USER_PROMPT_TEMPLATE
+        assert "total_visibility_artifacts=0" in USER_PROMPT_TEMPLATE
+
+    def test_inference_language_control(self):
+        """v4: SYSTEM_PROMPT must require derivation for hedge words."""
+        assert "INFERENCE LANGUAGE CONTROL" in SYSTEM_PROMPT
+        assert "Derived from:" in SYSTEM_PROMPT
+        assert "INFERRED-H requires at least 2" in SYSTEM_PROMPT
+
+    def test_canonical_field_guardrails(self):
+        """v4: SYSTEM_PROMPT must have canonical field guardrails."""
+        assert "CANONICAL FIELD GUARDRAILS" in SYSTEM_PROMPT
+        assert "Reported as" in SYSTEM_PROMPT
+        assert "Believed to be" in SYSTEM_PROMPT
+
+    def test_reasoning_anchors_section_9(self):
+        """v4: Section 9 must require reasoning anchors."""
+        assert "REASONING ANCHORS" in USER_PROMPT_TEMPLATE
+        assert "list 3-7 evidence anchors" in USER_PROMPT_TEMPLATE
+        assert "Insufficient evidence" in USER_PROMPT_TEMPLATE
+
+    def test_reasoning_anchors_all_strategic_sections(self):
+        """v4: All three strategic sections (9-11) must require reasoning anchors."""
+        # Count occurrences of REASONING ANCHORS in the template
+        count = USER_PROMPT_TEMPLATE.count("REASONING ANCHORS")
+        assert count == 3, f"Expected 3 REASONING ANCHORS blocks, found {count}"

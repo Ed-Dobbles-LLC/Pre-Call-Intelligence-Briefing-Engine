@@ -1701,6 +1701,24 @@ def compute_decision_leverage_score(
 # ---------------------------------------------------------------------------
 
 
+@dataclass
+class FailClosedResult:
+    """Structured result from fail-closed gate enforcement.
+
+    Attributes:
+        should_output: True if all gates pass and dossier should be output.
+        message: Human-readable failure text (empty if passed).
+        failing_gate_names: List of gate names that failed (e.g., ["VISIBILITY_SWEEP"]).
+        failures_by_section: Dict mapping section names to lists of violations.
+            Each violation: {"rule_id": str, "severity": str, "location": str, "message": str}
+    """
+
+    should_output: bool = True
+    message: str = ""
+    failing_gate_names: list[str] = field(default_factory=list)
+    failures_by_section: dict[str, list[dict[str, str]]] = field(default_factory=dict)
+
+
 def enforce_fail_closed_gates(
     dossier_text: str,
     entity_lock_score: int,
@@ -1732,9 +1750,22 @@ def enforce_fail_closed_gates(
         (False, failure_text) if any hard gate fails — output the failure text INSTEAD.
     """
     failures: list[str] = []
+    failing_gates: list[str] = []
+    failures_by_section: dict[str, list[dict[str, str]]] = {}
 
     # Gate 0: Must have at least one public retrieval result
     if not has_public_results:
+        failing_gates.append("PUBLIC_RESULTS")
+        failures_by_section.setdefault("retrieval", []).append({
+            "rule_id": "NO_PUBLIC_RESULTS",
+            "severity": "error",
+            "location": "SerpAPI retrieval",
+            "message": (
+                f'SerpAPI returned 0 results for "{person_name}". '
+                "Entity Lock cannot be computed without public evidence. "
+                "Verify the person name and re-run retrieval."
+            ),
+        })
         failures.append(
             "FAIL: NO PUBLIC RETRIEVAL RESULTS\n"
             f'SerpAPI returned 0 results for "{person_name}".\n'
@@ -1743,10 +1774,18 @@ def enforce_fail_closed_gates(
         )
 
     # Gate 1: Visibility sweep must have been executed (>= 8 queries)
-    # Lowered from 12 to 8 — some visibility categories consistently
-    # return 0 results for non-public figures, and forcing 12+ queries
-    # doesn't improve coverage.
     if visibility_ledger_count == 0:
+        failing_gates.append("VISIBILITY_SWEEP")
+        failures_by_section.setdefault("visibility", []).append({
+            "rule_id": "VISIBILITY_NOT_EXECUTED",
+            "severity": "error",
+            "location": "Visibility sweep",
+            "message": (
+                "The retrieval ledger contains 0 visibility-intent rows. "
+                "The dossier cannot be produced without executing the visibility sweep. "
+                f'Run the visibility query battery for "{person_name}" and log each result.'
+            ),
+        })
         failures.append(
             "FAIL: VISIBILITY SWEEP NOT EXECUTED\n"
             "The retrieval ledger contains 0 visibility-intent rows.\n"
@@ -1754,6 +1793,17 @@ def enforce_fail_closed_gates(
             f'Run the visibility query battery for "{person_name}" and log each result.'
         )
     elif visibility_ledger_count < 8:
+        failing_gates.append("VISIBILITY_SWEEP")
+        failures_by_section.setdefault("visibility", []).append({
+            "rule_id": "INSUFFICIENT_VISIBILITY_QUERIES",
+            "severity": "error",
+            "location": "Visibility sweep",
+            "message": (
+                f"Only {visibility_ledger_count} visibility queries logged (minimum 8). "
+                "Cannot claim 'none found' unless at least 8 queries executed. "
+                f'Run remaining queries for "{person_name}" and log each result.'
+            ),
+        })
         failures.append(
             f"FAIL: INSUFFICIENT VISIBILITY QUERIES ({visibility_ledger_count}/8)\n"
             f"Only {visibility_ledger_count} visibility queries logged. "
@@ -1761,12 +1811,7 @@ def enforce_fail_closed_gates(
             f'Run remaining queries for "{person_name}" and log each result.'
         )
 
-    # Gate 2: Evidence coverage — adaptive threshold based on evidence availability
-    # v2: Use factual_coverage_pct (sections 1-8, 12 only) if available.
-    # Thresholds are recalibrated for factual-only measurement: the old
-    # thresholds (85/70/60) included strategic model sections whose
-    # [STRATEGIC MODEL] headers inflated coverage. Factual-only sections
-    # contain more transitional/formatting lines, so thresholds are lower.
+    # Gate 2: Evidence coverage — adaptive threshold
     coverage_for_gate = (
         factual_coverage_pct if factual_coverage_pct is not None
         else evidence_coverage_pct
@@ -1795,6 +1840,17 @@ def enforce_fail_closed_gates(
             if factual_coverage_pct is not None
             else "EVIDENCE COVERAGE"
         )
+        failing_gates.append("EVIDENCE_COVERAGE")
+        failures_by_section.setdefault("evidence_coverage", []).append({
+            "rule_id": "COVERAGE_BELOW_THRESHOLD",
+            "severity": "error",
+            "location": "Factual sections (1-8, 12)",
+            "message": (
+                f"Coverage {coverage_for_gate:.1f}% < {coverage_threshold:.0f}% threshold "
+                f"(adaptive: {web_results_count} web results). "
+                "Sentences without evidence tags must be cited or removed."
+            ),
+        })
         failures.append(
             f"FAIL: {coverage_label} {coverage_for_gate:.1f}%\n"
             f"Coverage must be >= {coverage_threshold:.0f}% "
@@ -1818,3 +1874,122 @@ def enforce_fail_closed_gates(
         return False, header + body + footer
 
     return True, ""
+
+
+def enforce_fail_closed_gates_v4(
+    dossier_text: str,
+    entity_lock_score: int,
+    visibility_ledger_count: int,
+    evidence_coverage_pct: float,
+    person_name: str = "",
+    has_public_results: bool = True,
+    web_results_count: int = 0,
+    factual_coverage_pct: float | None = None,
+    strategic_sources_present: bool | None = None,
+    strategic_sources_missing: list[str] | None = None,
+) -> FailClosedResult:
+    """v4 structured enforcement — returns FailClosedResult with failures_by_section.
+
+    Same gate logic as enforce_fail_closed_gates, but returns a structured
+    result with failing_gate_names and failures_by_section for actionable
+    error reporting.
+    """
+    result = FailClosedResult()
+    failures: list[str] = []
+
+    # Gate 0: Public results
+    if not has_public_results:
+        result.failing_gate_names.append("PUBLIC_RESULTS")
+        result.failures_by_section.setdefault("retrieval", []).append({
+            "rule_id": "NO_PUBLIC_RESULTS",
+            "severity": "error",
+            "location": "SerpAPI retrieval",
+            "message": (
+                f'SerpAPI returned 0 results for "{person_name}". '
+                "Verify the person name and re-run retrieval."
+            ),
+        })
+        failures.append(
+            "FAIL: NO PUBLIC RETRIEVAL RESULTS\n"
+            f'SerpAPI returned 0 results for "{person_name}".'
+        )
+
+    # Gate 1: Visibility sweep
+    if visibility_ledger_count == 0:
+        result.failing_gate_names.append("VISIBILITY_SWEEP")
+        result.failures_by_section.setdefault("visibility", []).append({
+            "rule_id": "VISIBILITY_NOT_EXECUTED",
+            "severity": "error",
+            "location": "Visibility sweep",
+            "message": (
+                "0 visibility-intent queries logged. "
+                f'Run the visibility query battery for "{person_name}".'
+            ),
+        })
+        failures.append("FAIL: VISIBILITY SWEEP NOT EXECUTED")
+    elif visibility_ledger_count < 8:
+        result.failing_gate_names.append("VISIBILITY_SWEEP")
+        result.failures_by_section.setdefault("visibility", []).append({
+            "rule_id": "INSUFFICIENT_VISIBILITY_QUERIES",
+            "severity": "error",
+            "location": "Visibility sweep",
+            "message": (
+                f"Only {visibility_ledger_count}/8 queries logged. "
+                "At least 8 required."
+            ),
+        })
+        failures.append(
+            f"FAIL: INSUFFICIENT VISIBILITY QUERIES ({visibility_ledger_count}/8)"
+        )
+
+    # Gate 2: Evidence coverage
+    coverage_for_gate = (
+        factual_coverage_pct if factual_coverage_pct is not None
+        else evidence_coverage_pct
+    )
+    if factual_coverage_pct is not None:
+        if web_results_count >= 10:
+            coverage_threshold = 55.0
+        elif web_results_count >= 5:
+            coverage_threshold = 45.0
+        else:
+            coverage_threshold = 35.0
+    else:
+        if web_results_count >= 10:
+            coverage_threshold = 85.0
+        elif web_results_count >= 5:
+            coverage_threshold = 70.0
+        else:
+            coverage_threshold = 60.0
+
+    if coverage_for_gate < coverage_threshold:
+        result.failing_gate_names.append("EVIDENCE_COVERAGE")
+        result.failures_by_section.setdefault("evidence_coverage", []).append({
+            "rule_id": "COVERAGE_BELOW_THRESHOLD",
+            "severity": "error",
+            "location": "Factual sections (1-8, 12)",
+            "message": (
+                f"Coverage {coverage_for_gate:.1f}% < {coverage_threshold:.0f}% threshold "
+                f"(adaptive: {web_results_count} web results)."
+            ),
+        })
+        failures.append(
+            f"FAIL: EVIDENCE COVERAGE {coverage_for_gate:.1f}% < {coverage_threshold:.0f}%"
+        )
+
+    # Build message
+    if failures:
+        result.should_output = False
+        lock_status = "LOCKED" if entity_lock_score >= 60 else (
+            "PARTIAL" if entity_lock_score >= 50 else "NOT LOCKED"
+        )
+        header = "DOSSIER GENERATION HALTED — FAIL-CLOSED GATES FAILED\n"
+        header += "=" * 60 + "\n"
+        body = "\n\n".join(failures)
+        footer = (
+            f"\n\nEntity Lock: {entity_lock_score}/100 ({lock_status})\n"
+            "Fix the above failures and re-run."
+        )
+        result.message = header + body + footer
+
+    return result

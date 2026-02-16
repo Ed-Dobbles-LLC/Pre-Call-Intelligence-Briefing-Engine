@@ -1964,3 +1964,349 @@ class TestStrategicSourcesPresent:
         ok, missing = check_strategic_sources_present(text)
         assert ok is False
         assert len(missing) == 3
+
+
+# ---------------------------------------------------------------------------
+# v4 Hardening: Canonical Field Extraction + Validation
+# ---------------------------------------------------------------------------
+
+
+class TestCanonicalFieldExtraction:
+    """Test extract_canonical_fields from dossier preamble."""
+
+    def test_extracts_all_three_fields(self):
+        from app.brief.evidence_graph import extract_canonical_fields
+        text = (
+            "**Canonical Company**: Acme Corp — [VERIFIED-PDF]\n"
+            "**Canonical Title**: CTO — [VERIFIED-PUBLIC]\n"
+            "**Canonical Location**: London, UK — [VERIFIED-MEETING]\n"
+        )
+        fields = extract_canonical_fields(text)
+        assert len(fields) == 3
+        assert fields["company"]["value"] == "Acme Corp"
+        assert fields["company"]["tag"] == "VERIFIED-PDF"
+        assert fields["title"]["value"] == "CTO"
+        assert fields["title"]["tag"] == "VERIFIED-PUBLIC"
+        assert fields["location"]["value"] == "London, UK"
+        assert fields["location"]["tag"] == "VERIFIED-MEETING"
+
+    def test_unverified_field(self):
+        from app.brief.evidence_graph import extract_canonical_fields
+        text = (
+            "**Canonical Company**: Acme Corp — [VERIFIED-PDF]\n"
+            "**Canonical Title**: UNVERIFIED — [UNKNOWN]\n"
+            "**Canonical Location**: UNVERIFIED — [UNKNOWN]\n"
+        )
+        fields = extract_canonical_fields(text)
+        assert fields["title"]["value"] == "UNVERIFIED"
+        assert fields["title"]["tag"] == "UNKNOWN"
+
+    def test_empty_text(self):
+        from app.brief.evidence_graph import extract_canonical_fields
+        assert extract_canonical_fields("") == {}
+
+    def test_partial_fields(self):
+        from app.brief.evidence_graph import extract_canonical_fields
+        text = "**Canonical Company**: Acme Corp — [VERIFIED-PDF]\n"
+        fields = extract_canonical_fields(text)
+        assert len(fields) == 1
+        assert "company" in fields
+
+
+class TestCanonicalFieldValidation:
+    """Test validate_canonical_fields rejects non-VERIFIED sources."""
+
+    def test_all_verified_no_violations(self):
+        from app.brief.evidence_graph import validate_canonical_fields
+        canonical = {
+            "company": {"value": "Acme Corp", "tag": "VERIFIED-PDF"},
+            "title": {"value": "CTO", "tag": "VERIFIED-PUBLIC"},
+            "location": {"value": "London", "tag": "VERIFIED-MEETING"},
+        }
+        violations = validate_canonical_fields(canonical)
+        assert violations == []
+
+    def test_inferred_tag_produces_violation(self):
+        from app.brief.evidence_graph import validate_canonical_fields
+        canonical = {
+            "company": {"value": "Acme Corp", "tag": "INFERRED-H"},
+        }
+        violations = validate_canonical_fields(canonical)
+        assert len(violations) == 1
+        assert violations[0]["rule_id"] == "CANONICAL_FIELD_NOT_VERIFIED"
+        assert "INFERRED-H" in violations[0]["message"]
+
+    def test_unverified_unknown_no_violation(self):
+        from app.brief.evidence_graph import validate_canonical_fields
+        canonical = {
+            "title": {"value": "UNVERIFIED", "tag": "UNKNOWN"},
+        }
+        violations = validate_canonical_fields(canonical)
+        assert violations == []
+
+
+# ---------------------------------------------------------------------------
+# v4 Hardening: Visibility Artifact Table Validation
+# ---------------------------------------------------------------------------
+
+
+class TestVisibilityArtifactTable:
+    """Test validate_visibility_artifact_table for section 5."""
+
+    def test_valid_table_with_urls(self):
+        from app.brief.evidence_graph import validate_visibility_artifact_table
+        text = (
+            "### 5. Public Visibility\n"
+            "| # | Type | Title | URL | Date | Signal |\n"
+            "|---|------|-------|-----|------|--------|\n"
+            "| 1 | TED | Talk 1 | https://ted.com/talk1 | 2025-01-01 | AI |\n"
+            "| 2 | Keynote | Talk 2 | https://conf.com/talk2 | 2025-02-01 | Cloud |\n"
+            "| 3 | Podcast | Ep 1 | https://pod.com/ep1 | 2025-03-01 | Data |\n"
+            "| 4 | Panel | Panel 1 | https://panel.com/p1 | 2025-04-01 | ML |\n"
+            "| 5 | Webinar | Web 1 | https://web.com/w1 | 2025-05-01 | DevOps |\n"
+            "### 6. Quantified Claims\n"
+        )
+        count, violations = validate_visibility_artifact_table(text)
+        assert count >= 5
+        assert violations == []
+
+    def test_zero_artifacts_declared(self):
+        from app.brief.evidence_graph import validate_visibility_artifact_table
+        text = (
+            "### 5. Public Visibility\n"
+            "**total_visibility_artifacts=0**\n"
+            "No public speaking found.\n"
+            "### 6. Quantified Claims\n"
+        )
+        count, violations = validate_visibility_artifact_table(text)
+        assert count == 0
+        assert violations == []
+
+    def test_missing_table_produces_violation(self):
+        from app.brief.evidence_graph import validate_visibility_artifact_table
+        text = (
+            "### 5. Public Visibility\n"
+            "Some text about visibility without a table.\n"
+            "### 6. Quantified Claims\n"
+        )
+        count, violations = validate_visibility_artifact_table(text)
+        assert count == 0
+        assert len(violations) == 1
+        assert violations[0]["rule_id"] == "VISIBILITY_TABLE_MISSING"
+
+    def test_missing_section_5(self):
+        from app.brief.evidence_graph import validate_visibility_artifact_table
+        text = "### 1. Executive Summary\nSome content.\n"
+        count, violations = validate_visibility_artifact_table(text)
+        assert count == 0
+        assert len(violations) == 1
+        assert violations[0]["rule_id"] == "VISIBILITY_SECTION_MISSING"
+
+
+# ---------------------------------------------------------------------------
+# v4 Hardening: Reasoning Anchor Validation
+# ---------------------------------------------------------------------------
+
+
+class TestReasoningAnchorValidation:
+    """Test validate_reasoning_anchors for sections 9-11."""
+
+    def test_all_sections_have_anchors(self):
+        from app.brief.evidence_graph import validate_reasoning_anchors
+        text = (
+            "### 9. Structural Incentive & Power Model\n"
+            "- Anchor 1: Revenue target of $50M — VERIFIED-PDF (Section 3)\n"
+            "- Anchor 2: Board reporting line — VERIFIED-MEETING (Section 4)\n"
+            "- Anchor 3: Growth mandate — VERIFIED-PUBLIC (Section 8)\n"
+            "### 10. Competitive Positioning Context\n"
+            "- Anchor 1: Acme competes with BigCo — VERIFIED-PUBLIC (Section 5)\n"
+            "- Anchor 2: AI maturity stage 2 — INFERRED-H (Section 6)\n"
+            "- Anchor 3: Consulting mix 60/40 — VERIFIED-PDF (Section 3)\n"
+            "### 11. How to Win This Decision-Maker\n"
+            "- Anchor 1: Measured on revenue growth — VERIFIED-MEETING (Section 4)\n"
+            "- Anchor 2: Risk-averse decision style — VERIFIED-PUBLIC (Section 7)\n"
+            "- Anchor 3: Budget authority $5M — INFERRED-H (Section 9)\n"
+        )
+        counts, violations = validate_reasoning_anchors(text)
+        assert counts == {9: 3, 10: 3, 11: 3}
+        assert violations == []
+
+    def test_insufficient_anchors_produces_violation(self):
+        from app.brief.evidence_graph import validate_reasoning_anchors
+        text = (
+            "### 9. Structural Incentive & Power Model\n"
+            "- Anchor 1: Revenue target — VERIFIED-PDF (Section 3)\n"
+            "Some analysis without enough anchors.\n"
+            "### 10. Competitive Positioning Context\n"
+            "No anchors at all.\n"
+            "### 11. How to Win This Decision-Maker\n"
+            "- Anchor 1: Measured on growth — VERIFIED-MEETING (Section 4)\n"
+            "- Anchor 2: Risk-averse — VERIFIED-PUBLIC (Section 7)\n"
+            "- Anchor 3: Budget $5M — INFERRED-H (Section 9)\n"
+        )
+        counts, violations = validate_reasoning_anchors(text)
+        assert counts[9] == 1
+        assert counts[10] == 0
+        assert counts[11] == 3
+        assert len(violations) == 2  # section 9 and 10
+
+    def test_constrained_declaration_no_violation(self):
+        from app.brief.evidence_graph import validate_reasoning_anchors
+        text = (
+            "### 9. Structural Incentive & Power Model\n"
+            "**Insufficient evidence for full strategic model — downgrading to CONSTRAINED.**\n"
+            "### 10. Competitive Positioning Context\n"
+            "- Anchor 1: Competitor analysis — VERIFIED-PUBLIC (Section 5)\n"
+            "- Anchor 2: AI maturity — INFERRED-H (Section 6)\n"
+            "- Anchor 3: Market position — VERIFIED-PDF (Section 3)\n"
+            "### 11. How to Win This Decision-Maker\n"
+            "**Insufficient evidence for full win strategy — downgrading to CONSTRAINED.**\n"
+        )
+        counts, violations = validate_reasoning_anchors(text)
+        assert counts[9] == -1  # declared constrained
+        assert counts[11] == -1
+        assert len(violations) == 0
+
+
+# ---------------------------------------------------------------------------
+# v4 Hardening: Inference Language Validation
+# ---------------------------------------------------------------------------
+
+
+class TestInferenceLanguageValidation:
+    """Test validate_inference_language for hedge words without derivation."""
+
+    def test_hedge_with_derivation_ok(self):
+        from app.brief.evidence_graph import validate_inference_language
+        text = (
+            "### 1. Executive Summary\n"
+            "He likely prioritizes revenue growth (Derived from: VERIFIED-PDF role as CRO "
+            "+ VERIFIED-MEETING discussion of pipeline targets).\n"
+        )
+        violations = validate_inference_language(text)
+        assert violations == []
+
+    def test_hedge_without_derivation_flagged(self):
+        from app.brief.evidence_graph import validate_inference_language
+        text = (
+            "### 1. Executive Summary\n"
+            "He likely prioritizes revenue growth based on his background.\n"
+        )
+        violations = validate_inference_language(text)
+        assert len(violations) == 1
+        assert violations[0]["rule_id"] == "HEDGE_WITHOUT_DERIVATION"
+        assert "likely" in violations[0]["message"]
+
+    def test_hedge_with_evidence_tag_ok(self):
+        from app.brief.evidence_graph import validate_inference_language
+        text = (
+            "### 3. Career Timeline\n"
+            "He may have led the AI team during this period. [INFERRED-H]\n"
+        )
+        violations = validate_inference_language(text)
+        assert violations == []
+
+    def test_strategic_sections_exempt(self):
+        from app.brief.evidence_graph import validate_inference_language
+        text = (
+            "### 9. Structural Incentive & Power Model\n"
+            "He likely faces revenue pressure from the board.\n"
+            "### 10. Competitive Positioning Context\n"
+            "Acme may be losing market share to BigCo.\n"
+        )
+        violations = validate_inference_language(text)
+        assert violations == []
+
+    def test_multiple_violations(self):
+        from app.brief.evidence_graph import validate_inference_language
+        text = (
+            "### 2. Identity & Disambiguation\n"
+            "This suggests he may be the same person mentioned in press.\n"
+            "Evidence indicates a strong leadership background.\n"
+        )
+        violations = validate_inference_language(text)
+        assert len(violations) == 2
+
+
+# ---------------------------------------------------------------------------
+# v4 Hardening: FailClosedResult and enforce_fail_closed_gates_v4
+# ---------------------------------------------------------------------------
+
+
+class TestFailClosedResultV4:
+    """Test the structured FailClosedResult from enforce_fail_closed_gates_v4."""
+
+    def test_all_pass_returns_empty_failures(self):
+        from app.brief.qa import enforce_fail_closed_gates_v4
+        result = enforce_fail_closed_gates_v4(
+            dossier_text="Test",
+            entity_lock_score=85,
+            visibility_ledger_count=16,
+            evidence_coverage_pct=92.0,
+            person_name="Ben Titmus",
+        )
+        assert result.should_output
+        assert result.message == ""
+        assert result.failing_gate_names == []
+        assert result.failures_by_section == {}
+
+    def test_visibility_failure_structured(self):
+        from app.brief.qa import enforce_fail_closed_gates_v4
+        result = enforce_fail_closed_gates_v4(
+            dossier_text="Test",
+            entity_lock_score=85,
+            visibility_ledger_count=0,
+            evidence_coverage_pct=92.0,
+            person_name="Ben Titmus",
+        )
+        assert not result.should_output
+        assert "VISIBILITY_SWEEP" in result.failing_gate_names
+        assert "visibility" in result.failures_by_section
+        assert result.failures_by_section["visibility"][0]["rule_id"] == "VISIBILITY_NOT_EXECUTED"
+
+    def test_coverage_failure_structured(self):
+        from app.brief.qa import enforce_fail_closed_gates_v4
+        result = enforce_fail_closed_gates_v4(
+            dossier_text="Test",
+            entity_lock_score=85,
+            visibility_ledger_count=16,
+            evidence_coverage_pct=50.0,
+            person_name="Ben Titmus",
+            web_results_count=15,
+        )
+        assert not result.should_output
+        assert "EVIDENCE_COVERAGE" in result.failing_gate_names
+        assert "evidence_coverage" in result.failures_by_section
+        violations = result.failures_by_section["evidence_coverage"]
+        assert violations[0]["rule_id"] == "COVERAGE_BELOW_THRESHOLD"
+
+    def test_multiple_failures_structured(self):
+        from app.brief.qa import enforce_fail_closed_gates_v4
+        result = enforce_fail_closed_gates_v4(
+            dossier_text="Test",
+            entity_lock_score=85,
+            visibility_ledger_count=0,
+            evidence_coverage_pct=50.0,
+            person_name="Ben Titmus",
+            web_results_count=15,
+            has_public_results=False,
+        )
+        assert not result.should_output
+        assert len(result.failing_gate_names) == 3
+        assert "PUBLIC_RESULTS" in result.failing_gate_names
+        assert "VISIBILITY_SWEEP" in result.failing_gate_names
+        assert "EVIDENCE_COVERAGE" in result.failing_gate_names
+
+    def test_insufficient_queries_structured(self):
+        from app.brief.qa import enforce_fail_closed_gates_v4
+        result = enforce_fail_closed_gates_v4(
+            dossier_text="Test",
+            entity_lock_score=85,
+            visibility_ledger_count=5,
+            evidence_coverage_pct=92.0,
+            person_name="Ben Titmus",
+        )
+        assert not result.should_output
+        assert "VISIBILITY_SWEEP" in result.failing_gate_names
+        violations = result.failures_by_section["visibility"]
+        assert violations[0]["rule_id"] == "INSUFFICIENT_VISIBILITY_QUERIES"
