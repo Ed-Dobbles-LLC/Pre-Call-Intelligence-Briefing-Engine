@@ -1142,3 +1142,63 @@ class TestDecisionLeverageScore:
         )
         without_matrix = compute_decision_leverage_score(dossier_text="No matrix here")
         assert with_matrix.components["pressure_clarity"] > without_matrix.components["pressure_clarity"]
+
+
+# ---------------------------------------------------------------------------
+# v4 Hardening: FailClosedResult dataclass
+# ---------------------------------------------------------------------------
+
+
+class TestFailClosedResultDataclass:
+    """Tests for FailClosedResult structured output."""
+
+    def test_default_values(self):
+        from app.brief.qa import FailClosedResult
+        r = FailClosedResult()
+        assert r.should_output is True
+        assert r.message == ""
+        assert r.failing_gate_names == []
+        assert r.failures_by_section == {}
+
+    def test_populated_result(self):
+        from app.brief.qa import FailClosedResult
+        r = FailClosedResult(
+            should_output=False,
+            message="HALTED",
+            failing_gate_names=["VISIBILITY_SWEEP", "EVIDENCE_COVERAGE"],
+            failures_by_section={
+                "visibility": [{"rule_id": "VISIBILITY_NOT_EXECUTED", "severity": "error",
+                                "location": "Visibility sweep", "message": "0 queries"}],
+            },
+        )
+        assert not r.should_output
+        assert len(r.failing_gate_names) == 2
+        assert "visibility" in r.failures_by_section
+        assert r.failures_by_section["visibility"][0]["rule_id"] == "VISIBILITY_NOT_EXECUTED"
+
+
+# ---------------------------------------------------------------------------
+# v4 Hardening: Prompt has canonical guardrails + inference rules
+# ---------------------------------------------------------------------------
+
+
+class TestV4PromptHardening:
+    """Tests that v4 prompt requirements appear in the templates."""
+
+    def test_prompt_has_canonical_guardrails(self):
+        from app.brief.profiler import SYSTEM_PROMPT
+        assert "CANONICAL FIELD GUARDRAILS" in SYSTEM_PROMPT
+
+    def test_prompt_has_inference_language_control(self):
+        from app.brief.profiler import SYSTEM_PROMPT
+        assert "INFERENCE LANGUAGE CONTROL" in SYSTEM_PROMPT
+        assert "Derived from:" in SYSTEM_PROMPT
+
+    def test_prompt_has_visibility_artifact_table(self):
+        from app.brief.profiler import USER_PROMPT_TEMPLATE
+        assert "VISIBILITY ARTIFACT TABLE" in USER_PROMPT_TEMPLATE
+
+    def test_prompt_has_reasoning_anchors(self):
+        from app.brief.profiler import USER_PROMPT_TEMPLATE
+        assert "REASONING ANCHORS" in USER_PROMPT_TEMPLATE
+        assert "3-7 evidence anchors" in USER_PROMPT_TEMPLATE

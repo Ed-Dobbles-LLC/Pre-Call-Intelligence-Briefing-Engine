@@ -33,8 +33,13 @@ from app.brief.evidence_graph import (
     compute_factual_coverage_from_text,
     compute_visibility_coverage_confidence,
     determine_dossier_mode,
+    extract_canonical_fields,
     extract_highest_signal_artifacts,
     filter_prose_by_mode,
+    validate_canonical_fields,
+    validate_inference_language,
+    validate_reasoning_anchors,
+    validate_visibility_artifact_table,
 )
 from app.brief.qa import (
     compute_decision_leverage_score,
@@ -1594,6 +1599,30 @@ async def deep_research_endpoint(profile_id: int):
             strategic_sources_missing=strat_sources_missing,
         )
 
+        # --- v4 hardening: structured validation ---
+        v4_failures: dict[str, list[dict[str, str]]] = {}
+        if should_output:
+            # A) Canonical field guardrails
+            canonical = extract_canonical_fields(result)
+            canon_violations = validate_canonical_fields(canonical)
+            if canon_violations:
+                v4_failures["canonical_fields"] = canon_violations
+
+            # B) Visibility artifact table
+            artifact_count, vis_violations = validate_visibility_artifact_table(result)
+            if vis_violations:
+                v4_failures["visibility_artifacts"] = vis_violations
+
+            # C) Inference language control
+            hedge_violations = validate_inference_language(result)
+            if hedge_violations:
+                v4_failures["inference_language"] = hedge_violations
+
+            # D) Reasoning anchors in sections 9-11
+            anchor_counts, anchor_violations = validate_reasoning_anchors(result)
+            if anchor_violations:
+                v4_failures["reasoning_anchors"] = anchor_violations
+
         # Apply mode-based prose filtering
         if should_output:
             result = filter_prose_by_mode(result, dossier_mode, entity_lock.score)
@@ -1626,6 +1655,7 @@ async def deep_research_endpoint(profile_id: int):
             "entity_lock_status": entity_lock.lock_status,
             "has_public_results": has_public_results,
             "failure_message": fail_message if not should_output else None,
+            "failures_by_section": v4_failures if v4_failures else None,
         }
 
         # --- STEP 7: Decision Leverage Score ---
@@ -2516,6 +2546,26 @@ async def generate_profile_research(profile_id: int):
             strategic_sources_missing=strat_sources_missing,
         )
 
+        # --- v4 hardening: structured validation ---
+        v4_failures_2: dict[str, list[dict[str, str]]] = {}
+        if should_output:
+            canonical_2 = extract_canonical_fields(result)
+            canon_violations_2 = validate_canonical_fields(canonical_2)
+            if canon_violations_2:
+                v4_failures_2["canonical_fields"] = canon_violations_2
+
+            artifact_count_2, vis_violations_2 = validate_visibility_artifact_table(result)
+            if vis_violations_2:
+                v4_failures_2["visibility_artifacts"] = vis_violations_2
+
+            hedge_violations_2 = validate_inference_language(result)
+            if hedge_violations_2:
+                v4_failures_2["inference_language"] = hedge_violations_2
+
+            anchor_counts_2, anchor_violations_2 = validate_reasoning_anchors(result)
+            if anchor_violations_2:
+                v4_failures_2["reasoning_anchors"] = anchor_violations_2
+
         # --- STEP 6: Apply mode-based prose filtering ---
         if should_output:
             result = filter_prose_by_mode(result, dossier_mode, entity_lock.score)
@@ -2559,6 +2609,7 @@ async def generate_profile_research(profile_id: int):
             "entity_lock_status": entity_lock.lock_status,
             "has_public_results": has_public_results,
             "failure_message": fail_message if not should_output else None,
+            "failures_by_section": v4_failures_2 if v4_failures_2 else None,
         }
 
         # --- Decision Leverage Score ---

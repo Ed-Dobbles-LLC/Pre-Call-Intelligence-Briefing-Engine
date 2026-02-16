@@ -412,6 +412,275 @@ def check_strategic_sources_present(text: str) -> tuple[bool, list[str]]:
 
 
 # ---------------------------------------------------------------------------
+# Canonical Field Extraction (post-processing)
+# ---------------------------------------------------------------------------
+
+_CANONICAL_FIELD_RE = re.compile(
+    r"\*\*Canonical\s+(Company|Title|Location)\*\*:\s*(.+?)(?:\s*—\s*\[(.+?)\])?$",
+    re.MULTILINE,
+)
+
+
+def extract_canonical_fields(text: str) -> dict[str, dict[str, str]]:
+    """Extract canonical field values from the dossier preamble.
+
+    Returns dict like:
+        {"company": {"value": "Acme Corp", "tag": "VERIFIED-PDF"},
+         "title": {"value": "CTO", "tag": "VERIFIED-PUBLIC"},
+         "location": {"value": "UNVERIFIED", "tag": "UNKNOWN"}}
+
+    Only VERIFIED tags are considered valid for setting canonical fields.
+    """
+    fields: dict[str, dict[str, str]] = {}
+    for match in _CANONICAL_FIELD_RE.finditer(text):
+        field_name = match.group(1).lower()
+        value = match.group(2).strip()
+        tag = match.group(3) or "UNKNOWN"
+        fields[field_name] = {"value": value, "tag": tag}
+    return fields
+
+
+def validate_canonical_fields(
+    canonical: dict[str, dict[str, str]],
+) -> list[dict[str, str]]:
+    """Validate that canonical fields only use VERIFIED sources.
+
+    Returns a list of violations (empty if all valid).
+    """
+    violations: list[dict[str, str]] = []
+    verified_tags = {"VERIFIED-PDF", "VERIFIED-PUBLIC", "VERIFIED-MEETING",
+                     "VERIFIED–PDF", "VERIFIED–PUBLIC", "VERIFIED–MEETING"}
+    for field_name, info in canonical.items():
+        tag = info.get("tag", "UNKNOWN")
+        value = info.get("value", "")
+        if value == "UNVERIFIED" or tag == "UNKNOWN":
+            continue  # Properly declared as unknown
+        if tag not in verified_tags:
+            violations.append({
+                "rule_id": "CANONICAL_FIELD_NOT_VERIFIED",
+                "severity": "error",
+                "field": field_name,
+                "value": value,
+                "tag": tag,
+                "message": (
+                    f"Canonical {field_name} '{value}' uses non-VERIFIED tag [{tag}]. "
+                    "Only VERIFIED sources may set canonical fields."
+                ),
+            })
+    return violations
+
+
+# ---------------------------------------------------------------------------
+# Visibility Artifact Table Validation (post-processing)
+# ---------------------------------------------------------------------------
+
+_VISIBILITY_TABLE_ROW_RE = re.compile(
+    r"^\|\s*\d+\s*\|.*\|.*\|(.*https?://\S+.*)\|",
+    re.MULTILINE,
+)
+
+_ZERO_ARTIFACTS_RE = re.compile(
+    r"total_visibility_artifacts\s*=\s*0",
+    re.IGNORECASE,
+)
+
+
+def validate_visibility_artifact_table(text: str) -> tuple[int, list[dict[str, str]]]:
+    """Validate the visibility artifact table in section 5.
+
+    Returns (artifact_count, violations).
+    artifact_count is the number of valid table rows with URLs.
+    violations list problems (missing table, too few rows without zero declaration).
+    """
+    violations: list[dict[str, str]] = []
+
+    # Check if section 5 exists
+    section_5_start = None
+    section_6_start = None
+    lines = text.split("\n")
+    for i, line in enumerate(lines):
+        m = _SECTION_HEADER_RE.match(line.strip())
+        if m:
+            sec_num = int(m.group(1))
+            if sec_num == 5:
+                section_5_start = i
+            elif sec_num == 6:
+                section_6_start = i
+
+    if section_5_start is None:
+        violations.append({
+            "rule_id": "VISIBILITY_SECTION_MISSING",
+            "severity": "error",
+            "section": "5",
+            "message": "Section 5 (Public Visibility) not found in dossier.",
+        })
+        return 0, violations
+
+    # Extract section 5 text
+    end = section_6_start if section_6_start else len(lines)
+    section_5_text = "\n".join(lines[section_5_start:end])
+
+    # Check for zero-artifact declaration
+    if _ZERO_ARTIFACTS_RE.search(section_5_text):
+        return 0, []  # Properly declared zero artifacts
+
+    # Count table rows with URLs
+    artifact_rows = _VISIBILITY_TABLE_ROW_RE.findall(section_5_text)
+    artifact_count = len(artifact_rows)
+
+    if artifact_count == 0:
+        violations.append({
+            "rule_id": "VISIBILITY_TABLE_MISSING",
+            "severity": "error",
+            "section": "5",
+            "message": (
+                "Section 5 has no visibility artifact table with URLs. "
+                "Either include a table with URLs or declare total_visibility_artifacts=0."
+            ),
+        })
+    elif artifact_count < 5:
+        violations.append({
+            "rule_id": "VISIBILITY_TABLE_INCOMPLETE",
+            "severity": "warning",
+            "section": "5",
+            "message": (
+                f"Visibility artifact table has {artifact_count} rows (minimum 5 recommended). "
+                "If fewer exist, declare total_visibility_artifacts=<count>."
+            ),
+        })
+
+    return artifact_count, violations
+
+
+# ---------------------------------------------------------------------------
+# Reasoning Anchor Validation (sections 9-11)
+# ---------------------------------------------------------------------------
+
+_ANCHOR_LINE_RE = re.compile(
+    r"^\s*-\s*Anchor\s+\d+:",
+    re.IGNORECASE,
+)
+
+_INSUFFICIENT_EVIDENCE_RE = re.compile(
+    r"Insufficient evidence.+downgrading to CONSTRAINED",
+    re.IGNORECASE,
+)
+
+
+def validate_reasoning_anchors(text: str) -> tuple[dict[int, int], list[dict[str, str]]]:
+    """Validate that sections 9-11 have reasoning anchors.
+
+    Returns (anchor_counts, violations).
+    anchor_counts: {9: count, 10: count, 11: count}
+    violations: list of issues found.
+    """
+    section_names = {9: "Structural Incentive & Power Model",
+                     10: "Competitive Positioning Context",
+                     11: "How to Win This Decision-Maker"}
+    anchor_counts: dict[int, int] = {9: 0, 10: 0, 11: 0}
+    violations: list[dict[str, str]] = []
+
+    lines = text.strip().split("\n")
+    current_section: int | None = None
+
+    for line in lines:
+        stripped = line.strip()
+        m = _SECTION_HEADER_RE.match(stripped)
+        if m:
+            current_section = int(m.group(1))
+            continue
+
+        if current_section in _STRATEGIC_SECTIONS:
+            if _ANCHOR_LINE_RE.match(stripped):
+                anchor_counts[current_section] += 1
+            elif _INSUFFICIENT_EVIDENCE_RE.search(stripped):
+                # Section properly declared as constrained — no violation
+                anchor_counts[current_section] = -1  # sentinel for "declared constrained"
+
+    for sec_num in sorted(_STRATEGIC_SECTIONS):
+        count = anchor_counts[sec_num]
+        if count == -1:
+            continue  # Properly declared constrained
+        if count < 3:
+            violations.append({
+                "rule_id": "REASONING_ANCHORS_INSUFFICIENT",
+                "severity": "warning" if count > 0 else "error",
+                "section": str(sec_num),
+                "location": f"Section {sec_num}: {section_names[sec_num]}",
+                "message": (
+                    f"Section {sec_num} has {count} reasoning anchors (minimum 3 required). "
+                    "Either add more anchors or declare 'Insufficient evidence — "
+                    "downgrading to CONSTRAINED.'"
+                ),
+            })
+
+    return anchor_counts, violations
+
+
+# ---------------------------------------------------------------------------
+# Inference Language Validation (hedge words must cite sources)
+# ---------------------------------------------------------------------------
+
+_HEDGE_WORD_RE = re.compile(
+    r"\b(likely|may|could|suggests|indicates)\b",
+    re.IGNORECASE,
+)
+
+_DERIVATION_RE = re.compile(
+    r"\(Derived from:.*?\)",
+    re.IGNORECASE,
+)
+
+
+def validate_inference_language(text: str) -> list[dict[str, str]]:
+    """Validate that hedge words are followed by derivation citations.
+
+    Returns list of violations for sentences using hedge words without
+    "(Derived from: ...)" citations. Only checks factual sections (1-8, 12).
+    Strategic sections (9-11) are exempt as they use STRATEGIC MODEL headers.
+    """
+    violations: list[dict[str, str]] = []
+    lines = text.strip().split("\n")
+    current_section: int | None = None
+
+    for line_num, line in enumerate(lines, 1):
+        stripped = line.strip()
+        m = _SECTION_HEADER_RE.match(stripped)
+        if m:
+            current_section = int(m.group(1))
+            continue
+
+        # Skip non-factual sections and structural lines
+        if current_section in _STRATEGIC_SECTIONS:
+            continue
+        if len(stripped) < 25 or stripped.startswith(("#", "|", "---", ">")):
+            continue
+
+        # Check for hedge words without derivation
+        if _HEDGE_WORD_RE.search(stripped) and not _DERIVATION_RE.search(stripped):
+            # Also allow if the line has an evidence tag (tagged claims are fine)
+            has_tag = bool(re.search(
+                r"\[(?:VERIFIED|INFERRED|UNKNOWN|STRATEGIC MODEL)[^\]]*\]",
+                stripped, re.IGNORECASE,
+            ))
+            if not has_tag:
+                hedge_match = _HEDGE_WORD_RE.search(stripped)
+                violations.append({
+                    "rule_id": "HEDGE_WITHOUT_DERIVATION",
+                    "severity": "warning",
+                    "line": str(line_num),
+                    "section": str(current_section) if current_section else "unknown",
+                    "message": (
+                        f"'{hedge_match.group(0)}' used without derivation citation. "
+                        "Add '(Derived from: [source ids])' or rephrase with an evidence tag."
+                    ),
+                    "text": stripped[:120],
+                })
+
+    return violations
+
+
+# ---------------------------------------------------------------------------
 # Fail-Closed Gate Engine
 # ---------------------------------------------------------------------------
 
