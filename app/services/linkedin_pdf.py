@@ -178,12 +178,15 @@ def _extract_raw_text(pdf_bytes: bytes) -> str:
             logger.info("OCR extraction succeeded (%d chars)", len(ocr_text))
             return ocr_text
 
-        # If all fitz strategies failed but produced some text, return best effort
+        # If all fitz strategies returned garbled text, DO NOT return it.
+        # Garbled text is worse than empty: it gets stored in the profile,
+        # used in dossier generation, and shown to the user as mojibake.
         if text.strip():
             logger.warning(
-                "All PyMuPDF strategies returned garbled text; using best available"
+                "All PyMuPDF strategies returned garbled text (%d chars, "
+                "%.0f%% non-printable); returning empty to avoid storing garbage",
+                len(text), _garbled_ratio(text) * 100,
             )
-            return text
     except ImportError:
         logger.debug("PyMuPDF not available, trying fallback")
     except Exception as e:
@@ -200,7 +203,7 @@ def _extract_raw_text(pdf_bytes: bytes) -> str:
                 if text:
                     pages.append(text)
             text = "\n\n".join(pages)
-            if text.strip():
+            if text.strip() and not _is_garbled_text(text):
                 return text
     except ImportError:
         logger.debug("pdfplumber not available, trying fallback")

@@ -2,9 +2,9 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# System deps
+# System deps (tesseract-ocr for LinkedIn PDF text extraction via OCR)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    gcc libpq-dev \
+    gcc libpq-dev tesseract-ocr \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy application code first (needed for pip install .)

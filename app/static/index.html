@@ -2549,12 +2549,21 @@
           if (!res.ok) throw new Error(data.detail || 'Upload failed');
 
           // Update loading with results
-          loadingEl.innerHTML = '<div style="color:var(--success)">' +
-            'PDF processed: ' + data.text_length + ' chars extracted, ' +
-            data.sections_found.length + ' sections found' +
-            (data.headshot_cropped ? ', headshot cropped' : ', no headshot found') +
-            (data.photo_updated ? ' (photo updated)' : '') +
-            '</div>';
+          if (data.text_garbled) {
+            loadingEl.innerHTML = '<div style="color:var(--warning, #f59e0b)">' +
+              'PDF stored but text could not be read (garbled font encoding). ' +
+              'The PDF will be re-processed with OCR on next deploy. ' +
+              (data.headshot_cropped ? 'Headshot extracted.' : 'No headshot found.') +
+              (data.photo_updated ? ' Photo updated.' : '') +
+              '</div>';
+          } else {
+            loadingEl.innerHTML = '<div style="color:var(--success)">' +
+              'PDF processed: ' + data.text_length + ' chars extracted, ' +
+              data.sections_found.length + ' sections found' +
+              (data.headshot_cropped ? ', headshot cropped' : ', no headshot found') +
+              (data.photo_updated ? ' (photo updated)' : '') +
+              '</div>';
+          }
 
           // Refresh profiles and reopen modal
           setTimeout(function() {
@@ -3454,15 +3463,25 @@
           if (!res.ok) throw new Error(data.detail || 'Upload failed');
 
           if (resultEl) {
-            resultEl.innerHTML = '<div class="upload-result success">' +
-              '<strong>PDF processed successfully</strong><br>' +
-              data.text_length + ' chars extracted &middot; ' +
-              data.sections_found.length + ' sections &middot; ' +
-              data.experience_entries + ' experience entries &middot; ' +
-              data.skills_count + ' skills' +
-              (data.headshot_cropped ? ' &middot; headshot cropped' : '') +
-              (data.photo_updated ? ' (photo updated)' : '') +
-              '</div>';
+            if (data.text_garbled) {
+              resultEl.innerHTML = '<div class="upload-result" style="background:var(--warning-bg, rgba(245,158,11,0.1));color:var(--warning, #f59e0b)">' +
+                '<strong>PDF stored — text unreadable</strong><br>' +
+                'The PDF uses encoded fonts that cannot be read directly. ' +
+                'Text will be extracted via OCR on next deploy.' +
+                (data.headshot_cropped ? ' Headshot extracted.' : '') +
+                (data.photo_updated ? ' Photo updated.' : '') +
+                '</div>';
+            } else {
+              resultEl.innerHTML = '<div class="upload-result success">' +
+                '<strong>PDF processed successfully</strong><br>' +
+                data.text_length + ' chars extracted &middot; ' +
+                data.sections_found.length + ' sections &middot; ' +
+                data.experience_entries + ' experience entries &middot; ' +
+                data.skills_count + ' skills' +
+                (data.headshot_cropped ? ' &middot; headshot cropped' : '') +
+                (data.photo_updated ? ' (photo updated)' : '') +
+                '</div>';
+            }
           }
           if (zone) {
             zone.classList.remove('uploading');

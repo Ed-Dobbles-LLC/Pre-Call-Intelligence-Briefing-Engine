@@ -330,6 +330,7 @@ def score_disambiguation(
     apollo_data: dict | None = None,
     has_meeting_data: bool = False,
     pdl_data: dict | None = None,
+    pdf_data: dict | None = None,
 ) -> DisambiguationResult:
     """Score identity lock confidence from 0-100.
 
@@ -337,14 +338,17 @@ def score_disambiguation(
     +10 LinkedIn URL present (weak internal evidence)
     +30 LinkedIn verified by retrieval (strong public evidence; replaces +10)
     +20 Meeting confirms name/employer (internal verified)
-    +20 Employer confirmed by public source (or by PDL enrichment)
-    +10 Title confirmed by public source (or by PDL enrichment)
-    +10 Location confirmed by public source (or by PDL enrichment)
+    +20 Employer confirmed by public source (or by PDL/PDF data)
+    +10 Title confirmed by public source (or by PDL/PDF data)
+    +10 Location confirmed by public source (or by PDL/PDF data)
     +20 Multiple independent domains agree
 
     PDL enrichment counts as an independent confirming domain.
     PDL-confirmed company/title/location each contribute their full points
     even without SerpAPI results (PDL is a verified data provider).
+
+    LinkedIn PDF data counts as an independent confirming domain.
+    PDF-confirmed company/title/location contribute full points.
 
     LinkedIn URL present (+10) is REPLACED (not stacked) by verified (+30).
     Meeting data gives +20 for internal confirmation regardless of public signals.
@@ -353,6 +357,7 @@ def score_disambiguation(
     search_results = search_results or {}
     apollo_data = apollo_data or {}
     pdl_data = pdl_data or {}
+    pdf_data = pdf_data or {}
 
     name_lower = name.lower()
     company_lower = company.lower() if company else ""
@@ -484,6 +489,125 @@ def score_disambiguation(
                     "source": "pdl",
                 })
 
+    # --- LinkedIn PDF credit (user-uploaded LinkedIn profile export) ---
+    pdf_company = (pdf_data.get("company") or "").lower()
+    pdf_title = (pdf_data.get("title") or pdf_data.get("headline") or "").lower()
+    pdf_location = (pdf_data.get("location") or "").lower()
+    pdf_has_text = pdf_data.get("text_usable", False)
+
+    pdf_company_matched = False
+    pdf_title_matched = False
+    pdf_location_matched = False
+
+    if pdf_has_text:
+        confirming_domains.add("linkedin_pdf")
+
+        # PDF confirms employer (only if not already confirmed by PDL)
+        if pdf_company and company_lower and not pdl_company_matched:
+            if (
+                company_lower in pdf_company
+                or pdf_company in company_lower
+            ):
+                pdf_company_matched = True
+                result.employer_match = True
+                result.company_match = True
+                result.score += 20
+                result.evidence.append({
+                    "signal": (
+                        f"Employer '{company}' confirmed by LinkedIn PDF"
+                    ),
+                    "weight": 20,
+                    "source": "linkedin_pdf",
+                })
+            elif pdf_company:
+                result.evidence.append({
+                    "signal": (
+                        f"PDF company mismatch: expected '{company}', "
+                        f"got '{pdf_data.get('company', '')}'"
+                    ),
+                    "weight": 0,
+                    "source": "linkedin_pdf",
+                })
+        elif pdf_company and not company_lower and not pdl_company_matched:
+            # No company provided but PDF has one — accept as confirmed
+            pdf_company_matched = True
+            result.employer_match = True
+            result.company_match = True
+            result.score += 15
+            result.evidence.append({
+                "signal": (
+                    f"Employer set by LinkedIn PDF: '{pdf_data.get('company', '')}'"
+                ),
+                "weight": 15,
+                "source": "linkedin_pdf",
+            })
+
+        # PDF confirms title (only if not already confirmed by PDL)
+        if pdf_title and not pdl_title_matched:
+            title_lower = title.lower() if title else ""
+            pdf_title_words = [w for w in pdf_title.split() if len(w) >= 3]
+            user_title_words = [w for w in title_lower.split() if len(w) >= 2]
+            title_matched = (
+                (pdf_title_words and any(w in title_lower for w in pdf_title_words))
+                or (user_title_words and any(w in pdf_title for w in user_title_words))
+                or (title_lower and (
+                    title_lower in pdf_title or pdf_title in title_lower
+                ))
+            )
+            if title_lower and title_matched:
+                pdf_title_matched = True
+                result.title_match = True
+                result.score += 10
+                result.evidence.append({
+                    "signal": (
+                        f"Title '{title}' confirmed by LinkedIn PDF: "
+                        f"'{pdf_data.get('title') or pdf_data.get('headline', '')}'"
+                    ),
+                    "weight": 10,
+                    "source": "linkedin_pdf",
+                })
+            elif not title_lower:
+                pdf_title_matched = True
+                result.title_match = True
+                result.score += 10
+                result.evidence.append({
+                    "signal": (
+                        f"Title set by LinkedIn PDF: "
+                        f"'{pdf_data.get('title') or pdf_data.get('headline', '')}'"
+                    ),
+                    "weight": 10,
+                    "source": "linkedin_pdf",
+                })
+
+        # PDF confirms location (only if not already confirmed by PDL)
+        if pdf_location and not pdl_location_matched:
+            location_lower = location.lower() if location else ""
+            if location_lower and (
+                location_lower in pdf_location or pdf_location in location_lower
+            ):
+                pdf_location_matched = True
+                result.location_match = True
+                result.score += 10
+                result.evidence.append({
+                    "signal": (
+                        f"Location '{location}' confirmed by LinkedIn PDF: "
+                        f"'{pdf_data.get('location', '')}'"
+                    ),
+                    "weight": 10,
+                    "source": "linkedin_pdf",
+                })
+            elif not location_lower:
+                pdf_location_matched = True
+                result.location_match = True
+                result.score += 10
+                result.evidence.append({
+                    "signal": (
+                        f"Location set by LinkedIn PDF: '{pdf_data.get('location', '')}'"
+                    ),
+                    "weight": 10,
+                    "source": "linkedin_pdf",
+                })
+
     # LinkedIn scoring: URL present (+10) OR verified by retrieval (+30)
     if linkedin_url and linkedin_url.startswith("http"):
         result.linkedin_url_present = True
@@ -565,8 +689,8 @@ def score_disambiguation(
             })
 
     # Employer match (20 pts) — company confirmed across sources
-    # Skip if already fully confirmed by PDL (avoids double-counting)
-    if company_lower and not pdl_company_matched:
+    # Skip if already fully confirmed by PDL or PDF (avoids double-counting)
+    if company_lower and not pdl_company_matched and not pdf_company_matched:
         employer_sources = 0
         for category in search_results:
             for r in search_results.get(category, []):
@@ -612,8 +736,8 @@ def score_disambiguation(
                     })
 
     # Title match (10 pts) — title confirmed in non-LinkedIn sources
-    # Skip if already confirmed by PDL
-    if title and not pdl_title_matched:
+    # Skip if already confirmed by PDL or PDF
+    if title and not pdl_title_matched and not pdf_title_matched:
         title_lower = title.lower()
         for category in ["general", "news", "company_site"]:
             for r in search_results.get(category, []):
@@ -636,8 +760,8 @@ def score_disambiguation(
                 break
 
     # Location match (10 pts)
-    # Skip if already confirmed by PDL
-    if location and not pdl_location_matched:
+    # Skip if already confirmed by PDL or PDF
+    if location and not pdl_location_matched and not pdf_location_matched:
         location_lower = location.lower()
         for category in search_results:
             for r in search_results.get(category, []):
