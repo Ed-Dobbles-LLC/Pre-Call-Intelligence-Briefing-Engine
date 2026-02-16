@@ -339,13 +339,14 @@ async def repair_profiles():
 
     Scans all profiles and:
     1. Detects/clears garbled text (headline, raw_text, sections)
-    2. Resets corrupted PDF-crop photos to enrichment photos or initials
+    2. Resets corrupted PDF-crop photos and re-resolves via fallback chain
     3. Clears corrupted artifact dossiers built from garbled text
+    4. Auto-triggers photo resolution for contacts that lost photos
 
     Safe to run multiple times — idempotent.
     """
     from app.services.linkedin_pdf import _is_garbled_text
-    from app.services.photo_resolution import PhotoSource
+    from app.services.photo_resolution import PhotoSource, resolve_photo_for_profile
 
     session = get_session()
     try:
@@ -354,6 +355,7 @@ async def repair_profiles():
         ).all()
 
         repaired = 0
+        photos_resolved = 0
         details = []
 
         for entity in entities:
@@ -387,20 +389,10 @@ async def repair_profiles():
             # --- Fix corrupted PDF-crop photos ---
             photo_source = profile_data.get("photo_source", "")
             if photo_source == PhotoSource.LINKEDIN_PDF_CROP:
-                # Check if there's an enrichment backup photo
-                enrichment_photo = profile_data.get("enrichment_photo_url", "")
-                apollo_photo = profile_data.get("apollo_photo_url", "")
-                backup_photo = enrichment_photo or apollo_photo
-
-                if backup_photo:
-                    profile_data["photo_url"] = backup_photo
-                    profile_data["photo_source"] = PhotoSource.ENRICHMENT_PROVIDER
-                    changes.append("restored enrichment photo (was PDF crop)")
-                else:
-                    profile_data["photo_url"] = ""
-                    profile_data["photo_source"] = ""
-                    profile_data["photo_status"] = ""
-                    changes.append("cleared corrupted PDF crop photo")
+                profile_data["photo_url"] = ""
+                profile_data["photo_source"] = ""
+                profile_data["photo_status"] = ""
+                changes.append("cleared corrupted PDF crop photo")
 
             # --- Fix corrupted artifact dossier ---
             artifact_md = profile_data.get("artifact_dossier_markdown", "")
@@ -408,6 +400,40 @@ async def repair_profiles():
                 profile_data["artifact_dossier_markdown"] = ""
                 profile_data["artifact_dossier_generated_at"] = ""
                 changes.append("cleared garbled artifact dossier")
+
+            # --- Auto-resolve photos for contacts without photos ---
+            if not profile_data.get("photo_url"):
+                emails = json.loads(entity.emails or "[]")
+                email = emails[0] if emails else ""
+                try:
+                    # Build a mini-profile dict for the resolution service
+                    resolve_input = {
+                        "name": entity.name,
+                        "email": email,
+                        "linkedin_url": profile_data.get("linkedin_url", ""),
+                        "company_domain": "",
+                        "photo_url": "",
+                        "photo_source": "",
+                        "photo_status": "",
+                    }
+                    resolve_photo_for_profile(resolve_input)
+                    if resolve_input.get("photo_url"):
+                        profile_data["photo_url"] = resolve_input["photo_url"]
+                        profile_data["photo_source"] = resolve_input.get(
+                            "photo_source", ""
+                        )
+                        profile_data["photo_status"] = resolve_input.get(
+                            "photo_status", ""
+                        )
+                        profile_data["photo_last_checked_at"] = resolve_input.get(
+                            "photo_last_checked_at", ""
+                        )
+                        photos_resolved += 1
+                        changes.append(
+                            f"resolved photo via {resolve_input.get('photo_source', 'fallback')}"
+                        )
+                except Exception as e:
+                    logger.debug("Photo resolution failed for %s: %s", entity.name, e)
 
             if changes:
                 entity.domains = json.dumps(profile_data)
@@ -423,6 +449,7 @@ async def repair_profiles():
             "status": "ok",
             "profiles_scanned": len(entities),
             "profiles_repaired": repaired,
+            "photos_resolved": photos_resolved,
             "details": details,
         }
     except Exception:
@@ -1443,6 +1470,7 @@ async def deep_research_endpoint(profile_id: int):
         # --- STEP 6: Post-synthesis fail-closed enforcement ---
         visibility_ledger_count = len(graph.get_visibility_ledger_rows())
         evidence_coverage = qa_report.evidence_coverage.coverage_pct
+        total_web_results = sum(len(v) for v in search_results.values())
         should_output, fail_message = enforce_fail_closed_gates(
             dossier_text=result,
             entity_lock_score=entity_lock.score,
@@ -1450,6 +1478,7 @@ async def deep_research_endpoint(profile_id: int):
             evidence_coverage_pct=evidence_coverage,
             person_name=p_name,
             has_public_results=has_public_results,
+            web_results_count=total_web_results,
         )
 
         # Apply mode-based prose filtering
@@ -2322,6 +2351,7 @@ async def generate_profile_research(profile_id: int):
         # --- STEP 5: Post-synthesis fail-closed enforcement ---
         visibility_ledger_count = len(graph.get_visibility_ledger_rows())
         evidence_coverage = qa_report.evidence_coverage.coverage_pct
+        total_web_results_2 = sum(len(v) for v in search_results.values())
         should_output, fail_message = enforce_fail_closed_gates(
             dossier_text=result,
             entity_lock_score=entity_lock.score,
@@ -2329,6 +2359,7 @@ async def generate_profile_research(profile_id: int):
             evidence_coverage_pct=evidence_coverage,
             person_name=p_name,
             has_public_results=has_public_results,
+            web_results_count=total_web_results_2,
         )
 
         # --- STEP 6: Apply mode-based prose filtering ---

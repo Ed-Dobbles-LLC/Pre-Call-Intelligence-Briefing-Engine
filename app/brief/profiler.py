@@ -110,9 +110,13 @@ USER_PROMPT_TEMPLATE = """\
 
 ## REQUIRED OUTPUT: CONTACT INTELLIGENCE DOSSIER
 
-Produce ALL 11 sections below. Follow evidence rules strictly. \
-If a section has no evidence, include the header with an explicit \
-gap statement. Do NOT pad with generic language.
+Produce the sections below. Follow evidence rules strictly. \
+**ADAPTIVE SECTIONS**: Only produce sections where you have evidence. \
+Sections 1-3 are always required. Sections 4-11 are OPTIONAL — \
+SKIP any section where you have no evidence rather than filling it \
+with [UNKNOWN] tags or generic speculation. A 5-section dossier with \
+high evidence coverage is far better than an 11-section dossier full \
+of gaps and [UNKNOWN] tags that fails QA.
 
 ---
 
