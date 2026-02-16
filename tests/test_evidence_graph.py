@@ -880,12 +880,14 @@ class TestEnforceFailClosedGates:
         assert "VISIBILITY SWEEP NOT EXECUTED" in message
 
     def test_evidence_coverage_failure(self):
+        # With 10+ web results, threshold is 85% — so 50% fails
         should_output, message = enforce_fail_closed_gates(
             dossier_text="Test",
             entity_lock_score=85,
             visibility_ledger_count=16,
             evidence_coverage_pct=50.0,
             person_name="Ben Titmus",
+            web_results_count=15,
         )
         assert not should_output
         assert "EVIDENCE COVERAGE" in message
@@ -897,6 +899,7 @@ class TestEnforceFailClosedGates:
             visibility_ledger_count=0,
             evidence_coverage_pct=50.0,
             person_name="Ben Titmus",
+            web_results_count=15,
         )
         assert not should_output
         assert "VISIBILITY SWEEP" in message
@@ -909,28 +912,57 @@ class TestEnforceFailClosedGates:
             visibility_ledger_count=0,
             evidence_coverage_pct=50.0,
             person_name="Ben Titmus",
+            web_results_count=15,
         )
         assert not should_output
         assert "Entity Lock: 40/100" in message
         assert "NOT LOCKED" in message
 
-    def test_passes_at_exact_thresholds(self):
+    def test_passes_at_exact_thresholds_high_visibility(self):
+        # High visibility (10+ web results) requires 85% coverage
         should_output, _ = enforce_fail_closed_gates(
             dossier_text="Test",
             entity_lock_score=70,
             visibility_ledger_count=12,
             evidence_coverage_pct=85.0,
             person_name="Test",
+            web_results_count=15,
         )
         assert should_output
 
-    def test_fails_just_below_coverage(self):
+    def test_passes_at_lower_threshold_sparse_evidence(self):
+        # Sparse evidence (<5 web results) requires only 60% coverage
+        should_output, _ = enforce_fail_closed_gates(
+            dossier_text="Test",
+            entity_lock_score=70,
+            visibility_ledger_count=12,
+            evidence_coverage_pct=62.0,
+            person_name="Test",
+            web_results_count=3,
+        )
+        assert should_output
+
+    def test_adaptive_threshold_medium_visibility(self):
+        # Medium visibility (5-9 web results) requires 70% coverage
+        should_output, _ = enforce_fail_closed_gates(
+            dossier_text="Test",
+            entity_lock_score=70,
+            visibility_ledger_count=12,
+            evidence_coverage_pct=72.0,
+            person_name="Test",
+            web_results_count=7,
+        )
+        assert should_output
+
+    def test_fails_just_below_adaptive_coverage(self):
+        # Sparse evidence (<5) uses 60% threshold — 59.9% still fails
         should_output, message = enforce_fail_closed_gates(
             dossier_text="Test",
             entity_lock_score=85,
             visibility_ledger_count=16,
-            evidence_coverage_pct=84.9,
+            evidence_coverage_pct=59.9,
             person_name="Test",
+            web_results_count=2,
         )
         assert not should_output
         assert "EVIDENCE COVERAGE" in message
@@ -1445,24 +1477,24 @@ class TestDeepResearchGateRequirements:
 
 
 class TestVisibilitySweepLedgerRequirement:
-    """Visibility sweep cannot claim 'none found' unless >= 12 queries executed."""
+    """Visibility sweep cannot claim 'none found' unless >= 8 queries executed."""
 
-    def test_12_queries_required(self):
+    def test_8_queries_required(self):
         should_output, message = enforce_fail_closed_gates(
             dossier_text="Test",
             entity_lock_score=85,
-            visibility_ledger_count=11,
+            visibility_ledger_count=7,
             evidence_coverage_pct=92.0,
             person_name="Ben Titmus",
         )
         assert not should_output
         assert "INSUFFICIENT VISIBILITY QUERIES" in message
 
-    def test_12_queries_passes(self):
+    def test_8_queries_passes(self):
         should_output, _ = enforce_fail_closed_gates(
             dossier_text="Test",
             entity_lock_score=85,
-            visibility_ledger_count=12,
+            visibility_ledger_count=8,
             evidence_coverage_pct=92.0,
             person_name="Ben Titmus",
         )

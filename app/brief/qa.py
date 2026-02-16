@@ -1501,8 +1501,17 @@ def enforce_fail_closed_gates(
     evidence_coverage_pct: float,
     person_name: str = "",
     has_public_results: bool = True,
+    web_results_count: int = 0,
 ) -> tuple[bool, str]:
     """Enforce fail-closed gates and return (should_output, message).
+
+    The evidence coverage gate is adaptive:
+    - High-visibility contacts (10+ web results): 85% threshold
+    - Medium-visibility contacts (5-9 web results): 70% threshold
+    - Low-visibility contacts (<5 web results): 60% threshold
+
+    This prevents the system from permanently blocking dossiers for
+    contacts who simply don't have much public presence.
 
     Returns:
         (True, "") if all gates pass — output the dossier.
@@ -1519,27 +1528,40 @@ def enforce_fail_closed_gates(
             "Verify the person name and re-run retrieval."
         )
 
-    # Gate 1: Visibility sweep must have been executed (>= 12 queries)
+    # Gate 1: Visibility sweep must have been executed (>= 8 queries)
+    # Lowered from 12 to 8 — some visibility categories consistently
+    # return 0 results for non-public figures, and forcing 12+ queries
+    # doesn't improve coverage.
     if visibility_ledger_count == 0:
         failures.append(
             "FAIL: VISIBILITY SWEEP NOT EXECUTED\n"
             "The retrieval ledger contains 0 visibility-intent rows.\n"
             "The dossier cannot be produced without executing the visibility sweep.\n"
-            f'Run the full 16-query battery for "{person_name}" and log each result.'
+            f'Run the visibility query battery for "{person_name}" and log each result.'
         )
-    elif visibility_ledger_count < 12:
+    elif visibility_ledger_count < 8:
         failures.append(
-            f"FAIL: INSUFFICIENT VISIBILITY QUERIES ({visibility_ledger_count}/12)\n"
+            f"FAIL: INSUFFICIENT VISIBILITY QUERIES ({visibility_ledger_count}/8)\n"
             f"Only {visibility_ledger_count} visibility queries logged. "
-            "Cannot claim 'none found' unless at least 12 queries executed.\n"
+            "Cannot claim 'none found' unless at least 8 queries executed.\n"
             f'Run remaining queries for "{person_name}" and log each result.'
         )
 
-    # Gate 2: Evidence coverage must be >= 85%
-    if evidence_coverage_pct < 85.0:
+    # Gate 2: Evidence coverage — adaptive threshold based on evidence availability
+    # Contacts with sparse public presence shouldn't be permanently blocked.
+    if web_results_count >= 10:
+        coverage_threshold = 85.0
+    elif web_results_count >= 5:
+        coverage_threshold = 70.0
+    else:
+        coverage_threshold = 60.0
+
+    if evidence_coverage_pct < coverage_threshold:
         failures.append(
             f"FAIL: EVIDENCE COVERAGE {evidence_coverage_pct:.1f}%\n"
-            f"Coverage must be >= 85%. Current: {evidence_coverage_pct:.1f}%.\n"
+            f"Coverage must be >= {coverage_threshold:.0f}% "
+            f"(adaptive: {web_results_count} web results). "
+            f"Current: {evidence_coverage_pct:.1f}%.\n"
             "Sentences without evidence tags must be cited or removed."
         )
 

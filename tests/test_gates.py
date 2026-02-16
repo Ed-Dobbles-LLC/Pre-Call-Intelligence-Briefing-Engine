@@ -995,9 +995,10 @@ class TestProfiler11Sections:
         from app.brief.profiler import USER_PROMPT_TEMPLATE
         assert "{visibility_research}" in USER_PROMPT_TEMPLATE
 
-    def test_prompt_requires_all_11_sections(self):
+    def test_prompt_has_adaptive_sections(self):
         from app.brief.profiler import USER_PROMPT_TEMPLATE
-        assert "ALL 11 sections" in USER_PROMPT_TEMPLATE
+        assert "ADAPTIVE SECTIONS" in USER_PROMPT_TEMPLATE
+        assert "Sections 1-3 are always required" in USER_PROMPT_TEMPLATE
 
     def test_prompt_qa_section_checks_visibility(self):
         from app.brief.profiler import USER_PROMPT_TEMPLATE
