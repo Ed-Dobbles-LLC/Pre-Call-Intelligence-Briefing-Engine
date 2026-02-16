@@ -2283,9 +2283,14 @@
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/><line x1="18" y1="8" x2="23" y2="8"/><line x1="20.5" y1="5.5" x2="20.5" y2="10.5"/></svg>
               ${p.enriched_at ? 'Re-enrich (PDL)' : 'Enrich (PDL)'}
             </button>
+            <button class="btn-research-secondary" onclick="triggerPhotoUpload(${p.id})">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+              Upload Photo
+            </button>
             <input type="file" id="pdf-upload-${p.id}" accept=".pdf" style="display:none" onchange="handlePdfUpload(${p.id}, this)">
+            <input type="file" id="photo-upload-${p.id}" accept=".jpg,.jpeg,.png,.webp,image/*" style="display:none" onchange="handlePhotoUpload(${p.id}, this)">
           </div>
-          ${(p.linkedin_pdf_path || p.enriched_at) ? '<div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap">' + (p.linkedin_pdf_path ? '<span class="profile-tag" style="background:var(--info-bg);color:var(--info)">PDF Uploaded</span>' : '') + (p.photo_source === 'linkedin_pdf_crop' ? '<span class="profile-tag" style="background:var(--success-bg);color:var(--success)">Photo: LinkedIn PDF</span>' : '') + (p.enriched_at ? '<span class="profile-tag" style="background:var(--success-bg);color:var(--success)">PDL Enriched</span>' : '') + (p.pdl_match_confidence ? '<span class="profile-tag" style="background:var(--info-bg);color:var(--info)">Confidence: ' + Math.round(p.pdl_match_confidence * 100) + '%</span>' : '') + (p.artifact_dossier_markdown ? '<span class="profile-tag" style="background:var(--accent-glow);color:var(--accent)">Artifact Dossier</span>' : '') + '</div>' : ''}
+          ${(p.linkedin_pdf_path || p.enriched_at || p.photo_source === 'uploaded') ? '<div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap">' + (p.linkedin_pdf_path ? '<span class="profile-tag" style="background:var(--info-bg);color:var(--info)">PDF Uploaded</span>' : '') + (p.photo_source === 'linkedin_pdf_crop' ? '<span class="profile-tag" style="background:var(--success-bg);color:var(--success)">Photo: LinkedIn PDF</span>' : '') + (p.photo_source === 'uploaded' ? '<span class="profile-tag" style="background:var(--success-bg);color:var(--success)">Photo: Uploaded</span>' : '') + (p.enriched_at ? '<span class="profile-tag" style="background:var(--success-bg);color:var(--success)">PDL Enriched</span>' : '') + (p.pdl_match_confidence ? '<span class="profile-tag" style="background:var(--info-bg);color:var(--info)">Confidence: ' + Math.round(p.pdl_match_confidence * 100) + '%</span>' : '') + (p.artifact_dossier_markdown ? '<span class="profile-tag" style="background:var(--accent-glow);color:var(--accent)">Artifact Dossier</span>' : '') + '</div>' : ''}
         </div>`;
 
       if (p.interactions && p.interactions.length) {
@@ -2596,6 +2601,48 @@
         } catch (err) {
           loadingEl.innerHTML = '<div style="color:var(--danger)">Upload failed: ' + err.message + '</div>';
           setTimeout(function() { loadingEl.remove(); }, 5000);
+        }
+      };
+      reader.readAsDataURL(file);
+    }
+
+    function triggerPhotoUpload(profileId) {
+      const input = document.getElementById('photo-upload-' + profileId)
+        || document.getElementById('photo-upload-np-' + profileId);
+      if (input) input.click();
+    }
+
+    async function handlePhotoUpload(profileId, inputElement) {
+      const file = inputElement.files[0];
+      if (!file) return;
+      if (!file.type.startsWith('image/')) {
+        showToast('Please select an image file (JPG, PNG, WebP)');
+        return;
+      }
+
+      const reader = new FileReader();
+      reader.onload = async function(e) {
+        const base64 = e.target.result.split(',')[1];
+
+        showToast('Uploading photo...', 'info');
+
+        try {
+          const res = await fetch(API_BASE + '/profiles/' + profileId + '/upload-photo', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...authHeaders() },
+            body: JSON.stringify({ photo_base64: base64 })
+          });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.detail || 'Upload failed');
+
+          showToast('Photo uploaded successfully', 'success');
+
+          // Refresh profiles to show updated photo
+          setTimeout(function() {
+            loadProfiles();
+          }, 500);
+        } catch (err) {
+          showToast('Photo upload failed: ' + err.message);
         }
       };
       reader.readAsDataURL(file);
@@ -3464,6 +3511,13 @@
             <div class="upload-hint">Save their LinkedIn profile page as PDF from your browser</div>
             <div id="pdfResultNp${p.id}"></div>
             <input type="file" id="npPdfInput${p.id}" accept=".pdf" style="display:none" onchange="handleReviewPdfUpload(${p.id},this)">
+          </div>
+          <div style="margin-top:8px;text-align:center">
+            <button class="btn-research-secondary" style="font-size:12px;padding:4px 12px" onclick="triggerPhotoUpload(${p.id})">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+              Upload Photo (JPG)
+            </button>
+            <input type="file" id="photo-upload-np-${p.id}" accept=".jpg,.jpeg,.png,.webp,image/*" style="display:none" onchange="handlePhotoUpload(${p.id}, this)">
           </div>
         </div>`;
       }).join('');
