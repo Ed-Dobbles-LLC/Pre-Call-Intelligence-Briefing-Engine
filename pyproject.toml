@@ -25,6 +25,8 @@ dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.34",
     "psycopg2-binary>=2.9",
+    "PyMuPDF>=1.24",
+    "Pillow>=10.0",
 ]
 
 [project.optional-dependencies]
