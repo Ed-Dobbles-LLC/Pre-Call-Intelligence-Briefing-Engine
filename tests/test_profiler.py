@@ -264,16 +264,19 @@ class TestPromptTemplates:
         assert "Quantified Claims Inventory" in USER_PROMPT_TEMPLATE
         assert "Rhetorical & Decision Patterns" in USER_PROMPT_TEMPLATE
         assert "Structural Pressure Model" in USER_PROMPT_TEMPLATE
-        assert "Interview Strategy Recommendations" in USER_PROMPT_TEMPLATE
+        assert "Structural Incentive & Power Model" in USER_PROMPT_TEMPLATE
+        assert "Competitive Positioning Context" in USER_PROMPT_TEMPLATE
+        assert "How to Win This Decision-Maker" in USER_PROMPT_TEMPLATE
         assert "Primary Source Index" in USER_PROMPT_TEMPLATE
 
     def test_user_prompt_has_career_timeline(self):
         assert "Chronological list of roles" in USER_PROMPT_TEMPLATE
 
-    def test_user_prompt_has_interview_strategy(self):
-        assert "What to lead with" in USER_PROMPT_TEMPLATE
-        assert "Landmines" in USER_PROMPT_TEMPLATE
-        assert "Questions that will earn respect" in USER_PROMPT_TEMPLATE
+    def test_user_prompt_has_how_to_win(self):
+        assert "How to Win This Decision-Maker" in USER_PROMPT_TEMPLATE
+        assert "What makes them look smart internally" in USER_PROMPT_TEMPLATE
+        assert "What NOT to do" in USER_PROMPT_TEMPLATE
+        assert "What kind of narrative resonates" in USER_PROMPT_TEMPLATE
 
     def test_user_prompt_template_format_fields(self):
         """Ensure all format placeholders can be filled."""
@@ -289,6 +292,7 @@ class TestPromptTemplates:
             web_research="Test",
             visibility_research="Test",
             evidence_threshold=85,
+            inference_gate_instruction="IDENTITY LOCK: 85/100 — STRATEGIC INFERENCE ENABLED",
         )
         assert "{" not in result  # no unfilled placeholders
 
@@ -305,6 +309,9 @@ class TestPromptTemplates:
         assert "Key pressures" in USER_PROMPT_TEMPLATE
 
     def test_user_prompt_has_quantified_claims(self):
-        """Quantified claims section inventories specific numbers."""
+        """Quantified claims section inventories specific numbers with category separation."""
         assert "Quantified Claims" in USER_PROMPT_TEMPLATE
-        assert "personally owned" in USER_PROMPT_TEMPLATE
+        assert "Personal Ownership Claims" in USER_PROMPT_TEMPLATE
+        assert "Engagement / Team Outcome Claims" in USER_PROMPT_TEMPLATE
+        assert "Marketing-Level Claims" in USER_PROMPT_TEMPLATE
+        assert "Claim Style Pattern" in USER_PROMPT_TEMPLATE

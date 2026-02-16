@@ -503,8 +503,15 @@ class TestEntityLockGate:
         assert not result.passed
         assert "PARTIAL" in result.details
 
-    def test_partial_at_69(self):
+    def test_locked_at_69(self):
+        """69 >= 60 threshold — should be LOCKED (full dossier)."""
         result = check_entity_lock_gate(69)
+        assert result.passed
+        assert "LOCKED" in result.details
+
+    def test_partial_at_59(self):
+        """59 < 60 threshold — should be PARTIAL."""
+        result = check_entity_lock_gate(59)
         assert not result.passed
         assert "PARTIAL" in result.details
 
@@ -518,7 +525,7 @@ class TestEntityLockGate:
         assert result.gate_name == "ENTITY_LOCK"
 
     def test_threshold_constant(self):
-        assert ENTITY_LOCK_THRESHOLD == 70
+        assert ENTITY_LOCK_THRESHOLD == 60
 
     def test_remediation_on_failure(self):
         result = check_entity_lock_gate(40)

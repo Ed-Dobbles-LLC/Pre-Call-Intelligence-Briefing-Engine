@@ -17,7 +17,7 @@ Mode A (Meeting-Prep Brief):
 Mode B (Deep Research Dossier):
 - VISIBILITY SWEEP NOT EXECUTED → halt
 - EVIDENCE COVERAGE < 85% → halt
-- ENTITY LOCK < 70 → constrain (no strong person-level claims)
+- ENTITY LOCK < 60 → constrain (no strong person-level claims or strategic models)
 - INTERNAL CONTRADICTION → halt
 """
 
@@ -224,23 +224,42 @@ def compute_evidence_coverage_from_text(text: str) -> float:
     """Compute coverage from raw dossier text by counting evidence tags.
 
     A substantive line is >20 chars, not a header, not a table delimiter.
-    A covered line has an evidence tag pattern like [VERIFIED-*] or [INFERRED-*].
+    A covered line has an evidence tag pattern like [VERIFIED-*], [INFERRED-*],
+    [STRATEGIC MODEL ...], or [UNKNOWN].
+
+    Lines inside a [STRATEGIC MODEL] block (between a STRATEGIC MODEL header
+    tag and the next section header) are counted as covered — the block header
+    provides citation coverage for the reasoning within.
     """
     tag_pattern = re.compile(
-        r"\[(?:VERIFIED[–-](?:MEETING|PUBLIC|PDF)|INFERRED[–-][HML]|UNKNOWN)\]",
+        r"\[(?:VERIFIED[–-](?:MEETING|PUBLIC|PDF)|INFERRED[–-][HML]|UNKNOWN"
+        r"|STRATEGIC MODEL[^\]]*)\]",
         re.IGNORECASE,
+    )
+    strategic_model_header = re.compile(
+        r"\[STRATEGIC MODEL[^\]]*\]", re.IGNORECASE,
     )
     lines = text.strip().split("\n")
     total = 0
     tagged = 0
+    in_strategic_block = False
+
     for line in lines:
         stripped = line.strip()
         if len(stripped) <= 20:
             continue
         if stripped.startswith("#") or stripped.startswith("---") or stripped.startswith("|"):
+            # A new ### section header exits any strategic model block
+            if stripped.startswith("###"):
+                in_strategic_block = False
             continue
+
+        # Check if this line opens a strategic model block
+        if strategic_model_header.search(stripped):
+            in_strategic_block = True
+
         total += 1
-        if tag_pattern.search(stripped):
+        if tag_pattern.search(stripped) or in_strategic_block:
             tagged += 1
 
     if total == 0:
@@ -253,7 +272,7 @@ def compute_evidence_coverage_from_text(text: str) -> float:
 # ---------------------------------------------------------------------------
 
 EVIDENCE_COVERAGE_THRESHOLD = 85.0
-ENTITY_LOCK_THRESHOLD = 70
+ENTITY_LOCK_THRESHOLD = 60
 
 
 @dataclass
@@ -270,7 +289,7 @@ class FailClosedReport:
     """Aggregate result of all fail-closed gates."""
     gates: list[GateResult] = field(default_factory=list)
     all_passed: bool = False
-    is_constrained: bool = False  # True when entity lock < 70
+    is_constrained: bool = False  # True when entity lock < 60
     failure_output: str = ""  # The text to return when gates fail
 
     @property
@@ -341,8 +360,8 @@ def check_evidence_coverage_gate(
 def check_entity_lock_gate(entity_lock_score: int) -> GateResult:
     """Gate 3: Entity lock score check.
 
-    >= 70: LOCKED (full dossier)
-    50-69: PARTIAL (constrained — only VERIFIED + UNKNOWN + INFERRED-L)
+    >= 60: LOCKED (full dossier with strategic inference enabled)
+    50-59: PARTIAL (constrained — only VERIFIED + UNKNOWN + INFERRED-L)
     < 50: NOT LOCKED (constrained — same restrictions)
     """
     if entity_lock_score >= ENTITY_LOCK_THRESHOLD:
@@ -634,8 +653,9 @@ class DossierMode:
     DEEP_RESEARCH: Mode B — web-required, fail-closed, full dossier.
 
     Deep Research sub-states:
-    FULL:        entity_lock >= 70 AND visibility executed — unrestricted output.
-    CONSTRAINED: entity_lock 50-69 — restrict inference strengths.
+    FULL:        entity_lock >= 60 AND visibility executed — unrestricted output
+                 with strategic inference enabled.
+    CONSTRAINED: entity_lock 50-59 — restrict inference strengths.
     HALTED:      pre-synthesis gate failure — do NOT call LLM.
     """
     # Product modes
@@ -665,6 +685,11 @@ def determine_dossier_mode(
     Returns (mode, reason).
     If mode == HALTED, the caller must NOT proceed to synthesis.
     This is used ONLY for Mode B (Deep Research). Mode A bypasses this entirely.
+
+    Thresholds:
+    >= 60: FULL (strategic inference enabled)
+    50-59: CONSTRAINED (suppress strong inferences)
+    < 50: CONSTRAINED (suppress all inferences)
     """
     if not visibility_executed:
         queries = _get_required_visibility_queries(person_name or "<name>")
@@ -685,13 +710,16 @@ def determine_dossier_mode(
         )
 
     if entity_lock_score >= ENTITY_LOCK_THRESHOLD:
-        return DossierMode.FULL, f"Entity LOCKED ({entity_lock_score}/100) — full dossier"
+        return DossierMode.FULL, (
+            f"Entity LOCKED ({entity_lock_score}/100) — full dossier with "
+            "strategic inference enabled"
+        )
 
     if entity_lock_score >= 50:
         return DossierMode.CONSTRAINED, (
             f"PARTIAL DOSSIER — IDENTITY NOT LOCKED ({entity_lock_score}/100)\n"
             "Restricting output to VERIFIED + UNKNOWN + INFERRED-L claims.\n"
-            "Strong person-level inferences suppressed."
+            "Strong person-level inferences and strategic modeling suppressed."
         )
 
     return DossierMode.CONSTRAINED, (
@@ -881,9 +909,9 @@ def build_meeting_prep_brief(
 def filter_prose_by_mode(dossier_text: str, mode: str, entity_lock_score: int) -> str:
     """Filter dossier prose based on output mode.
 
-    Mode FULL: return as-is.
-    Mode CONSTRAINED (50-69): strip INFERRED-H/M claims, prepend banner.
-    Mode CONSTRAINED (<50): strip all INFERRED claims, prepend banner.
+    Mode FULL: return as-is (identity_lock >= 60).
+    Mode CONSTRAINED (50-59): strip INFERRED-H/M and STRATEGIC MODEL, prepend banner.
+    Mode CONSTRAINED (<50): strip all INFERRED and STRATEGIC MODEL, prepend banner.
     Mode HALTED: should not reach here (caller should not have generated prose).
     """
     if mode == DossierMode.FULL:
@@ -895,19 +923,33 @@ def filter_prose_by_mode(dossier_text: str, mode: str, entity_lock_score: int) -
     lines = dossier_text.split("\n")
     filtered: list[str] = []
 
-    # Pattern for tags to strip
+    # Pattern for STRATEGIC MODEL tags to strip when constrained
+    strategic_pattern = re.compile(r"\[STRATEGIC MODEL[^\]]*\]", re.IGNORECASE)
+
+    # Pattern for inference tags to strip
     if entity_lock_score >= 50:
-        # CONSTRAINED (PARTIAL): strip INFERRED-H and INFERRED-M only
+        # CONSTRAINED (PARTIAL): strip INFERRED-H, INFERRED-M, and STRATEGIC MODEL
         strip_pattern = re.compile(r"\[INFERRED[–\-][HM]\]", re.IGNORECASE)
     else:
-        # CONSTRAINED (NOT LOCKED): strip ALL INFERRED
+        # CONSTRAINED (NOT LOCKED): strip ALL INFERRED and STRATEGIC MODEL
         strip_pattern = re.compile(r"\[INFERRED[–\-][HML]\]", re.IGNORECASE)
+
+    in_strategic_block = False
 
     for line in lines:
         stripped = line.strip()
         # Keep headers, separators, and non-substantive lines
         if not stripped or len(stripped) <= 20 or stripped.startswith(("#", "|", "---", "*", ">")):
+            # Track section boundaries to exit strategic blocks
+            if stripped.startswith("###"):
+                in_strategic_block = False
             filtered.append(line)
+            continue
+        # Enter strategic model block on header tag
+        if strategic_pattern.search(stripped):
+            in_strategic_block = True
+        # Drop lines in strategic model blocks when constrained
+        if in_strategic_block:
             continue
         # Drop lines containing banned inference tags
         if strip_pattern.search(stripped):
@@ -917,7 +959,7 @@ def filter_prose_by_mode(dossier_text: str, mode: str, entity_lock_score: int) -
     lock_label = "PARTIAL LOCK" if entity_lock_score >= 50 else "NOT LOCKED"
     banner = (
         f"> **PARTIAL DOSSIER — IDENTITY {lock_label} ({entity_lock_score}/100)**\n"
-        "> Strong person-level inferences have been suppressed.\n"
+        "> Strong person-level inferences and strategic modeling have been suppressed.\n"
         "> Only VERIFIED facts and low-confidence inferences are shown.\n"
         "---\n"
     )
@@ -979,7 +1021,7 @@ def build_failure_report(
     total_public = sum(1 for row in graph.ledger if row.result_count > 0)
     if total_public == 0:
         parts.append("2. Get at least 1 public retrieval result to compute Entity Lock")
-    elif entity_lock_score < 70:
+    elif entity_lock_score < 60:
         parts.append("2. Increase Entity Lock by confirming:")
         parts.append("   - LinkedIn URL present → +10pts (weak)")
         parts.append("   - LinkedIn verified via retrieval → +30pts (strong)")

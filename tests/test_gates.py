@@ -130,9 +130,20 @@ class TestComputeGateStatus:
         )
         assert status == "passed"
 
-    def test_identity_lock_below_70_constrains(self):
+    def test_identity_lock_at_60_passes(self):
+        """60 >= 60 threshold — should pass (not constrained)."""
         status = compute_gate_status(
             identity_lock_score=60,
+            evidence_coverage_pct=90,
+            genericness_score=10,
+            strict=False,
+        )
+        assert status == "passed"
+
+    def test_identity_lock_below_60_constrains(self):
+        """59 < 60 threshold — should be constrained."""
+        status = compute_gate_status(
+            identity_lock_score=59,
             evidence_coverage_pct=90,
             genericness_score=10,
             strict=False,
@@ -986,17 +997,19 @@ class TestProfilerSections:
         assert "Public Statements & Positions" in USER_PROMPT_TEMPLATE
         assert "blockquotes" in USER_PROMPT_TEMPLATE
 
-    def test_prompt_has_interview_strategy(self):
+    def test_prompt_has_how_to_win(self):
         from app.brief.profiler import USER_PROMPT_TEMPLATE
-        assert "Interview Strategy Recommendations" in USER_PROMPT_TEMPLATE
-        assert "What to lead with" in USER_PROMPT_TEMPLATE
-        assert "Landmines" in USER_PROMPT_TEMPLATE
-        assert "Questions that will earn respect" in USER_PROMPT_TEMPLATE
+        assert "How to Win This Decision-Maker" in USER_PROMPT_TEMPLATE
+        assert "What makes them look smart internally" in USER_PROMPT_TEMPLATE
+        assert "What NOT to do" in USER_PROMPT_TEMPLATE
+        assert "What kind of narrative resonates" in USER_PROMPT_TEMPLATE
 
     def test_prompt_has_quantified_claims(self):
         from app.brief.profiler import USER_PROMPT_TEMPLATE
         assert "Quantified Claims Inventory" in USER_PROMPT_TEMPLATE
-        assert "personally owned" in USER_PROMPT_TEMPLATE
+        assert "Personal Ownership Claims" in USER_PROMPT_TEMPLATE
+        assert "Engagement / Team Outcome Claims" in USER_PROMPT_TEMPLATE
+        assert "Marketing-Level Claims" in USER_PROMPT_TEMPLATE
 
     def test_prompt_has_visibility_research_placeholder(self):
         from app.brief.profiler import USER_PROMPT_TEMPLATE

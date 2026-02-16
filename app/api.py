@@ -1551,6 +1551,7 @@ async def deep_research_endpoint(profile_id: int):
             web_research=web_research,
             visibility_research=visibility_research,
             evidence_threshold=evidence_threshold,
+            identity_lock_score=entity_lock.score,
         )
 
         # --- STEP 5: Post-synthesis QA gates ---
@@ -2431,6 +2432,7 @@ async def generate_profile_research(profile_id: int):
             web_research=web_research,
             visibility_research=visibility_research,
             evidence_threshold=evidence_threshold_2,
+            identity_lock_score=entity_lock.score,
         )
 
         # --- STEP 4: Post-synthesis QA gates ---
