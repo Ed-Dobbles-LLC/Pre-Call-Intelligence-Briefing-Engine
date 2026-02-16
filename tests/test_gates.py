@@ -1001,8 +1001,10 @@ class TestProfilerSections:
         from app.brief.profiler import USER_PROMPT_TEMPLATE
         assert "How to Win This Decision-Maker" in USER_PROMPT_TEMPLATE
         assert "What makes them look smart internally" in USER_PROMPT_TEMPLATE
-        assert "What NOT to do" in USER_PROMPT_TEMPLATE
-        assert "What kind of narrative resonates" in USER_PROMPT_TEMPLATE
+        assert "WIN CONDITIONS" in USER_PROMPT_TEMPLATE
+        assert "LOSS CONDITIONS" in USER_PROMPT_TEMPLATE
+        assert "TAILORED QUESTIONS" in USER_PROMPT_TEMPLATE
+        assert "PROOF POINTS TO DEPLOY" in USER_PROMPT_TEMPLATE
 
     def test_prompt_has_quantified_claims(self):
         from app.brief.profiler import USER_PROMPT_TEMPLATE
@@ -1048,3 +1050,95 @@ class TestProfilerSections:
             generate_deep_profile(name="Test")
             user_prompt = mock_instance.chat.call_args[0][1]
             assert "No visibility sweep was executed" in user_prompt
+
+    def test_prompt_has_reasoning_table(self):
+        """v2: prompt must include the internal reasoning table."""
+        from app.brief.profiler import USER_PROMPT_TEMPLATE
+        assert "INTERNAL REASONING TABLE" in USER_PROMPT_TEMPLATE
+        assert "Revenue model" in USER_PROMPT_TEMPLATE
+        assert "Reporting line" in USER_PROMPT_TEMPLATE
+        assert "Buyer archetype" in USER_PROMPT_TEMPLATE
+
+    def test_prompt_has_pressure_matrix(self):
+        """v2: section 9 must require a Pressure Matrix."""
+        from app.brief.profiler import USER_PROMPT_TEMPLATE
+        assert "PRESSURE MATRIX" in USER_PROMPT_TEMPLATE
+        assert "Revenue Pressure" in USER_PROMPT_TEMPLATE
+        assert "Delivery Pressure" in USER_PROMPT_TEMPLATE
+
+    def test_prompt_factual_vs_strategic_coverage(self):
+        """v2: coverage gate instruction separates factual vs strategic."""
+        from app.brief.profiler import USER_PROMPT_TEMPLATE
+        assert "FACTUAL SECTIONS" in USER_PROMPT_TEMPLATE
+        assert "STRATEGIC MODEL SECTIONS" in USER_PROMPT_TEMPLATE
+
+
+# ---------------------------------------------------------------------------
+# Decision Leverage Score
+# ---------------------------------------------------------------------------
+
+
+class TestDecisionLeverageScore:
+    """Tests for the composite Decision Leverage Score (0-100)."""
+
+    def test_score_within_range(self):
+        from app.brief.qa import compute_decision_leverage_score
+        result = compute_decision_leverage_score(
+            identity_lock_score=75,
+            factual_coverage_pct=90.0,
+            evidence_node_count=30,
+            dossier_text="| Revenue Pressure | High | Evidence |\n",
+            visibility_results_count=8,
+            title="Chief Technology Officer",
+        )
+        assert 0 <= result.score <= 100
+
+    def test_score_zero_with_no_data(self):
+        from app.brief.qa import compute_decision_leverage_score
+        result = compute_decision_leverage_score()
+        assert result.score == 0
+        assert len(result.drivers) > 0
+
+    def test_score_has_drivers(self):
+        from app.brief.qa import compute_decision_leverage_score
+        result = compute_decision_leverage_score(
+            identity_lock_score=80,
+            factual_coverage_pct=85.0,
+            evidence_node_count=20,
+            title="VP Engineering",
+        )
+        assert len(result.drivers) >= 4
+
+    def test_score_has_components(self):
+        from app.brief.qa import compute_decision_leverage_score
+        result = compute_decision_leverage_score(
+            identity_lock_score=60,
+            factual_coverage_pct=70.0,
+            evidence_node_count=10,
+            title="Director",
+        )
+        assert "identity_lock" in result.components
+        assert "evidence_density" in result.components
+        assert "pressure_clarity" in result.components
+        assert "visibility_footprint" in result.components
+        assert "org_power_signals" in result.components
+
+    def test_c_suite_gets_high_power(self):
+        from app.brief.qa import compute_decision_leverage_score
+        ceo = compute_decision_leverage_score(title="CEO")
+        manager = compute_decision_leverage_score(title="Manager")
+        assert ceo.components["org_power_signals"] > manager.components["org_power_signals"]
+
+    def test_high_identity_lock_contributes(self):
+        from app.brief.qa import compute_decision_leverage_score
+        high = compute_decision_leverage_score(identity_lock_score=100)
+        low = compute_decision_leverage_score(identity_lock_score=10)
+        assert high.score > low.score
+
+    def test_pressure_matrix_contributes(self):
+        from app.brief.qa import compute_decision_leverage_score
+        with_matrix = compute_decision_leverage_score(
+            dossier_text="| Revenue Pressure | High | growth target |\n| Delivery Pressure | Med | on time |"
+        )
+        without_matrix = compute_decision_leverage_score(dossier_text="No matrix here")
+        assert with_matrix.components["pressure_clarity"] > without_matrix.components["pressure_clarity"]

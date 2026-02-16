@@ -1496,6 +1496,207 @@ def generate_dossier_qa_report(
 
 
 # ---------------------------------------------------------------------------
+# Decision Leverage Score (0-100)
+# ---------------------------------------------------------------------------
+
+# Regex for counting pressures in the Pressure Matrix
+_PRESSURE_MATRIX_ROW = re.compile(
+    r"\|\s*(Revenue|Delivery|Credibility|Politics|Adoption|Budget)\s*"
+    r".*\|\s*(Low|Med|High|Unknown)",
+    re.IGNORECASE,
+)
+
+# Title seniority patterns for org_power_signals
+_SENIORITY_PATTERNS = {
+    "c_suite": re.compile(
+        r"\b(CEO|CFO|CTO|CIO|COO|CMO|CISO|CDO|CRO|Chief\s+\w+\s+Officer)\b",
+        re.IGNORECASE,
+    ),
+    "svp_evp": re.compile(
+        r"\b(SVP|EVP|Senior Vice President|Executive Vice President)\b",
+        re.IGNORECASE,
+    ),
+    "vp": re.compile(r"\bVice President\b|\bVP\b", re.IGNORECASE),
+    "director": re.compile(r"\bDirector\b", re.IGNORECASE),
+    "head": re.compile(r"\bHead of\b", re.IGNORECASE),
+    "manager": re.compile(r"\bManager\b|\bLead\b", re.IGNORECASE),
+}
+
+# Evidence for decision rights
+_DECISION_RIGHTS_PATTERN = re.compile(
+    r"(budget|sign off|approve|authority|own|headcount|"
+    r"reporting to|reports to|report to|decision.?maker|decision rights)",
+    re.IGNORECASE,
+)
+
+
+@dataclass
+class DecisionLeverageScore:
+    """Composite decision leverage score (0-100) with driver breakdown."""
+    score: int = 0
+    drivers: list[str] = field(default_factory=list)
+    components: dict = field(default_factory=dict)
+
+
+def compute_decision_leverage_score(
+    identity_lock_score: int = 0,
+    factual_coverage_pct: float = 0.0,
+    evidence_node_count: int = 0,
+    dossier_text: str = "",
+    visibility_results_count: int = 0,
+    title: str = "",
+) -> DecisionLeverageScore:
+    """Compute a 0-100 Decision Leverage Score for deep research output.
+
+    Composite weights:
+    - identity_lock_score:  25% — how confident we are about who this person is
+    - evidence_density:     25% — factual_coverage_pct + evidence node richness
+    - pressure_clarity:     25% — presence of structured matrix + supported pressures
+    - visibility_footprint: 10% — public artifacts count
+    - org_power_signals:    15% — title seniority + decision rights evidence
+
+    Returns DecisionLeverageScore with score 0-100 and driver explanations.
+    """
+    result = DecisionLeverageScore()
+    components: dict[str, float] = {}
+
+    # --- Component 1: Identity Lock (25%) ---
+    identity_component = min(100, identity_lock_score) * 0.25
+    components["identity_lock"] = round(identity_component, 1)
+    if identity_lock_score >= 70:
+        result.drivers.append(
+            f"Strong identity lock ({identity_lock_score}/100) — high confidence in subject identity"
+        )
+    elif identity_lock_score >= 50:
+        result.drivers.append(
+            f"Partial identity lock ({identity_lock_score}/100) — moderate confidence"
+        )
+    else:
+        result.drivers.append(
+            f"Weak identity lock ({identity_lock_score}/100) — low confidence limits strategic depth"
+        )
+
+    # --- Component 2: Evidence Density (25%) ---
+    # Blend factual coverage (0-100) with node count richness (capped at 50 nodes = full credit)
+    coverage_score = min(100, factual_coverage_pct)
+    node_richness = min(100, (evidence_node_count / 50) * 100) if evidence_node_count > 0 else 0
+    evidence_raw = (coverage_score * 0.6 + node_richness * 0.4)
+    evidence_component = evidence_raw * 0.25
+    components["evidence_density"] = round(evidence_component, 1)
+    if evidence_raw >= 70:
+        result.drivers.append(
+            f"Rich evidence base ({evidence_node_count} nodes, {factual_coverage_pct:.0f}% factual coverage)"
+        )
+    elif evidence_raw >= 40:
+        result.drivers.append(
+            f"Moderate evidence ({evidence_node_count} nodes, {factual_coverage_pct:.0f}% factual coverage)"
+        )
+    else:
+        result.drivers.append(
+            f"Sparse evidence ({evidence_node_count} nodes, {factual_coverage_pct:.0f}% factual coverage)"
+        )
+
+    # --- Component 3: Pressure Clarity (25%) ---
+    # Count pressure matrix rows that have content and supported pressures
+    pressure_rows = _PRESSURE_MATRIX_ROW.findall(dossier_text)
+    has_matrix = bool(pressure_rows)
+    pressure_count = len(pressure_rows)
+    # Score: has_matrix gives 40, each pressure row gives 10 (up to 60)
+    pressure_raw = 0
+    if has_matrix:
+        pressure_raw = 40 + min(60, pressure_count * 10)
+    pressure_component = pressure_raw * 0.25
+    components["pressure_clarity"] = round(pressure_component, 1)
+    if pressure_count >= 4:
+        result.drivers.append(
+            f"Clear pressure model ({pressure_count} pressures mapped in structured matrix)"
+        )
+    elif pressure_count >= 2:
+        result.drivers.append(
+            f"Partial pressure model ({pressure_count} pressures identified)"
+        )
+    elif has_matrix:
+        result.drivers.append("Pressure matrix present but sparsely populated")
+    else:
+        result.drivers.append("No structured pressure matrix — strategic depth limited")
+
+    # --- Component 4: Visibility Footprint (10%) ---
+    vis_raw = min(100, (visibility_results_count / 10) * 100) if visibility_results_count > 0 else 0
+    visibility_component = vis_raw * 0.10
+    components["visibility_footprint"] = round(visibility_component, 1)
+    if visibility_results_count >= 10:
+        result.drivers.append(
+            f"High public visibility ({visibility_results_count} artifacts found)"
+        )
+    elif visibility_results_count >= 3:
+        result.drivers.append(
+            f"Moderate public visibility ({visibility_results_count} artifacts)"
+        )
+    elif visibility_results_count > 0:
+        result.drivers.append(
+            f"Low public visibility ({visibility_results_count} artifacts)"
+        )
+    else:
+        result.drivers.append("No public visibility artifacts found")
+
+    # --- Component 5: Org Power Signals (15%) ---
+    power_raw = 0
+
+    # Title seniority scoring
+    if _SENIORITY_PATTERNS["c_suite"].search(title):
+        power_raw += 50
+        result.drivers.append(f"C-suite title ({title}) — high decision authority signal")
+    elif _SENIORITY_PATTERNS["svp_evp"].search(title):
+        power_raw += 40
+        result.drivers.append(f"SVP/EVP title ({title}) — strong authority signal")
+    elif _SENIORITY_PATTERNS["vp"].search(title):
+        power_raw += 30
+        result.drivers.append(f"VP-level title ({title}) — decision-maker signal")
+    elif _SENIORITY_PATTERNS["director"].search(title):
+        power_raw += 20
+        result.drivers.append(f"Director-level title ({title}) — mid-authority signal")
+    elif _SENIORITY_PATTERNS["head"].search(title):
+        power_raw += 20
+        result.drivers.append(f"Head of function ({title}) — mid-authority signal")
+    elif _SENIORITY_PATTERNS["manager"].search(title):
+        power_raw += 10
+        result.drivers.append(f"Manager-level title ({title}) — lower authority signal")
+    elif title:
+        power_raw += 5
+        result.drivers.append(f"Title present ({title}) — seniority unclear")
+    else:
+        result.drivers.append("No title available — cannot assess seniority")
+
+    # Decision rights evidence in dossier text
+    decision_matches = _DECISION_RIGHTS_PATTERN.findall(dossier_text)
+    decision_evidence_count = len(set(m.lower() for m in decision_matches))
+    if decision_evidence_count >= 3:
+        power_raw += 50
+        result.drivers.append(
+            f"Multiple decision rights signals in dossier ({decision_evidence_count} unique signals)"
+        )
+    elif decision_evidence_count >= 1:
+        power_raw += 25
+        result.drivers.append(
+            f"Some decision rights evidence ({decision_evidence_count} signals)"
+        )
+
+    power_raw = min(100, power_raw)
+    org_power_component = power_raw * 0.15
+    components["org_power_signals"] = round(org_power_component, 1)
+
+    # --- Final composite ---
+    raw_score = (
+        identity_component + evidence_component + pressure_component
+        + visibility_component + org_power_component
+    )
+    result.score = max(0, min(100, round(raw_score)))
+    result.components = components
+
+    return result
+
+
+# ---------------------------------------------------------------------------
 # Fail-Closed Enforcement (Evidence Graph integration)
 # ---------------------------------------------------------------------------
 
@@ -1508,16 +1709,23 @@ def enforce_fail_closed_gates(
     person_name: str = "",
     has_public_results: bool = True,
     web_results_count: int = 0,
+    factual_coverage_pct: float | None = None,
+    strategic_sources_present: bool | None = None,
+    strategic_sources_missing: list[str] | None = None,
 ) -> tuple[bool, str]:
     """Enforce fail-closed gates and return (should_output, message).
 
-    The evidence coverage gate is adaptive:
+    Evidence Coverage v2: The gate now applies to FACTUAL sections only
+    (1-8, 12). Strategic sections (9-11) are not penalized for lacking
+    per-sentence tags but MUST have upstream evidence citations in headers.
+
+    The factual evidence coverage gate is adaptive:
     - High-visibility contacts (10+ web results): 85% threshold
     - Medium-visibility contacts (5-9 web results): 70% threshold
     - Low-visibility contacts (<5 web results): 60% threshold
 
-    This prevents the system from permanently blocking dossiers for
-    contacts who simply don't have much public presence.
+    If factual_coverage_pct is provided, it is used for the gate instead
+    of the overall evidence_coverage_pct (backward compatible).
 
     Returns:
         (True, "") if all gates pass — output the dossier.
@@ -1554,7 +1762,12 @@ def enforce_fail_closed_gates(
         )
 
     # Gate 2: Evidence coverage — adaptive threshold based on evidence availability
-    # Contacts with sparse public presence shouldn't be permanently blocked.
+    # v2: Use factual_coverage_pct (sections 1-8, 12 only) if available
+    coverage_for_gate = (
+        factual_coverage_pct if factual_coverage_pct is not None
+        else evidence_coverage_pct
+    )
+
     if web_results_count >= 10:
         coverage_threshold = 85.0
     elif web_results_count >= 5:
@@ -1562,13 +1775,15 @@ def enforce_fail_closed_gates(
     else:
         coverage_threshold = 60.0
 
-    if evidence_coverage_pct < coverage_threshold:
+    if coverage_for_gate < coverage_threshold:
+        coverage_label = "FACTUAL EVIDENCE COVERAGE" if factual_coverage_pct is not None else "EVIDENCE COVERAGE"
         failures.append(
-            f"FAIL: EVIDENCE COVERAGE {evidence_coverage_pct:.1f}%\n"
+            f"FAIL: {coverage_label} {coverage_for_gate:.1f}%\n"
             f"Coverage must be >= {coverage_threshold:.0f}% "
             f"(adaptive: {web_results_count} web results). "
-            f"Current: {evidence_coverage_pct:.1f}%.\n"
-            "Sentences without evidence tags must be cited or removed."
+            f"Current: {coverage_for_gate:.1f}%.\n"
+            "Sentences without evidence tags in factual sections (1-8, 12) "
+            "must be cited or removed."
         )
 
     if failures:

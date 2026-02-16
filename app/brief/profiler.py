@@ -218,37 +218,73 @@ Each must cite evidence. If no evidence, state [UNKNOWN].
 
 ---
 
+### INTERNAL REASONING TABLE (DO NOT include in final output)
+
+Before writing sections 9, 10, and 11, you MUST complete this internal \
+reasoning table. This table is for YOUR analytical process only — do NOT \
+reproduce it in the dossier output. Use ONLY VERIFIED sources + clearly \
+labeled inferences. Write "NO EVIDENCE" for any row lacking support.
+
+| Hypothesis | Assessment | Evidence Source(s) |
+|---|---|---|
+| Revenue model | How does {name}'s org generate/capture revenue? | [cite] |
+| Reporting line | Who does {name} report to? What org layer? | [cite] |
+| Mandate / KPI | What is {name} hired to deliver? How measured? | [cite] |
+| Incentive alignment | What makes {name} personally successful? | [cite] |
+| Failure consequence | What happens if their initiative fails? | [cite] |
+| Budget authority | Can they sign spend, or must sell upward? | [cite] |
+| Competitive landscape | Who competes with their company/team? | [cite] |
+| Consulting economics | Utilization/margin pressure if applicable | [cite] |
+| Buyer archetype | Champion / Evaluator / Blocker / Economic Buyer? | [cite] |
+
+Use this table to derive your analysis for sections 9–11. Every claim \
+in those sections must trace back to a row in this table.
+
+---
+
 ### 9. Structural Incentive & Power Model
 
 [STRATEGIC MODEL — Derived from upstream evidence in sections 3, 4, 6, 8]
 
-Analyze the following dimensions for {name}. For each, provide the \
-assessment AND the explicit reasoning chain from evidence. Do NOT \
-produce generic statements — every point must trace to something \
-observed in this dossier.
+**You MUST produce a compact Pressure Matrix for {name}.** For each row, \
+state the level AND the explicit "why" derived from evidence. Do NOT \
+use "likely", "may", or "could" unless immediately followed by the \
+evidence derivation in parentheses.
+
+**PRESSURE MATRIX:**
+
+| Dimension | Level (Low/Med/High) | Why (cite evidence) |
+|---|---|---|
+| Revenue Pressure | | |
+| Delivery Pressure | | |
+| Credibility / Politics Pressure | | |
+| Adoption Pressure | | |
+| Budget Authority Estimate | ($ range or Unknown) | |
+| "What makes them look smart internally" | | |
+
+After the matrix, analyze these dimensions with explicit reasoning chains:
 
 - **Revenue mandate**: What revenue or growth is this person accountable for? \
-How do they likely get measured?
-- **Organizational power**: What is their span of control? \
-Do they own budget, headcount, or both? Who do they report to?
-- **Political capital**: Are they an established insider, a recent hire \
-proving themselves, or a turnaround operator? What evidence signals this?
-- **Competitive positioning**: What is their stance on build vs buy? \
-Are they evaluating alternatives or locked into an ecosystem?
-- **Growth pressure**: Is the company in growth mode, cost-cutting mode, \
-or transformation mode? How does this affect {name}'s priorities?
+How do they get measured? Derived from [cite sections].
+- **Organizational power**: Span of control — do they own budget, headcount, \
+or both? Who do they report to? Derived from [cite sections].
+- **Political capital**: Established insider, recent hire proving themselves, \
+or turnaround operator? State the evidence that signals this.
+- **Competitive positioning**: Build vs buy stance? Evaluating alternatives \
+or locked into an ecosystem? State what evidence drives this assessment.
+- **Growth pressure**: Company in growth mode, cost-cutting, or transformation? \
+How does this affect {name}'s priorities? Cite the signal.
 - **Failure consequences**: What happens if their current initiative fails? \
-Career risk? Organizational risk? Political fallout?
-- **Internal credibility**: Are they operating from a position of strength \
-or are they still building credibility? What signals indicate this?
-- **Budget authority**: Can they sign off on spend, or do they need to \
-sell upward? What evidence suggests this? If unknown, state [UNKNOWN].
-- **Build vs buy posture**: Are they inclined to build in-house, buy \
-vendor solutions, or use consulting? What drives this?
+Career risk, organizational risk, political fallout — be specific.
+- **Internal credibility**: Operating from strength or still building? \
+What signals indicate this — tenure, stated wins, title trajectory?
+- **Budget authority**: Sign off on spend or sell upward? If unknown, \
+state [UNKNOWN] — do not fabricate.
+- **Build vs buy posture**: In-house, vendor, or consulting? What drives \
+this — cost pressure, capability gaps, speed requirements?
 
-This section uses [STRATEGIC MODEL] tags. Every assessment must cite \
-which upstream evidence nodes support it. If no evidence exists for \
-a dimension, state [UNKNOWN] — do not fabricate structural analysis.
+Every assessment MUST cite which upstream evidence nodes support it. \
+If no evidence exists for a dimension, state [UNKNOWN] — do not fabricate.
 
 ---
 
@@ -256,26 +292,30 @@ a dimension, state [UNKNOWN] — do not fabricate structural analysis.
 
 [STRATEGIC MODEL — Derived from upstream evidence in sections 3, 4, 5, 8, 9]
 
-Analyze {name}'s company and their role within the competitive landscape:
+Analyze {name}'s company and their role within the competitive landscape. \
+You MUST explicitly name competitors or competitor buckets — do NOT say \
+"various competitors" or "industry peers." For each competitor named, \
+explain "why them" based on evidence (mentions in talks, job moves, \
+stated positioning, market overlap).
 
-- **Company market position**: Where does the company sit in its market? \
-(Leader / challenger / niche / emerging) Cite evidence.
-- **Likely competitors**: Who are they competing against? What evidence \
-signals this? (Mentions in talks, job moves, stated positioning)
-- **Consulting vs product mix**: Is this a services firm, product company, \
-or hybrid? How does that shape {name}'s evaluation criteria?
-- **AI / technology maturity**: Where is the company on the adoption curve? \
-What has {name} said or done that signals maturity level?
+- **Company market position**: Leader / challenger / niche / emerging? \
+Cite evidence — revenue signals, market share mentions, or positioning claims.
+- **Named competitors**: List 2-5 specific competitors or competitor categories. \
+For each: why are they a competitor? What evidence signals this? \
+(e.g., "{name} mentioned [Company X] in a conference talk about [topic]")
+- **Consulting vs product mix**: Services firm, product company, or hybrid? \
+How does that shape {name}'s evaluation criteria for vendors/partners?
+- **AI / technology maturity**: Where on the adoption curve? What has {name} \
+said or done that signals maturity level? Cite specific statements or hires.
 
-**{name}'s organizational role type** — based on evidence, classify as:
+**{name}'s organizational role type** — based on evidence, classify as ONE:
 - **Growth driver**: Tasked with expanding revenue or market share
-- **Delivery operator**: Tasked with execution, efficiency, or operational excellence
+- **Delivery operator**: Tasked with execution, efficiency, operational excellence
 - **Political shield**: Brought in for credibility, external relationships, or cover
-- **External credibility import**: Hired to signal capability to clients or investors
+- **External credibility import**: Hired to signal capability to clients/investors
 
 Provide the explicit reasoning chain for the classification. \
-If evidence is insufficient to classify, state that and explain what \
-signals would disambiguate.
+If evidence is insufficient to classify, state what signals would disambiguate.
 
 ---
 
@@ -284,31 +324,37 @@ signals would disambiguate.
 [STRATEGIC MODEL — Derived from upstream evidence in sections 4, 6, 7, 8, 9, 10]
 
 This section must be specific to {name}. Every recommendation must \
-trace to evidence from THIS dossier. Generic interview advice is forbidden.
+trace to evidence from THIS dossier. Generic advice is forbidden. \
+Do NOT use "likely", "may", or "could" without citing evidence.
 
-- **What makes them look smart internally**: Based on their mandate and \
-political position, what would they want to present to their leadership? \
-What kind of results or narrative serves their internal positioning?
+**WIN CONDITIONS (exactly 3):**
+For each: state the condition, then cite the pressure/incentive it maps to.
+1. [Win condition] — maps to [pressure from matrix] because [evidence]
+2. [Win condition] — maps to [pressure from matrix] because [evidence]
+3. [Win condition] — maps to [pressure from matrix] because [evidence]
 
-- **What they are likely measured on**: Based on role, company stage, \
-and stated priorities — what KPIs or outcomes drive their evaluation?
+**LOSS CONDITIONS / LANDMINES (exactly 3):**
+For each: state what will kill the deal, then cite what evidence shows this.
+1. [Loss condition] — evidence: [cite from sections 4, 7, or 8]
+2. [Loss condition] — evidence: [cite from sections 4, 7, or 8]
+3. [Loss condition] — evidence: [cite from sections 4, 7, or 8]
 
-- **What failure would cost them**: Given their career stage and \
-organizational role, what is at stake if their current initiative fails?
+**TAILORED QUESTIONS (exactly 5):**
+Each question must be tied to a specific pressure or incentive from the matrix. \
+No generic discovery questions allowed.
+1. [Question] — targets [specific pressure/incentive]
+2. [Question] — targets [specific pressure/incentive]
+3. [Question] — targets [specific pressure/incentive]
+4. [Question] — targets [specific pressure/incentive]
+5. [Question] — targets [specific pressure/incentive]
 
-- **What kind of narrative resonates**: Based on their rhetorical patterns \
-and stated positions — what framing, vocabulary, and proof points will \
-land? (e.g., ROI-first, adoption metrics, architecture elegance, speed)
-
-- **What kind of candidate / proposal threatens them**: What positioning \
-would trigger defensiveness? What would make them feel undermined?
-
-- **What kind of candidate / proposal strengthens them**: What positioning \
-would make them feel supported? What helps them build their case internally?
-
-- **What NOT to do**: Based on their red flags, language bias, and \
-decision style — specific framings, claims, or approaches that will \
-lose credibility. Be concrete, not generic.
+**PROOF POINTS TO DEPLOY (exactly 3):**
+If insufficient data exists to name a specific proof point, describe the \
+TYPE of proof that would resonate and why. Generic placeholders like \
+"relevant case study" are forbidden — explain what kind of case study and why.
+1. [Proof point or type] — resonates because [cite rhetorical pattern or priority]
+2. [Proof point or type] — resonates because [cite rhetorical pattern or priority]
+3. [Proof point or type] — resonates because [cite rhetorical pattern or priority]
 
 Each point must cite upstream evidence from this dossier.
 
@@ -335,26 +381,38 @@ List all sources used with URLs:
 - Every inference must cite what evidence drove it.
 
 ## CRITICAL: EVIDENCE COVERAGE GATE ({evidence_threshold}%)
-Your output will be scanned by an automated QA system. If fewer than \
-{evidence_threshold}% of substantive sentences contain an evidence tag \
-([VERIFIED–MEETING], [VERIFIED–PUBLIC], [INFERRED–H], [INFERRED–M], \
-[INFERRED–L], [UNKNOWN], [VERIFIED-PDF], or [STRATEGIC MODEL ...]), \
-the ENTIRE dossier will be REJECTED and generation halts.
+
+**FACTUAL SECTIONS (1–8, 12):** These are scanned by an automated QA \
+system. If fewer than {evidence_threshold}% of substantive sentences \
+in these sections contain an evidence tag ([VERIFIED–MEETING], \
+[VERIFIED–PUBLIC], [INFERRED–H], [INFERRED–M], [INFERRED–L], \
+[UNKNOWN], [VERIFIED-PDF]), the ENTIRE dossier will be REJECTED.
+
+**STRATEGIC MODEL SECTIONS (9–11):** These do NOT require per-sentence \
+evidence tags. HOWEVER, each section header MUST include a \
+"Derived from …" list citing at least 2 upstream evidence nodes \
+(e.g., [STRATEGIC MODEL — Derived from VERIFIED-PDF + VERIFIED-MEETING]). \
+If a strategic section header lacks upstream citations, the section \
+will be CONSTRAINED or removed.
 
 To pass this gate:
-1. EVERY factual claim MUST have an evidence tag in square brackets.
+1. EVERY factual claim in sections 1–8 and 12 MUST have an evidence tag.
 2. If a section has no evidence, write "**No evidence available.**"
 3. If you cannot cite a claim, either tag it [UNKNOWN] or DELETE IT.
 4. Prefer short, tagged sentences over long untagged explanations.
 5. Gap phrases like "No evidence available", "No data found", \
 "Not available" are recognized by the QA system as proper discipline.
-6. [STRATEGIC MODEL] sections: the section header tag counts as \
-coverage for all reasoning sentences within that section. You do NOT \
-need to tag every sentence inside a STRATEGIC MODEL block, but the \
-header must cite the source evidence nodes.
+6. Sections 9–11: the [STRATEGIC MODEL — Derived from …] header tag \
+provides coverage for the reasoning within. You do NOT need to tag \
+every sentence, but the header MUST cite source evidence nodes.
+7. In sections 9–11, avoid "likely", "may", "could" unless immediately \
+followed by evidence derivation. Prefer: "Derived from VERIFIED-PDF + \
+VERIFIED-MEETING" or "Based on [specific evidence]".
 
-SELF-CHECK before finalizing: scan every sentence. If it lacks an \
-evidence tag and doesn't acknowledge a gap, add a tag or delete it.
+SELF-CHECK before finalizing: scan every sentence in sections 1–8 and 12. \
+If it lacks an evidence tag and doesn't acknowledge a gap, add a tag or \
+delete it. For sections 9–11, verify each section header has a \
+"Derived from" citation list.
 """
 
 

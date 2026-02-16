@@ -268,6 +268,117 @@ def compute_evidence_coverage_from_text(text: str) -> float:
 
 
 # ---------------------------------------------------------------------------
+# Evidence Coverage v2: Factual vs Strategic Separation
+# ---------------------------------------------------------------------------
+
+# Section numbers that are factual (require per-sentence evidence tags)
+_FACTUAL_SECTIONS = {1, 2, 3, 4, 5, 6, 7, 8, 12}
+# Section numbers that are strategic model (header-level citation only)
+_STRATEGIC_SECTIONS = {9, 10, 11}
+
+_SECTION_HEADER_RE = re.compile(r"^###\s+(\d+)\.\s")
+
+
+def compute_factual_coverage_from_text(text: str) -> float:
+    """Compute evidence coverage for FACTUAL sections only (1-8, 12).
+
+    Strategic model sections (9-11) are excluded from this computation.
+    Returns coverage percentage 0-100.
+    """
+    tag_pattern = re.compile(
+        r"\[(?:VERIFIED[–-](?:MEETING|PUBLIC|PDF)|INFERRED[–-][HML]|UNKNOWN"
+        r"|STRATEGIC MODEL[^\]]*)\]",
+        re.IGNORECASE,
+    )
+    gap_pattern = re.compile(
+        r"no evidence available|no evidence found|not available|"
+        r"no (public |internal )?data|no (public |internal )?evidence|"
+        r"no appearances found|no results found|"
+        r"unknown at this time|insufficient (evidence|data)|"
+        r"no supporting evidence|cannot be determined",
+        re.IGNORECASE,
+    )
+
+    lines = text.strip().split("\n")
+    total = 0
+    tagged = 0
+    current_section: int | None = None
+    in_strategic_block = False
+
+    for line in lines:
+        stripped = line.strip()
+
+        # Detect section headers
+        m = _SECTION_HEADER_RE.match(stripped)
+        if m:
+            current_section = int(m.group(1))
+            in_strategic_block = False
+            continue
+
+        # Skip non-substantive lines
+        if len(stripped) <= 20:
+            continue
+        if stripped.startswith("#") or stripped.startswith("---") or stripped.startswith("|"):
+            continue
+
+        # Skip lines in strategic sections (9, 10, 11)
+        if current_section in _STRATEGIC_SECTIONS:
+            continue
+
+        # Check for strategic model block headers in factual sections
+        if re.search(r"\[STRATEGIC MODEL[^\]]*\]", stripped, re.IGNORECASE):
+            in_strategic_block = True
+
+        total += 1
+        if tag_pattern.search(stripped) or in_strategic_block or gap_pattern.search(stripped):
+            tagged += 1
+
+    if total == 0:
+        return 100.0
+    return (tagged / total) * 100.0
+
+
+def check_strategic_sources_present(text: str) -> tuple[bool, list[str]]:
+    """Check that each strategic section (9-11) has upstream evidence citations.
+
+    Returns (all_present, list_of_missing_sections).
+    A strategic section header must contain a "Derived from" pattern with
+    at least one VERIFIED-* or INFERRED-* or MEETING reference.
+    """
+    derived_pattern = re.compile(
+        r"Derived from\s+.*(?:VERIFIED|INFERRED|MEETING|PUBLIC|PDF)",
+        re.IGNORECASE,
+    )
+
+    lines = text.strip().split("\n")
+    current_section: int | None = None
+    strategic_sections_found: dict[int, bool] = {}
+
+    for line in lines:
+        stripped = line.strip()
+        m = _SECTION_HEADER_RE.match(stripped)
+        if m:
+            current_section = int(m.group(1))
+            continue
+
+        if current_section in _STRATEGIC_SECTIONS:
+            if current_section not in strategic_sections_found:
+                strategic_sections_found[current_section] = False
+            if derived_pattern.search(stripped):
+                strategic_sections_found[current_section] = True
+
+    missing = []
+    section_names = {9: "Structural Incentive & Power Model",
+                     10: "Competitive Positioning Context",
+                     11: "How to Win This Decision-Maker"}
+    for sec_num in sorted(_STRATEGIC_SECTIONS):
+        if not strategic_sections_found.get(sec_num, False):
+            missing.append(f"Section {sec_num}: {section_names.get(sec_num, '')}")
+
+    return len(missing) == 0, missing
+
+
+# ---------------------------------------------------------------------------
 # Fail-Closed Gate Engine
 # ---------------------------------------------------------------------------
 
