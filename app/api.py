@@ -559,42 +559,60 @@ async def ingest_linkedin_pdf_endpoint(
         profile_data["linkedin_pdf_hash"] = result.pdf_hash
         profile_data["linkedin_pdf_ingested_at"] = result.ingested_at
         profile_data["linkedin_pdf_page_count"] = result.text_result.page_count
-        profile_data["linkedin_pdf_text_length"] = len(result.text_result.raw_text)
 
-        # Store structured text sections for dossier
-        profile_data["linkedin_pdf_sections"] = result.text_result.sections
-        profile_data["linkedin_pdf_raw_text"] = result.text_result.raw_text[:50000]
+        # Check if text extraction produced usable (non-garbled) text
+        from app.services.linkedin_pdf import _is_garbled_text
+        raw_text = result.text_result.raw_text
+        text_is_usable = bool(raw_text) and not _is_garbled_text(raw_text)
+        profile_data["linkedin_pdf_text_usable"] = text_is_usable
 
-        # Update profile fields from PDF if not already set
-        if result.text_result.headline and not profile_data.get("headline"):
-            profile_data["headline"] = result.text_result.headline
-        if result.text_result.location and not profile_data.get("location"):
-            profile_data["location"] = result.text_result.location
+        if text_is_usable:
+            profile_data["linkedin_pdf_text_length"] = len(raw_text)
+            # Store structured text sections for dossier
+            profile_data["linkedin_pdf_sections"] = result.text_result.sections
+            profile_data["linkedin_pdf_raw_text"] = raw_text[:50000]
 
-        # Store experience/education for dossier
-        if result.text_result.experience:
-            profile_data["linkedin_pdf_experience"] = result.text_result.experience
-        if result.text_result.education:
-            profile_data["linkedin_pdf_education"] = result.text_result.education
-        if result.text_result.skills:
-            profile_data["linkedin_pdf_skills"] = result.text_result.skills
+            # Update profile fields from PDF if not already set
+            if result.text_result.headline and not profile_data.get("headline"):
+                profile_data["headline"] = result.text_result.headline
+            if result.text_result.location and not profile_data.get("location"):
+                profile_data["location"] = result.text_result.location
+
+            # Store experience/education for dossier
+            if result.text_result.experience:
+                profile_data["linkedin_pdf_experience"] = result.text_result.experience
+            if result.text_result.education:
+                profile_data["linkedin_pdf_education"] = result.text_result.education
+            if result.text_result.skills:
+                profile_data["linkedin_pdf_skills"] = result.text_result.skills
+        else:
+            # Don't store garbled text — it corrupts dossier output
+            profile_data["linkedin_pdf_text_length"] = 0
+            profile_data["linkedin_pdf_raw_text"] = ""
+            profile_data["linkedin_pdf_sections"] = {}
+            logger.warning(
+                "PDF text extraction returned garbled/empty output for profile %d "
+                "(%d raw chars); not storing text",
+                profile_id, len(raw_text),
+            )
 
         # Update photo if crop succeeded — NEVER regress
+        # PDF crops are unreliable for browser-saved PDFs, so only update
+        # if there's no existing photo or the existing photo is from a
+        # low-priority source (gravatar, company logo, initials, or unknown).
+        # NEVER overwrite enrichment provider (Apollo/PDL), cached proxy,
+        # or user-uploaded photos with a PDF crop.
         photo_updated = False
         if result.crop_result.success:
             existing_status = profile_data.get("photo_status", "")
             existing_source = profile_data.get("photo_source", "")
 
-            # Only update if:
-            # 1. No existing photo, OR
-            # 2. Existing photo is from a lower-priority source, OR
-            # 3. Existing photo is broken (FAILED_RENDER)
             should_update_photo = (
                 not profile_data.get("photo_url")
                 or existing_status in (
                     PhotoStatus.MISSING, PhotoStatus.FAILED,
                     PhotoStatus.FAILED_RENDER, PhotoStatus.BLOCKED,
-                    PhotoStatus.EXPIRED, "",
+                    PhotoStatus.EXPIRED,
                 )
                 or existing_source in (
                     PhotoSource.GRAVATAR, PhotoSource.COMPANY_LOGO,
@@ -618,19 +636,28 @@ async def ingest_linkedin_pdf_endpoint(
         return {
             "status": "ok",
             "pdf_stored": bool(result.pdf_path),
-            "text_extracted": bool(result.text_result.raw_text),
-            "text_length": len(result.text_result.raw_text),
+            "text_extracted": text_is_usable,
+            "text_garbled": not text_is_usable and bool(raw_text),
+            "text_length": len(raw_text) if text_is_usable else 0,
             "page_count": result.text_result.page_count,
-            "sections_found": list(result.text_result.sections.keys()),
+            "sections_found": (
+                list(result.text_result.sections.keys()) if text_is_usable else []
+            ),
             "headshot_cropped": result.crop_result.success,
             "crop_method": result.crop_result.method,
             "crop_error": (
                 result.crop_result.error if not result.crop_result.success else None
             ),
             "photo_updated": photo_updated,
-            "experience_entries": len(result.text_result.experience),
-            "education_entries": len(result.text_result.education),
-            "skills_count": len(result.text_result.skills),
+            "experience_entries": (
+                len(result.text_result.experience) if text_is_usable else 0
+            ),
+            "education_entries": (
+                len(result.text_result.education) if text_is_usable else 0
+            ),
+            "skills_count": (
+                len(result.text_result.skills) if text_is_usable else 0
+            ),
         }
     except HTTPException:
         raise
@@ -1125,6 +1152,24 @@ async def deep_research_endpoint(profile_id: int):
         if profile_data.get("apollo_raw"):
             apollo_data = profile_data["apollo_raw"]
 
+        # Build PDF data dict from uploaded LinkedIn PDF
+        pdf_experience = profile_data.get("linkedin_pdf_experience", [])
+        pdf_company_from_exp = ""
+        pdf_title_from_exp = ""
+        if pdf_experience:
+            # First experience entry is the most recent/current role
+            first_exp = pdf_experience[0] if pdf_experience else {}
+            pdf_company_from_exp = first_exp.get("company", "")
+            pdf_title_from_exp = first_exp.get("title", "")
+
+        linkedin_pdf_data = {
+            "company": pdf_company_from_exp,
+            "title": pdf_title_from_exp,
+            "headline": profile_data.get("headline", ""),
+            "location": profile_data.get("location", ""),
+            "text_usable": profile_data.get("linkedin_pdf_text_usable", False),
+        }
+
         entity_lock = score_disambiguation(
             name=p_name,
             company=p_company,
@@ -1135,6 +1180,7 @@ async def deep_research_endpoint(profile_id: int):
             apollo_data=apollo_data,
             has_meeting_data=bool(profile_data.get("interactions")),
             pdl_data=pdl_data,
+            pdf_data=linkedin_pdf_data,
         )
 
         entity_lock_report = {
@@ -1991,6 +2037,23 @@ async def generate_profile_research(profile_id: int):
             if profile_data.get("photo_url"):
                 apollo_data["photo_url"] = profile_data["photo_url"]
 
+        # Build PDF data dict from uploaded LinkedIn PDF
+        pdf_exp = profile_data.get("linkedin_pdf_experience", [])
+        pdf_co = ""
+        pdf_ti = ""
+        if pdf_exp:
+            first_exp = pdf_exp[0] if pdf_exp else {}
+            pdf_co = first_exp.get("company", "")
+            pdf_ti = first_exp.get("title", "")
+
+        linkedin_pdf_data_2 = {
+            "company": pdf_co,
+            "title": pdf_ti,
+            "headline": profile_data.get("headline", ""),
+            "location": profile_data.get("location", ""),
+            "text_usable": profile_data.get("linkedin_pdf_text_usable", False),
+        }
+
         entity_lock = score_disambiguation(
             name=p_name,
             company=p_company,
@@ -2000,6 +2063,7 @@ async def generate_profile_research(profile_id: int):
             search_results=search_results,
             apollo_data=apollo_data,
             has_meeting_data=bool(profile_data.get("interactions")),
+            pdf_data=linkedin_pdf_data_2,
         )
 
         entity_lock_report = {
