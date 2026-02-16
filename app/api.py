@@ -1519,12 +1519,31 @@ def profiles_pending_review():
     """Return profiles that need LinkedIn disambiguation.
 
     Includes both pending_review (have candidates) and no_match (need manual search).
+    Also includes contacts without a LinkedIn PDF uploaded, since uploading a PDF
+    dramatically improves research quality (evidence coverage, entity lock score).
     """
     all_p = get_all_profiles()
-    return [
-        p for p in all_p
-        if p.get("linkedin_status") in ("pending_review", "no_match")
-    ]
+
+    linkedin_pending = []
+    needs_pdf = []
+
+    for p in all_p:
+        status = p.get("linkedin_status", "")
+        has_pdf = bool(p.get("linkedin_pdf_path"))
+
+        # LinkedIn disambiguation contacts
+        if status in ("pending_review", "no_match"):
+            linkedin_pending.append(p)
+        # Contacts that could benefit from a PDF upload:
+        # - No PDF uploaded yet, AND
+        # - Has at least 1 meeting (real contact, not just an email)
+        elif not has_pdf and p.get("meeting_count", 0) >= 1:
+            needs_pdf.append(p)
+
+    return {
+        "linkedin_pending": linkedin_pending,
+        "needs_pdf": needs_pdf,
+    }
 
 
 @app.post("/profiles/{profile_id}/confirm-linkedin", dependencies=[Depends(verify_api_key)])
