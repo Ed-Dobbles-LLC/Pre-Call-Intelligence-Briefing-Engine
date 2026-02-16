@@ -489,52 +489,26 @@ def crop_headshot_from_pdf(
 ) -> LinkedInPDFCropResult:
     """Extract the headshot from a LinkedIn PDF.
 
-    Uses two strategies in order:
-    1. Extract embedded images — LinkedIn PDFs contain the profile photo as an
-       embedded image object. We find the best candidate (square-ish, reasonable
-       size, in the upper portion of page 1).
-    2. Render + crop — fall back to rendering page 1 and cropping the avatar
-       region at fixed coordinates.
+    DISABLED: Browser-saved LinkedIn PDFs do not reliably embed profile photos.
+    The images that ARE embedded are typically LinkedIn UI elements (icons,
+    banners, placeholder graphics) that produce garbage crops. This causes
+    good enrichment photos (from Apollo/PDL) to be overwritten with corrupted
+    images.
 
-    Falls back gracefully if PyMuPDF/Pillow are unavailable.
+    This function now always returns a failed result to prevent photo regression.
+    The enrichment pipeline (Apollo, PDL) remains the authoritative photo source.
+    Users can manually upload photos via the photo upload feature.
     """
     result = LinkedInPDFCropResult()
-
-    try:
-        import fitz
-
-        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-
-        # Strategy 1: Extract embedded images from page 1
-        embedded_result = _extract_embedded_headshot(doc, contact_id)
-        if embedded_result.success:
-            doc.close()
-            return embedded_result
-
-        # Strategy 2: Render page 1 and crop the avatar region
-        page = doc[0]
-        mat = fitz.Matrix(2, 2)
-        pix = page.get_pixmap(matrix=mat)
-        img_bytes = pix.tobytes("png")
-        doc.close()
-
-        crop_result = _crop_avatar_from_rendered(img_bytes, contact_id)
-        if crop_result.success:
-            return crop_result
-
-        result.method = "fitz_render"
-        result.error = (
-            embedded_result.error + "; render crop: " + crop_result.error
-        )
-    except ImportError:
-        logger.debug("PyMuPDF not available for page rendering")
-        result.method = "failed"
-        result.error = "PyMuPDF not installed — cannot extract images from PDF"
-    except Exception as e:
-        logger.warning("PDF image extraction failed: %s", e)
-        result.method = "failed"
-        result.error = str(e)
-
+    result.method = "disabled"
+    result.error = (
+        "PDF headshot extraction disabled — browser-saved PDFs do not embed "
+        "profile photos reliably. Use enrichment or manual upload instead."
+    )
+    logger.info(
+        "PDF headshot extraction skipped for contact %d (disabled — unreliable)",
+        contact_id,
+    )
     return result
 
 

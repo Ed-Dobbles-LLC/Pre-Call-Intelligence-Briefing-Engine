@@ -1588,6 +1588,29 @@
         </div>
       </div>
 
+      <!-- Repair corrupted data button -->
+      <div id="repairSection" style="margin-bottom:16px">
+        <button id="repairBtn" onclick="repairProfiles()" style="
+          background: var(--warning-bg, #f59e0b);
+          color: #000;
+          border: none;
+          padding: 8px 16px;
+          border-radius: 8px;
+          font-size: 13px;
+          font-weight: 600;
+          cursor: pointer;
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+        ">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+          Repair All Profiles
+        </button>
+        <span id="repairStatus" style="margin-left:12px;font-size:13px;color:var(--text-secondary)">
+          Fix corrupted photos and garbled text from PDF uploads
+        </span>
+      </div>
+
       <!-- Contacts needing LinkedIn PDF upload -->
       <div id="needsPdfSection" style="display:none">
         <div class="review-section-title">
@@ -3350,6 +3373,37 @@
       } catch (e) {
         showToast(e.message);
       }
+    }
+
+    // ── Repair All Profiles ──
+    async function repairProfiles() {
+      const btn = $('repairBtn');
+      const status = $('repairStatus');
+      if (!btn) return;
+      btn.disabled = true;
+      btn.textContent = 'Repairing...';
+      if (status) status.textContent = 'Cleaning corrupted data...';
+      try {
+        const resp = await fetch('/profiles/repair', {
+          method: 'POST',
+          headers: authHeaders(),
+        });
+        const data = await resp.json();
+        if (data.profiles_repaired > 0) {
+          if (status) status.textContent = `Repaired ${data.profiles_repaired} profile(s). Refreshing...`;
+          showToast(`Repaired ${data.profiles_repaired} profile(s)`);
+          // Refresh profiles
+          setTimeout(() => loadProfiles(), 500);
+        } else {
+          if (status) status.textContent = 'No corrupted data found.';
+          showToast('No profiles needed repair');
+        }
+      } catch (e) {
+        if (status) status.textContent = 'Repair failed: ' + e.message;
+        showToast('Repair failed: ' + e.message);
+      }
+      btn.disabled = false;
+      btn.textContent = 'Repair All Profiles';
     }
 
     // ── Needs PDF Upload Section ──

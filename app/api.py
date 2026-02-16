@@ -333,6 +333,106 @@ async def trigger_meeting_enrichment():
     return {"status": "ok", "enrichments": len(enrichments), "results": enrichments}
 
 
+@app.post("/profiles/repair", dependencies=[Depends(verify_api_key)])
+async def repair_profiles():
+    """Repair corrupted profile data from bad PDF ingestion.
+
+    Scans all profiles and:
+    1. Detects/clears garbled text (headline, raw_text, sections)
+    2. Resets corrupted PDF-crop photos to enrichment photos or initials
+    3. Clears corrupted artifact dossiers built from garbled text
+
+    Safe to run multiple times — idempotent.
+    """
+    from app.services.linkedin_pdf import _is_garbled_text
+    from app.services.photo_resolution import PhotoSource
+
+    session = get_session()
+    try:
+        entities = session.query(EntityRecord).filter(
+            EntityRecord.entity_type == "person"
+        ).all()
+
+        repaired = 0
+        details = []
+
+        for entity in entities:
+            profile_data = json.loads(entity.domains or "{}")
+            changes = []
+
+            # --- Fix garbled headline ---
+            headline = profile_data.get("headline", "")
+            if headline and _is_garbled_text(headline):
+                profile_data["headline"] = ""
+                changes.append("cleared garbled headline")
+
+            # --- Fix garbled location ---
+            location = profile_data.get("location", "")
+            if location and _is_garbled_text(location):
+                profile_data["location"] = ""
+                changes.append("cleared garbled location")
+
+            # --- Fix garbled PDF raw text ---
+            raw_text = profile_data.get("linkedin_pdf_raw_text", "")
+            if raw_text and _is_garbled_text(raw_text):
+                profile_data["linkedin_pdf_raw_text"] = ""
+                profile_data["linkedin_pdf_sections"] = {}
+                profile_data["linkedin_pdf_text_length"] = 0
+                profile_data["linkedin_pdf_text_usable"] = False
+                profile_data["linkedin_pdf_experience"] = []
+                profile_data["linkedin_pdf_education"] = []
+                profile_data["linkedin_pdf_skills"] = []
+                changes.append("cleared garbled PDF text/sections/experience")
+
+            # --- Fix corrupted PDF-crop photos ---
+            photo_source = profile_data.get("photo_source", "")
+            if photo_source == PhotoSource.LINKEDIN_PDF_CROP:
+                # Check if there's an enrichment backup photo
+                enrichment_photo = profile_data.get("enrichment_photo_url", "")
+                apollo_photo = profile_data.get("apollo_photo_url", "")
+                backup_photo = enrichment_photo or apollo_photo
+
+                if backup_photo:
+                    profile_data["photo_url"] = backup_photo
+                    profile_data["photo_source"] = PhotoSource.ENRICHMENT_PROVIDER
+                    changes.append("restored enrichment photo (was PDF crop)")
+                else:
+                    profile_data["photo_url"] = ""
+                    profile_data["photo_source"] = ""
+                    profile_data["photo_status"] = ""
+                    changes.append("cleared corrupted PDF crop photo")
+
+            # --- Fix corrupted artifact dossier ---
+            artifact_md = profile_data.get("artifact_dossier_markdown", "")
+            if artifact_md and _is_garbled_text(artifact_md[:500]):
+                profile_data["artifact_dossier_markdown"] = ""
+                profile_data["artifact_dossier_generated_at"] = ""
+                changes.append("cleared garbled artifact dossier")
+
+            if changes:
+                entity.domains = json.dumps(profile_data)
+                repaired += 1
+                details.append({
+                    "id": entity.id,
+                    "name": entity.name,
+                    "repairs": changes,
+                })
+
+        session.commit()
+        return {
+            "status": "ok",
+            "profiles_scanned": len(entities),
+            "profiles_repaired": repaired,
+            "details": details,
+        }
+    except Exception:
+        session.rollback()
+        logger.exception("Profile repair failed")
+        raise HTTPException(status_code=500, detail="Profile repair failed")
+    finally:
+        session.close()
+
+
 @app.post("/profiles/resolve-photos", dependencies=[Depends(verify_api_key)])
 async def resolve_all_photos():
     """Run PhotoResolutionService on all contacts.

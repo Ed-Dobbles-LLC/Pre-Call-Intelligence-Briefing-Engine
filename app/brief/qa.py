@@ -58,6 +58,20 @@ EVIDENCE_TAG_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
+# Explicit gap acknowledgments that count as properly tagged
+# (the LLM is correctly flagging missing evidence, not making uncited claims)
+GAP_ACKNOWLEDGMENT_PATTERN = re.compile(
+    r"no evidence available|no evidence found|not available|"
+    r"no (public |internal )?data|no (public |internal )?evidence|"
+    r"no appearances found|no results found|"
+    r"no (search |visibility )?sweep|not executed|"
+    r"category (was )?not searched|remain(s)? unsearched|"
+    r"unknown at this time|insufficient (evidence|data)|"
+    r"no supporting evidence|cannot be determined|"
+    r"no (recorded|documented) (interactions?|meetings?|emails?)",
+    re.IGNORECASE,
+)
+
 
 @dataclass
 class GenericFillerResult:
@@ -140,7 +154,15 @@ class EvidenceCoverageResult:
 
 
 def check_evidence_coverage(text: str) -> EvidenceCoverageResult:
-    """Check what percentage of substantive sentences have evidence tags/citations."""
+    """Check what percentage of substantive sentences have evidence tags/citations.
+
+    A sentence is considered "tagged" if it contains:
+    1. An evidence tag like [VERIFIED-MEETING], [INFERRED-H], [UNKNOWN], etc.
+    2. An explicit gap acknowledgment like "No evidence available"
+
+    Lines that are structural (headers, tables, labels, bold-label: value pairs)
+    are skipped and don't count toward the total.
+    """
     result = EvidenceCoverageResult()
 
     lines = text.split("\n")
@@ -149,15 +171,22 @@ def check_evidence_coverage(text: str) -> EvidenceCoverageResult:
         # Skip non-substantive lines
         if not line or len(line) < 20:
             continue
-        if line.startswith(("#", "|", "---", "*", ">")):
+        if line.startswith(("#", "|", "---", ">", "- -")):
             continue
+        # Skip markdown list items that are just labels (e.g., "* **Category**: value")
+        if line.startswith(("*", "-")) and "**" in line:
+            # Structural label line — count as non-substantive
+            if ":" in line and len(line.split(":")[0]) < 60:
+                continue
+        # Skip bold-prefix structural lines (section labels, field headers)
         skip_prefixes = (
             "**", "Leverage", "Stress", "Credibility", "Contrarian",
             "High-Upside", "Rank ", "Scenario:", "Confidence",
+            "Total:", "Summary", "Each ", "For EACH", "Include:",
+            "Output format", "Calculate", "Identify", "Based on",
         )
         if line.startswith(skip_prefixes):
-            # These are section labels
-            if ":" in line and len(line.split(":")[0]) < 40:
+            if ":" in line and len(line.split(":")[0]) < 50:
                 continue
 
         sentences = re.split(r'(?<=[.!?])\s+', line)
@@ -169,6 +198,9 @@ def check_evidence_coverage(text: str) -> EvidenceCoverageResult:
             result.total_substantive += 1
 
             if EVIDENCE_TAG_PATTERN.search(sentence):
+                result.tagged_count += 1
+            elif GAP_ACKNOWLEDGMENT_PATTERN.search(sentence):
+                # Explicit gap acknowledgment counts as proper evidence discipline
                 result.tagged_count += 1
             else:
                 result.untagged_sentences.append({

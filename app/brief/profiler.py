@@ -316,6 +316,29 @@ Self-audit before finalizing:
 - NO padding. Short and honest beats long and fabricated.
 - If more than 40% is company recap, rewrite to focus on {name}.
 - Every behavioral forecast must cite specific evidence.
+
+## CRITICAL: EVIDENCE COVERAGE GATE (85%)
+Your output will be scanned by an automated QA system. If fewer than 85% \
+of substantive sentences contain an evidence tag ([VERIFIED–MEETING], \
+[VERIFIED–PUBLIC], [INFERRED–H], [INFERRED–M], [INFERRED–L], [UNKNOWN], \
+or [VERIFIED-PDF]), the ENTIRE dossier will be REJECTED and generation halts.
+
+To pass this gate:
+1. EVERY factual claim MUST have an evidence tag in square brackets.
+2. If a section has no evidence, write "**No evidence available.**" — \
+do NOT write untagged prose explaining what evidence would look like.
+3. If you cannot cite a claim, either tag it [UNKNOWN] or DELETE IT.
+4. Prefer short, tagged sentences over long untagged explanations.
+5. When describing gaps, use explicit language: "No evidence available", \
+"No data found", "Not available" — these are recognized by the QA system.
+6. OMIT entire sections if you have no evidence rather than writing \
+untagged structural prose. A section header with "**No evidence available.**" \
+is better than five untagged sentences.
+
+SELF-CHECK before finalizing: scan every sentence in your output. \
+If it lacks an evidence tag and doesn't acknowledge a gap, either add \
+a tag or delete the sentence. An 85% coverage failure means your \
+work is wasted.
 """
 
 
