@@ -104,18 +104,85 @@ def extract_text_from_pdf(pdf_bytes: bytes) -> LinkedInPDFTextResult:
 
 
 def _extract_raw_text(pdf_bytes: bytes) -> str:
-    """Extract raw text from PDF bytes using available library."""
-    # Try PyMuPDF (fitz)
+    """Extract raw text from PDF bytes using available library.
+
+    Browser-saved LinkedIn PDFs often use CIDFonts with non-standard encodings
+    that produce garbled text from basic extraction. This function tries multiple
+    strategies in order of reliability:
+
+    1. PyMuPDF get_text() — standard text extraction
+    2. PyMuPDF get_text("blocks") — block-level extraction (may handle some fonts better)
+    3. PyMuPDF get_text("html") — HTML extraction with tag stripping
+    4. OCR via pytesseract — render pages to images and OCR (most robust for CID fonts)
+    5. pdfplumber — alternative PDF library
+    6. Regex fallback — last resort, usually garbled
+
+    After each attempt, the text is checked for quality (non-garbled content).
+    """
+    # Try PyMuPDF with multiple strategies
     try:
         import fitz  # noqa: F811
 
         doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+
+        # Strategy 1: Standard text extraction
         pages = []
         for page in doc:
             pages.append(page.get_text())
-        doc.close()
         text = "\n\n".join(pages)
+        if text.strip() and not _is_garbled_text(text):
+            doc.close()
+            return text
+        logger.info(
+            "PyMuPDF standard extraction returned garbled text (%d chars, "
+            "%.0f%% non-printable), trying alternatives",
+            len(text), _garbled_ratio(text) * 100,
+        )
+
+        # Strategy 2: Block-level extraction (sorted by position)
+        pages = []
+        for page in doc:
+            blocks = page.get_text("blocks")
+            # Sort by vertical position then horizontal
+            blocks.sort(key=lambda b: (b[1], b[0]))
+            page_text = "\n".join(
+                b[4].strip() for b in blocks
+                if b[6] == 0 and b[4].strip()  # type 0 = text blocks
+            )
+            if page_text:
+                pages.append(page_text)
+        text = "\n\n".join(pages)
+        if text.strip() and not _is_garbled_text(text):
+            doc.close()
+            return text
+
+        # Strategy 3: HTML extraction with tag stripping
+        pages = []
+        for page in doc:
+            html = page.get_text("html")
+            # Strip HTML tags to get plain text
+            clean = re.sub(r"<[^>]+>", " ", html)
+            clean = re.sub(r"&[a-zA-Z]+;", " ", clean)
+            clean = re.sub(r"\s+", " ", clean).strip()
+            if clean:
+                pages.append(clean)
+        text = "\n\n".join(pages)
+        if text.strip() and not _is_garbled_text(text):
+            doc.close()
+            return text
+
+        # Strategy 4: OCR fallback — render each page and run tesseract
+        ocr_text = _ocr_pdf_pages(doc)
+        doc.close()
+        if ocr_text and not _is_garbled_text(ocr_text):
+            logger.info("OCR extraction succeeded (%d chars)", len(ocr_text))
+            return ocr_text
+
+        # If all fitz strategies failed but produced some text, return best effort
         if text.strip():
+            logger.warning(
+                "All PyMuPDF strategies returned garbled text; using best available"
+            )
             return text
     except ImportError:
         logger.debug("PyMuPDF not available, trying fallback")
@@ -143,14 +210,85 @@ def _extract_raw_text(pdf_bytes: bytes) -> str:
     # Basic fallback: decode printable ASCII from PDF stream
     try:
         text = pdf_bytes.decode("latin-1", errors="ignore")
-        # Extract text between BT/ET (PDF text operators)
+        # Extract text between parentheses (PDF text operators)
         parts = re.findall(r"\(([^)]+)\)", text)
         if parts:
-            return " ".join(parts)
+            joined = " ".join(parts)
+            if not _is_garbled_text(joined):
+                return joined
     except Exception as e:
         logger.warning("Fallback text extraction failed: %s", e)
 
     return ""
+
+
+def _is_garbled_text(text: str) -> bool:
+    """Detect if extracted text is garbled/binary rather than readable.
+
+    Browser-saved LinkedIn PDFs with CIDFont encodings produce text where
+    many characters are non-ASCII Latin-1 codepoints that look correct
+    individually (À, Ø, ¼, etc.) but form no coherent words.
+
+    Detection strategy:
+    1. Check ratio of non-ASCII characters (> 0x7F). Real English text
+       with accents has <5% non-ASCII; garbled CIDFont output has 20%+.
+    2. Check for very short texts that lack enough content to be useful.
+    """
+    if not text or len(text.strip()) < 20:
+        return True
+    return _garbled_ratio(text) > 0.25
+
+
+def _garbled_ratio(text: str) -> float:
+    """Calculate ratio of non-ASCII/non-printable characters in text.
+
+    Normal English text: ~0-3% non-ASCII (occasional accents)
+    Garbled CIDFont text: 20-60% non-ASCII (random Latin-1 chars)
+    """
+    if not text:
+        return 1.0
+    non_ascii = 0
+    total = 0
+    for ch in text:
+        if ch in ("\n", "\r", "\t", " "):
+            continue
+        total += 1
+        code = ord(ch)
+        # Count anything outside printable ASCII (32-126) as suspicious
+        if code < 32 or code > 126:
+            non_ascii += 1
+    return non_ascii / total if total > 0 else 1.0
+
+
+def _ocr_pdf_pages(doc) -> str:
+    """OCR PDF pages using pytesseract as fallback for garbled text.
+
+    Renders each page to a high-resolution image, then runs OCR.
+    Only used when standard text extraction produces garbled output.
+    """
+    try:
+        import pytesseract  # noqa: F811
+        import fitz
+        from PIL import Image
+
+        pages = []
+        for page_num, page in enumerate(doc):
+            if page_num >= 10:  # Limit to first 10 pages
+                break
+            # Render at 2x for OCR quality
+            mat = fitz.Matrix(2, 2)
+            pix = page.get_pixmap(matrix=mat)
+            img = Image.open(io.BytesIO(pix.tobytes("png")))
+            text = pytesseract.image_to_string(img, lang="eng")
+            if text.strip():
+                pages.append(text)
+        return "\n\n".join(pages)
+    except ImportError:
+        logger.debug("pytesseract not available for OCR fallback")
+        return ""
+    except Exception as e:
+        logger.warning("OCR extraction failed: %s", e)
+        return ""
 
 
 def _count_pages(pdf_bytes: bytes) -> int:
@@ -346,66 +484,208 @@ def crop_headshot_from_pdf(
     pdf_bytes: bytes,
     contact_id: int,
 ) -> LinkedInPDFCropResult:
-    """Crop the headshot from page 1 of a LinkedIn PDF.
+    """Extract the headshot from a LinkedIn PDF.
 
-    LinkedIn profile PDFs place the avatar in a predictable position
-    on page 1 (typically top-left quadrant, circular).
+    Uses two strategies in order:
+    1. Extract embedded images — LinkedIn PDFs contain the profile photo as an
+       embedded image object. We find the best candidate (square-ish, reasonable
+       size, in the upper portion of page 1).
+    2. Render + crop — fall back to rendering page 1 and cropping the avatar
+       region at fixed coordinates.
 
-    Strategy:
-    1. Render page 1 to image using PyMuPDF
-    2. Crop the avatar region (fixed coordinates based on LinkedIn layout)
-    3. Save as JPEG
-
-    Falls back gracefully if PyMuPDF is unavailable.
+    Falls back gracefully if PyMuPDF/Pillow are unavailable.
     """
     result = LinkedInPDFCropResult()
 
-    # Try PyMuPDF rendering
     try:
         import fitz
 
         doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-        page = doc[0]
 
-        # Render at 2x resolution for quality
+        # Strategy 1: Extract embedded images from page 1
+        embedded_result = _extract_embedded_headshot(doc, contact_id)
+        if embedded_result.success:
+            doc.close()
+            return embedded_result
+
+        # Strategy 2: Render page 1 and crop the avatar region
+        page = doc[0]
         mat = fitz.Matrix(2, 2)
         pix = page.get_pixmap(matrix=mat)
         img_bytes = pix.tobytes("png")
         doc.close()
 
-        # Crop the avatar region using Pillow
-        crop_result = _crop_avatar_from_image(img_bytes, contact_id)
+        crop_result = _crop_avatar_from_rendered(img_bytes, contact_id)
         if crop_result.success:
             return crop_result
 
         result.method = "fitz_render"
-        result.error = "Avatar crop region empty or too small"
+        result.error = (
+            embedded_result.error + "; render crop: " + crop_result.error
+        )
     except ImportError:
         logger.debug("PyMuPDF not available for page rendering")
         result.method = "failed"
-        result.error = "PyMuPDF not installed — cannot render PDF page for cropping"
+        result.error = "PyMuPDF not installed — cannot extract images from PDF"
     except Exception as e:
-        logger.warning("PDF page rendering failed: %s", e)
+        logger.warning("PDF image extraction failed: %s", e)
         result.method = "failed"
         result.error = str(e)
 
     return result
 
 
-def _crop_avatar_from_image(
+def _extract_embedded_headshot(doc, contact_id: int) -> LinkedInPDFCropResult:
+    """Extract the profile photo from embedded images in the PDF.
+
+    Browser-saved LinkedIn PDFs embed the profile photo as an image object.
+    We look for images that match profile-photo characteristics:
+    - On page 1 (or first 2 pages)
+    - Roughly square aspect ratio
+    - Reasonable size (not tiny icons, not full-page backgrounds)
+    - Positioned in the upper portion of the page
+    """
+    result = LinkedInPDFCropResult(method="embedded_extract")
+
+    try:
+        from PIL import Image
+
+        candidates = []
+
+        for page_num in range(min(2, len(doc))):
+            page = doc[page_num]
+            image_list = page.get_images(full=True)
+
+            for img_index, img_info in enumerate(image_list):
+                xref = img_info[0]
+                try:
+                    base_image = doc.extract_image(xref)
+                    if not base_image or not base_image.get("image"):
+                        continue
+
+                    img_data = base_image["image"]
+                    img_w = base_image.get("width", 0)
+                    img_h = base_image.get("height", 0)
+
+                    # Skip tiny images (icons, bullets, etc.)
+                    if img_w < 50 or img_h < 50:
+                        continue
+
+                    # Skip very large images (backgrounds, banners)
+                    if img_w > 2000 or img_h > 2000:
+                        continue
+
+                    # Calculate aspect ratio — profile photos are roughly square
+                    aspect = max(img_w, img_h) / max(min(img_w, img_h), 1)
+
+                    # Score the image: prefer square, medium-sized, on page 1
+                    area = img_w * img_h
+                    score = 0.0
+                    # Prefer square (aspect 1.0 = perfect, >2 = too wide/tall)
+                    if aspect <= 1.5:
+                        score += 40
+                    elif aspect <= 2.0:
+                        score += 20
+                    # Prefer reasonable avatar size (100-800px range)
+                    if 80 <= min(img_w, img_h) <= 800:
+                        score += 30
+                    # Prefer page 1
+                    if page_num == 0:
+                        score += 20
+                    # Prefer medium area (not too small, not banner-sized)
+                    if 5000 < area < 500000:
+                        score += 10
+
+                    candidates.append({
+                        "xref": xref,
+                        "data": img_data,
+                        "width": img_w,
+                        "height": img_h,
+                        "aspect": aspect,
+                        "score": score,
+                        "page": page_num,
+                    })
+                except Exception as e:
+                    logger.debug("Failed to extract image xref %d: %s", xref, e)
+                    continue
+
+        if not candidates:
+            result.error = "No suitable embedded images found"
+            return result
+
+        # Pick the best candidate
+        candidates.sort(key=lambda c: c["score"], reverse=True)
+        best = candidates[0]
+
+        logger.info(
+            "Found %d candidate images; best: %dx%d, aspect=%.1f, score=%.0f, page=%d",
+            len(candidates), best["width"], best["height"],
+            best["aspect"], best["score"], best["page"],
+        )
+
+        # Open and resize to standard avatar size
+        img = Image.open(io.BytesIO(best["data"]))
+
+        # Convert to RGB if necessary (CMYK, P, LA, etc.)
+        if img.mode not in ("RGB", "RGBA"):
+            img = img.convert("RGB")
+
+        # Make square by center-cropping
+        w, h = img.size
+        if w != h:
+            side = min(w, h)
+            left = (w - side) // 2
+            top = (h - side) // 2
+            img = img.crop((left, top, left + side, top + side))
+
+        # Validate content
+        if not _image_has_content(img):
+            result.error = "Best candidate image appears blank"
+            return result
+
+        # Resize to standard 200x200
+        img = img.resize((200, 200), Image.LANCZOS)
+
+        # Save
+        IMAGE_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        output_path = IMAGE_CACHE_DIR / f"linkedin_crop_{contact_id}.jpg"
+        avatar_io = io.BytesIO()
+        img.save(avatar_io, format="JPEG", quality=90)
+        avatar_bytes = avatar_io.getvalue()
+        output_path.write_bytes(avatar_bytes)
+
+        result.success = True
+        result.image_path = str(output_path)
+        result.image_bytes = avatar_bytes
+        result.width = 200
+        result.height = 200
+        return result
+
+    except ImportError:
+        result.error = "Pillow not installed — cannot process extracted images"
+        result.method = "failed"
+    except Exception as e:
+        result.error = f"Embedded image extraction failed: {e}"
+        logger.warning("Embedded image extraction failed: %s", e)
+
+    return result
+
+
+def _crop_avatar_from_rendered(
     page_image_bytes: bytes,
     contact_id: int,
 ) -> LinkedInPDFCropResult:
     """Crop the avatar from a rendered LinkedIn PDF page image.
 
+    Fallback strategy: renders page 1 at 2x and crops the region where
+    LinkedIn typically places the profile photo (upper-left area).
+
     LinkedIn PDF layout (at 2x render):
     - Page width: ~1190px (595pt * 2)
     - Page height: ~1684px (842pt * 2)
     - Avatar: circular, ~200x200px, positioned at approximately (60, 60)
-
-    We crop a generous region and let the client display it circular.
     """
-    result = LinkedInPDFCropResult()
+    result = LinkedInPDFCropResult(method="pillow_crop")
 
     try:
         from PIL import Image
@@ -415,7 +695,6 @@ def _crop_avatar_from_image(
 
         # LinkedIn PDF avatar region (at 2x render resolution)
         # Typically top-left, roughly 5-20% from left, 3-15% from top
-        # Avatar is approximately 130-200px at 2x
         crop_left = int(width * 0.04)
         crop_top = int(height * 0.03)
         crop_right = int(width * 0.20)
@@ -434,17 +713,12 @@ def _crop_avatar_from_image(
             min(height, center_y + half),
         ))
 
-        # Validate: avatar should have some variance (not blank)
         if not _image_has_content(avatar):
-            result.success = False
             result.error = "Cropped region appears blank"
-            result.method = "pillow_crop"
             return result
 
-        # Resize to standard avatar size
         avatar = avatar.resize((200, 200), Image.LANCZOS)
 
-        # Save
         IMAGE_CACHE_DIR.mkdir(parents=True, exist_ok=True)
         output_path = IMAGE_CACHE_DIR / f"linkedin_crop_{contact_id}.jpg"
         avatar_io = io.BytesIO()
@@ -457,7 +731,6 @@ def _crop_avatar_from_image(
         result.image_bytes = avatar_bytes
         result.width = 200
         result.height = 200
-        result.method = "pillow_crop"
         return result
 
     except ImportError:

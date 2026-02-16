@@ -17,6 +17,8 @@ from app.services.linkedin_pdf import (
     LinkedInPDFIngestResult,
     LinkedInPDFTextResult,
     _extract_date_from_text,
+    _garbled_ratio,
+    _is_garbled_text,
     _parse_education_section,
     _parse_experience_section,
     _parse_linkedin_sections,
@@ -68,6 +70,44 @@ class TestExtractDate:
 
     def test_no_date(self):
         assert _extract_date_from_text("No dates here") == "UNKNOWN"
+
+
+class TestGarbledTextDetection:
+    """Test detection of garbled/binary text from CIDFont PDFs."""
+
+    def test_clean_text_not_garbled(self):
+        text = "Jane Doe\nVP of Engineering at BigCorp\nSan Francisco Bay Area"
+        assert not _is_garbled_text(text)
+        assert _garbled_ratio(text) < 0.1
+
+    def test_binary_garbled_text(self):
+        # Simulates CIDFont garbled output (high Unicode codepoints)
+        garbled = "8=%1\xd8{i\xbc\xd5W-\xe0o!\xe0\xa8o\\\xbcV\xe3\xe7k\xbf\xca\xc7\xc0"
+        assert _is_garbled_text(garbled)
+        assert _garbled_ratio(garbled) > 0.3
+
+    def test_mixed_text_with_some_garble(self):
+        # Mostly clean with a few garbled chars — should pass
+        text = "Jane Doe works at BigCorp and lives in SF. " + "\xd8\xbc" * 2
+        ratio = _garbled_ratio(text)
+        # This has very few garbled chars relative to total
+        assert ratio < 0.3
+
+    def test_empty_text_is_garbled(self):
+        assert _is_garbled_text("")
+        assert _is_garbled_text("   ")
+
+    def test_accented_text_not_garbled(self):
+        text = "José García works at Café Résumé in São Paulo"
+        assert not _is_garbled_text(text)
+
+    def test_heavily_garbled_output(self):
+        # Simulates real CIDFont output from a LinkedIn PDF
+        garbled = (
+            "\xc0\xa3\xd6Z\xc0kL\xe90+t\xffj\xbd"
+            "+\xb7\xfa|iA/\xc5o3\xac\xa8`?(\xc3O\xe1"
+        )
+        assert _is_garbled_text(garbled)
 
 
 class TestParseExperienceSection:
