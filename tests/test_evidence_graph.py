@@ -24,6 +24,7 @@ os.environ["BRIEFING_API_KEY"] = ""
 from app.brief.evidence_graph import (
     EVIDENCE_COVERAGE_THRESHOLD,
     ENTITY_LOCK_THRESHOLD,
+    NARRATIVE_INFLATION_PHRASES,
     VISIBILITY_CATEGORY_GROUPS,
     VISIBILITY_QUERY_TEMPLATES,
     DossierMode,
@@ -43,8 +44,14 @@ from app.brief.evidence_graph import (
     extract_highest_signal_artifacts,
     filter_prose_by_mode,
     run_fail_closed_gates,
+    validate_narrative_inflation,
+    validate_pressure_evidence,
+    validate_visibility_artifact_table,
 )
-from app.brief.qa import enforce_fail_closed_gates
+from app.brief.qa import (
+    audit_inferred_h,
+    enforce_fail_closed_gates,
+)
 from app.models import Claim, EvidenceNode, RetrievalLedgerRow
 
 
@@ -937,9 +944,9 @@ class TestEnforceFailClosedGates:
         )
         assert should_output
 
-    def test_passes_at_lower_threshold_sparse_evidence(self):
-        # Sparse evidence (<5 web results) requires only 60% coverage
-        should_output, _ = enforce_fail_closed_gates(
+    def test_flat_85_threshold_rejects_62_pct(self):
+        # v2: flat 85% threshold — 62% always fails regardless of web results
+        should_output, message = enforce_fail_closed_gates(
             dossier_text="Test",
             entity_lock_score=70,
             visibility_ledger_count=12,
@@ -947,11 +954,12 @@ class TestEnforceFailClosedGates:
             person_name="Test",
             web_results_count=3,
         )
-        assert should_output
+        assert not should_output
+        assert "EVIDENCE COVERAGE" in message
 
-    def test_adaptive_threshold_medium_visibility(self):
-        # Medium visibility (5-9 web results) requires 70% coverage
-        should_output, _ = enforce_fail_closed_gates(
+    def test_flat_85_threshold_rejects_72_pct(self):
+        # v2: flat 85% threshold — 72% fails even with moderate web results
+        should_output, message = enforce_fail_closed_gates(
             dossier_text="Test",
             entity_lock_score=70,
             visibility_ledger_count=12,
@@ -959,20 +967,33 @@ class TestEnforceFailClosedGates:
             person_name="Test",
             web_results_count=7,
         )
-        assert should_output
+        assert not should_output
+        assert "EVIDENCE COVERAGE" in message
 
-    def test_fails_just_below_adaptive_coverage(self):
-        # Sparse evidence (<5) uses 60% threshold — 59.9% still fails
+    def test_flat_85_threshold_rejects_84_pct(self):
+        # v2: flat 85% — 84.9% fails (no partial pass)
         should_output, message = enforce_fail_closed_gates(
             dossier_text="Test",
             entity_lock_score=85,
             visibility_ledger_count=16,
-            evidence_coverage_pct=59.9,
+            evidence_coverage_pct=84.9,
             person_name="Test",
             web_results_count=2,
         )
         assert not should_output
         assert "EVIDENCE COVERAGE" in message
+
+    def test_flat_85_threshold_passes_at_85(self):
+        # v2: exactly 85% passes
+        should_output, _ = enforce_fail_closed_gates(
+            dossier_text="Test",
+            entity_lock_score=70,
+            visibility_ledger_count=12,
+            evidence_coverage_pct=85.0,
+            person_name="Test",
+            web_results_count=3,
+        )
+        assert should_output
 
 
 # ---------------------------------------------------------------------------
@@ -2310,3 +2331,352 @@ class TestFailClosedResultV4:
         assert "VISIBILITY_SWEEP" in result.failing_gate_names
         violations = result.failures_by_section["visibility"]
         assert violations[0]["rule_id"] == "INSUFFICIENT_VISIBILITY_QUERIES"
+
+
+# ---------------------------------------------------------------------------
+# v2: Coverage below 85% triggers failure (flat threshold)
+# ---------------------------------------------------------------------------
+
+
+class TestFlatCoverageThreshold:
+    """Coverage must be >= 85% regardless of web result count."""
+
+    def test_67_pct_fails(self):
+        """67% coverage should fail — no partial pass allowed."""
+        should_output, message = enforce_fail_closed_gates(
+            dossier_text="Test",
+            entity_lock_score=80,
+            visibility_ledger_count=15,
+            evidence_coverage_pct=67.0,
+            person_name="Test Subject",
+            web_results_count=20,
+        )
+        assert not should_output
+        assert "EVIDENCE COVERAGE" in message
+        assert "85" in message
+
+    def test_84_pct_fails(self):
+        """84.9% should fail — no partial pass at 67%."""
+        should_output, message = enforce_fail_closed_gates(
+            dossier_text="Test",
+            entity_lock_score=80,
+            visibility_ledger_count=15,
+            evidence_coverage_pct=84.9,
+            person_name="Test",
+        )
+        assert not should_output
+
+    def test_85_pct_passes(self):
+        """Exactly 85% passes."""
+        should_output, _ = enforce_fail_closed_gates(
+            dossier_text="Test",
+            entity_lock_score=80,
+            visibility_ledger_count=15,
+            evidence_coverage_pct=85.0,
+            person_name="Test",
+        )
+        assert should_output
+
+    def test_90_pct_passes(self):
+        """90% passes."""
+        should_output, _ = enforce_fail_closed_gates(
+            dossier_text="Test",
+            entity_lock_score=80,
+            visibility_ledger_count=15,
+            evidence_coverage_pct=90.0,
+            person_name="Test",
+        )
+        assert should_output
+
+    def test_qa_report_includes_counts(self):
+        """QA report includes coverage %, uncited count, total count."""
+        from app.brief.qa import check_evidence_coverage
+        text = (
+            "Ben Titmus is CTO at Acme Corp and leads their platform division [VERIFIED-PUBLIC]\n"
+            "He has extensive engineering background and manages fifty engineers [VERIFIED-MEETING]\n"
+            "He is a great leader and visionary thinker in the enterprise space\n"
+            "Revenue grew significantly to over thirty percent last year across all divisions\n"
+        )
+        result = check_evidence_coverage(text)
+        assert result.total_substantive > 0
+        assert result.tagged_count > 0
+        assert len(result.untagged_sentences) > 0
+
+
+# ---------------------------------------------------------------------------
+# v2: INFERRED-H without 2 anchors fails
+# ---------------------------------------------------------------------------
+
+
+class TestInferredHAnchoring:
+    """INFERRED-H must cite >= 2 upstream anchors."""
+
+    def test_two_anchors_passes(self):
+        text = (
+            "Ben likely prioritizes revenue growth based on meeting "
+            "transcript and LinkedIn PDF evidence. [INFERRED-H]"
+        )
+        result = audit_inferred_h(text)
+        assert result.total_inferred_h == 1
+        assert result.with_upstream == 1
+        assert result.passes
+
+    def test_zero_anchors_fails(self):
+        text = "Ben is a strategic thinker. [INFERRED-H]"
+        result = audit_inferred_h(text)
+        assert result.total_inferred_h == 1
+        assert len(result.without_upstream) == 1
+        assert not result.passes
+
+    def test_one_anchor_insufficient(self):
+        # Only one anchor pattern ("meeting") — need 2+
+        text = "Ben owns the engineering roadmap per the meeting notes. [INFERRED-H]"
+        result = audit_inferred_h(text)
+        assert result.total_inferred_h == 1
+        assert len(result.insufficient_anchors) == 1
+        assert result.insufficient_anchors[0]["anchor_count"] == 1
+        assert not result.passes
+
+    def test_multiple_claims_mixed(self):
+        text = (
+            "Ben owns budget per the meeting and LinkedIn evidence. [INFERRED-H]\n"
+            "He is innovative. [INFERRED-H]\n"
+            "He has delivery pressure per the transcript only. [INFERRED-H]\n"
+        )
+        result = audit_inferred_h(text)
+        assert result.total_inferred_h == 3
+        assert result.with_upstream == 1  # first has meeting + LinkedIn
+        assert len(result.without_upstream) == 1  # second has 0 anchors
+        assert len(result.insufficient_anchors) == 1  # third has 1 anchor
+        assert not result.passes
+
+    def test_no_inferred_h_passes_trivially(self):
+        text = "Ben is CTO at Acme. [VERIFIED-PUBLIC]"
+        result = audit_inferred_h(text)
+        assert result.total_inferred_h == 0
+        assert result.passes
+
+
+# ---------------------------------------------------------------------------
+# v2: <5 artifacts collapses visibility to 0
+# ---------------------------------------------------------------------------
+
+
+class TestVisibilityInflation:
+    """Fewer than 5 artifacts collapses effective count to 0."""
+
+    def test_zero_artifacts_with_declaration(self):
+        text = (
+            "### 5. Public Visibility\n\n"
+            "**total_visibility_artifacts=0**\n"
+            "No public speaking found.\n"
+        )
+        count, violations = validate_visibility_artifact_table(text)
+        assert count == 0
+        assert len(violations) == 0  # Properly declared
+
+    def test_three_artifacts_collapses_to_zero(self):
+        text = (
+            "### 5. Public Visibility\n\n"
+            "| # | Type | Title | URL | Date | Signal |\n"
+            "|---|------|-------|-----|------|--------|\n"
+            "| 1 | Podcast | AI Talk | https://example.com/1 | 2025 | Signal |\n"
+            "| 2 | Keynote | Tech Summit | https://example.com/2 | 2025 | Signal |\n"
+            "| 3 | Panel | Governance | https://example.com/3 | 2025 | Signal |\n"
+        )
+        count, violations = validate_visibility_artifact_table(text)
+        assert count == 0  # Collapsed to 0
+        assert len(violations) == 1
+        assert violations[0]["rule_id"] == "VISIBILITY_INFLATION_PREVENTED"
+
+    def test_four_artifacts_collapses_to_zero(self):
+        text = (
+            "### 5. Public Visibility\n\n"
+            "| # | Type | Title | URL | Date | Signal |\n"
+            "|---|------|-------|-----|------|--------|\n"
+            "| 1 | Podcast | A | https://example.com/1 | 2025 | S |\n"
+            "| 2 | Keynote | B | https://example.com/2 | 2025 | S |\n"
+            "| 3 | Panel | C | https://example.com/3 | 2025 | S |\n"
+            "| 4 | Webinar | D | https://example.com/4 | 2025 | S |\n"
+        )
+        count, violations = validate_visibility_artifact_table(text)
+        assert count == 0  # Still < 5
+        assert violations[0]["rule_id"] == "VISIBILITY_INFLATION_PREVENTED"
+
+    def test_five_artifacts_passes(self):
+        text = (
+            "### 5. Public Visibility\n\n"
+            "| # | Type | Title | URL | Date | Signal |\n"
+            "|---|------|-------|-----|------|--------|\n"
+            "| 1 | Podcast | A | https://example.com/1 | 2025 | S |\n"
+            "| 2 | Keynote | B | https://example.com/2 | 2025 | S |\n"
+            "| 3 | Panel | C | https://example.com/3 | 2025 | S |\n"
+            "| 4 | Webinar | D | https://example.com/4 | 2025 | S |\n"
+            "| 5 | TEDx | E | https://example.com/5 | 2025 | S |\n"
+        )
+        count, violations = validate_visibility_artifact_table(text)
+        assert count == 5
+        assert len(violations) == 0
+
+    def test_missing_section_5(self):
+        text = "### 4. Public Statements\n\nContent here.\n"
+        count, violations = validate_visibility_artifact_table(text)
+        assert count == 0
+        assert violations[0]["rule_id"] == "VISIBILITY_SECTION_MISSING"
+
+
+# ---------------------------------------------------------------------------
+# v2: Inflation phrases without anchors fail
+# ---------------------------------------------------------------------------
+
+
+class TestNarrativeInflation:
+    """Banned inflation phrases require >= 2 verified anchors."""
+
+    def test_inflation_phrase_without_anchors_fails(self):
+        text = "### 1. Executive Summary\n\nBen is an emerging leader in AI.\n"
+        violations = validate_narrative_inflation(text)
+        assert len(violations) == 1
+        assert violations[0]["rule_id"] == "NARRATIVE_INFLATION"
+        assert "emerging leader" in violations[0]["phrase"]
+
+    def test_inflation_phrase_with_one_anchor_fails(self):
+        text = (
+            "### 1. Executive Summary\n\n"
+            "Ben is positioned as a thought leader. [VERIFIED-PUBLIC]\n"
+        )
+        violations = validate_narrative_inflation(text)
+        assert len(violations) == 1  # Only 1 anchor, need 2
+
+    def test_inflation_phrase_with_two_anchors_passes(self):
+        text = (
+            "### 1. Executive Summary\n\n"
+            "Ben is positioned as a leader per [VERIFIED-PUBLIC] "
+            "and [VERIFIED-MEETING] evidence.\n"
+        )
+        violations = validate_narrative_inflation(text)
+        assert len(violations) == 0
+
+    def test_all_inflation_phrases_detected(self):
+        lines = ["### 1. Executive Summary\n"]
+        for phrase in NARRATIVE_INFLATION_PHRASES:
+            lines.append(f"This person is {phrase} in their field.\n")
+        text = "\n".join(lines)
+        violations = validate_narrative_inflation(text)
+        assert len(violations) == len(NARRATIVE_INFLATION_PHRASES)
+
+    def test_no_inflation_phrases_passes(self):
+        text = (
+            "### 1. Executive Summary\n\n"
+            "Ben is CTO at Acme Corp. [VERIFIED-PUBLIC]\n"
+            "He manages a team of 50 engineers. [VERIFIED-MEETING]\n"
+        )
+        violations = validate_narrative_inflation(text)
+        assert len(violations) == 0
+
+
+# ---------------------------------------------------------------------------
+# v2: Pressure dimension without evidence becomes UNKNOWN
+# ---------------------------------------------------------------------------
+
+
+class TestPressureEvidence:
+    """Pressure must require explicit evidence, not just topic emphasis."""
+
+    def test_signal_only_pressure_fails(self):
+        text = (
+            "### 8. Structural Pressure Model\n\n"
+            "| Dimension | Level | Why |\n"
+            "|---|---|---|\n"
+            "| Revenue Pressure | High | talks about revenue growth frequently |\n"
+        )
+        violations = validate_pressure_evidence(text)
+        assert len(violations) >= 1
+        assert violations[0]["rule_id"] == "PRESSURE_FROM_SIGNAL_ONLY"
+
+    def test_explicit_evidence_passes(self):
+        text = (
+            "### 8. Structural Pressure Model\n\n"
+            "| Dimension | Level | Why |\n"
+            "|---|---|---|\n"
+            "| Revenue Pressure | High | revenue target of $50M, P&L ownership |\n"
+        )
+        violations = validate_pressure_evidence(text)
+        # Has explicit evidence (revenue target, P&L) — passes
+        assert len(violations) == 0
+
+    def test_only_checks_section_8(self):
+        text = (
+            "### 7. Rhetorical Patterns\n\n"
+            "| Dimension | Level | Why |\n"
+            "|---|---|---|\n"
+            "| Revenue Pressure | High | talks about revenue |\n"
+            "\n### 9. Structural Incentive\n\n"
+            "Content about pressures.\n"
+        )
+        violations = validate_pressure_evidence(text)
+        assert len(violations) == 0  # Only section 8 is checked
+
+    def test_pressure_claim_with_signal_only_warns(self):
+        text = (
+            "### 8. Structural Pressure Model\n\n"
+            "Ben has delivery pressure because he frequently discusses "
+            "deadlines and mentions project timelines.\n"
+        )
+        violations = validate_pressure_evidence(text)
+        # "delivery pressure" + "mentions" (signal) without evidence anchor
+        assert len(violations) >= 1
+
+
+# ---------------------------------------------------------------------------
+# v2: QA report includes all new fields
+# ---------------------------------------------------------------------------
+
+
+class TestQAReportV2Fields:
+    """QA report must include v2 fields."""
+
+    def test_qa_report_has_final_gate_status(self):
+        from app.brief.qa import generate_qa_report
+        report = generate_qa_report(
+            dossier_text="Ben is CTO at Acme. [VERIFIED-PUBLIC]\n" * 20,
+            person_name="Ben Titmus",
+        )
+        assert report.final_gate_status in ("PASS", "FAIL-CLOSED")
+
+    def test_qa_report_passes_all_includes_inferred_h(self):
+        from app.brief.qa import QAReport, InferredHAudit
+        report = QAReport()
+        report.inferred_h_audit = InferredHAudit(
+            total_inferred_h=2, with_upstream=1,
+            without_upstream=[{"sentence": "test", "line": 1, "anchor_count": 0}],
+        )
+        # INFERRED-H audit fails → passes_all should be False
+        assert not report.passes_all
+        assert report.final_gate_status == "FAIL-CLOSED"
+
+    def test_qa_report_passes_all_includes_inflation(self):
+        from app.brief.qa import QAReport
+        report = QAReport()
+        report.narrative_inflation_violations = [
+            {"rule_id": "NARRATIVE_INFLATION", "phrase": "emerging leader"}
+        ]
+        assert not report.passes_all
+        assert report.final_gate_status == "FAIL-CLOSED"
+
+    def test_qa_report_markdown_includes_v2_sections(self):
+        from app.brief.qa import generate_qa_report, render_qa_report_markdown
+        report = generate_qa_report(
+            dossier_text="Ben is CTO at Acme. [VERIFIED-PUBLIC]\n" * 20,
+            person_name="Ben",
+        )
+        report.visibility_artifact_count = 7
+        report.narrative_inflation_violations = [
+            {"rule_id": "NARRATIVE_INFLATION", "line": "5", "phrase": "emerging leader",
+             "message": "test violation"},
+        ]
+        md = render_qa_report_markdown(report)
+        assert "Visibility Artifacts" in md
+        assert "Narrative Inflation" in md
+        assert "Final Gate Status" in md
+        assert "Unsupported Sentence Count" in md

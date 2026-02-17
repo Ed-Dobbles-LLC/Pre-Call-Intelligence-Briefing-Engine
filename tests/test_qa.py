@@ -801,17 +801,18 @@ class TestSnapshotValidator:
 
 
 class TestInferredHAudit:
-    def test_all_inferred_h_have_upstream(self):
+    def test_all_inferred_h_have_two_plus_anchors(self):
+        """v2: INFERRED-H requires >= 2 upstream anchors."""
         text = (
-            "Revenue likely exceeds $10M based on headcount signals [INFERRED-H]\n"
-            "He is a builder because meeting transcripts show iterative approach [INFERRED-H]\n"
+            "Revenue likely exceeds $10M based on meeting and LinkedIn evidence [INFERRED-H]\n"
+            "He is a builder because transcript and PDF show iterative approach [INFERRED-H]\n"
         )
         result = audit_inferred_h(text)
         assert result.passes
         assert result.total_inferred_h == 2
         assert result.with_upstream == 2
 
-    def test_inferred_h_without_upstream_fails(self):
+    def test_inferred_h_without_anchors_fails(self):
         text = (
             "Revenue likely exceeds $10M [INFERRED-H]\n"
             "He is probably a builder type [INFERRED-H]\n"
@@ -821,16 +822,25 @@ class TestInferredHAudit:
         assert result.total_inferred_h == 2
         assert len(result.without_upstream) == 2
 
+    def test_inferred_h_one_anchor_insufficient(self):
+        """v2: 1 anchor is no longer sufficient — need 2+."""
+        text = "Revenue likely exceeds $10M per the meeting record [INFERRED-H]\n"
+        result = audit_inferred_h(text)
+        assert not result.passes
+        assert result.total_inferred_h == 1
+        assert len(result.insufficient_anchors) == 1
+
     def test_mixed_inferred_h(self):
         text = (
-            "Revenue likely exceeds $10M based on headcount [INFERRED-H]\n"
+            "Revenue exceeds $10M per the meeting and LinkedIn data [INFERRED-H]\n"
             "He is probably a builder type [INFERRED-H]\n"
-            "Decision rights include budget from meeting evidence [INFERRED-H]\n"
+            "Budget authority via the transcript [INFERRED-H]\n"
         )
         result = audit_inferred_h(text)
         assert not result.passes
-        assert result.with_upstream == 2
-        assert len(result.without_upstream) == 1
+        assert result.with_upstream == 1  # first has meeting + LinkedIn
+        assert len(result.without_upstream) == 1  # second has 0 anchors
+        assert len(result.insufficient_anchors) == 1  # third has 1 (transcript)
 
     def test_no_inferred_h_passes(self):
         text = (
@@ -842,10 +852,10 @@ class TestInferredHAudit:
         assert result.total_inferred_h == 0
 
     def test_inferred_h_with_dash_variant(self):
-        text = "Revenue data suggests growth based on filings [INFERRED–H]\n"
+        text = "Revenue data from meeting and LinkedIn confirms growth [INFERRED–H]\n"
         result = audit_inferred_h(text)
         assert result.total_inferred_h == 1
-        assert result.passes
+        assert result.passes  # 2 anchors: meeting + LinkedIn
 
     def test_inferred_high_variant(self):
         text = "He is a builder [INFERRED-HIGH]\n"
