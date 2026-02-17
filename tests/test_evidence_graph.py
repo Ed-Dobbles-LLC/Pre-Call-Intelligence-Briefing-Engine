@@ -43,6 +43,7 @@ from app.brief.evidence_graph import (
     determine_dossier_mode,
     extract_highest_signal_artifacts,
     filter_prose_by_mode,
+    prune_uncited_factual_lines,
     run_fail_closed_gates,
     validate_narrative_inflation,
     validate_pressure_evidence,
@@ -2680,3 +2681,112 @@ class TestQAReportV2Fields:
         assert "Narrative Inflation" in md
         assert "Final Gate Status" in md
         assert "Unsupported Sentence Count" in md
+
+
+# ---------------------------------------------------------------------------
+# v2: Auto-prune uncited factual lines
+# ---------------------------------------------------------------------------
+
+
+class TestPruneUncitedFactualLines:
+    """Auto-prune removes uncited substantive lines in factual sections."""
+
+    def test_keeps_tagged_lines(self):
+        text = (
+            "### 1. Executive Summary\n\n"
+            "Ben is CTO at Acme Corp and leads platform. [VERIFIED-PUBLIC]\n"
+            "He manages the engineering team of fifty. [VERIFIED-MEETING]\n"
+        )
+        pruned, removed = prune_uncited_factual_lines(text)
+        assert removed == 0
+        assert "[VERIFIED-PUBLIC]" in pruned
+        assert "[VERIFIED-MEETING]" in pruned
+
+    def test_removes_uncited_factual_lines(self):
+        text = (
+            "### 1. Executive Summary\n\n"
+            "Ben is CTO at Acme Corp and leads platform. [VERIFIED-PUBLIC]\n"
+            "He is a strategic leader with deep expertise in modern platform engineering.\n"
+            "Revenue grew significantly under his leadership last year in his division.\n"
+        )
+        pruned, removed = prune_uncited_factual_lines(text)
+        assert removed == 2
+        assert "[VERIFIED-PUBLIC]" in pruned
+        assert "strategic leader" not in pruned
+        assert "Revenue grew" not in pruned
+
+    def test_preserves_strategic_sections(self):
+        text = (
+            "### 9. Structural Incentive & Power Model\n\n"
+            "[STRATEGIC MODEL — Derived from VERIFIED-PDF + VERIFIED-MEETING]\n"
+            "Ben operates from a position of organizational strength.\n"
+            "His mandate is revenue growth as evidenced by his track record.\n"
+        )
+        pruned, removed = prune_uncited_factual_lines(text)
+        assert removed == 0  # Strategic sections untouched
+        assert "organizational strength" in pruned
+        assert "mandate is revenue" in pruned
+
+    def test_preserves_headers_and_tables(self):
+        text = (
+            "### 3. Career Timeline\n\n"
+            "| Company | Title | Dates | Tag |\n"
+            "|---------|-------|-------|-----|\n"
+            "| Acme | CTO | 2020-present | [VERIFIED-PDF] |\n"
+            "### 4. Public Statements\n"
+        )
+        pruned, removed = prune_uncited_factual_lines(text)
+        assert removed == 0
+        assert "### 3." in pruned
+        assert "### 4." in pruned
+        assert "| Acme |" in pruned
+
+    def test_preserves_gap_phrases(self):
+        text = (
+            "### 5. Public Visibility\n\n"
+            "No evidence available for public speaking appearances in any search sweep.\n"
+            "No verified external speaking footprint located for this individual.\n"
+        )
+        pruned, removed = prune_uncited_factual_lines(text)
+        assert removed == 0
+        assert "No evidence available" in pruned
+
+    def test_improves_coverage_after_prune(self):
+        """After pruning, factual coverage should increase."""
+        from app.brief.evidence_graph import compute_factual_coverage_from_text
+        text = (
+            "### 1. Executive Summary\n\n"
+            "Ben is CTO at Acme Corp platform division. [VERIFIED-PUBLIC]\n"
+            "He manages the global engineering team of fifty. [VERIFIED-MEETING]\n"
+            "He is a strategic thinker with broad expertise in enterprise tech.\n"
+            "His leadership style focuses on outcomes and accountability.\n"
+            "\n### 9. Structural Incentive\n\n"
+            "[STRATEGIC MODEL — Derived from VERIFIED-PDF + VERIFIED-MEETING]\n"
+            "Analysis of incentive structure and power dynamics.\n"
+        )
+        coverage_before = compute_factual_coverage_from_text(text)
+        pruned, removed = prune_uncited_factual_lines(text)
+        coverage_after = compute_factual_coverage_from_text(pruned)
+        assert removed == 2
+        assert coverage_after > coverage_before
+
+    def test_preserves_blockquotes(self):
+        text = (
+            "### 4. Public Statements\n\n"
+            "> \"We focus on outcomes not process\" — Ben, 2025 interview\n"
+            "This is an uncited commentary line about communication style.\n"
+        )
+        pruned, removed = prune_uncited_factual_lines(text)
+        assert removed == 1
+        assert "We focus on outcomes" in pruned
+        assert "uncited commentary" not in pruned
+
+    def test_preserves_short_lines(self):
+        text = (
+            "### 1. Executive Summary\n\n"
+            "Short.\n"
+            "Ben is CTO at Acme Corp and leads platform. [VERIFIED-PUBLIC]\n"
+        )
+        pruned, removed = prune_uncited_factual_lines(text)
+        assert removed == 0
+        assert "Short." in pruned
