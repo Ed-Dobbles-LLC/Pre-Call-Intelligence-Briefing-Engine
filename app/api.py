@@ -34,6 +34,7 @@ from app.brief.evidence_graph import (
     compute_visibility_coverage_confidence,
     determine_dossier_mode,
     extract_canonical_fields,
+    prune_uncited_factual_lines,
     extract_highest_signal_artifacts,
     filter_prose_by_mode,
     validate_canonical_fields,
@@ -1584,6 +1585,23 @@ async def deep_research_endpoint(profile_id: int):
         visibility_ledger_count = len(graph.get_visibility_ledger_rows())
         evidence_coverage = qa_report.evidence_coverage.coverage_pct
         factual_coverage = compute_factual_coverage_from_text(result)
+
+        # Auto-prune: if factual coverage < 85%, remove uncited factual lines
+        # and re-check. Only fail-closed if pruned text is still below threshold.
+        lines_pruned = 0
+        if factual_coverage < 85.0:
+            logger.info(
+                "Factual coverage %.1f%% < 85%% for %s — auto-pruning uncited lines",
+                factual_coverage, p_name,
+            )
+            result, lines_pruned = prune_uncited_factual_lines(result)
+            factual_coverage = compute_factual_coverage_from_text(result)
+            evidence_coverage = factual_coverage  # Align after prune
+            logger.info(
+                "Post-prune factual coverage: %.1f%% (%d lines removed)",
+                factual_coverage, lines_pruned,
+            )
+
         strat_sources_ok, strat_sources_missing = check_strategic_sources_present(
             result
         )
@@ -1676,6 +1694,7 @@ async def deep_research_endpoint(profile_id: int):
             "has_public_results": has_public_results,
             "failure_message": fail_message if not should_output else None,
             "failures_by_section": v4_failures if v4_failures else None,
+            "lines_auto_pruned": lines_pruned,
         }
 
         # --- STEP 7: Decision Leverage Score ---
@@ -2549,6 +2568,23 @@ async def generate_profile_research(profile_id: int):
         visibility_ledger_count = len(graph.get_visibility_ledger_rows())
         evidence_coverage = qa_report.evidence_coverage.coverage_pct
         factual_coverage = compute_factual_coverage_from_text(result)
+
+        # Auto-prune: if factual coverage < 85%, remove uncited factual lines
+        # and re-check. Only fail-closed if pruned text is still below threshold.
+        lines_pruned_2 = 0
+        if factual_coverage < 85.0:
+            logger.info(
+                "Factual coverage %.1f%% < 85%% for %s — auto-pruning uncited lines",
+                factual_coverage, p_name,
+            )
+            result, lines_pruned_2 = prune_uncited_factual_lines(result)
+            factual_coverage = compute_factual_coverage_from_text(result)
+            evidence_coverage = factual_coverage
+            logger.info(
+                "Post-prune factual coverage: %.1f%% (%d lines removed)",
+                factual_coverage, lines_pruned_2,
+            )
+
         strat_sources_ok, strat_sources_missing = check_strategic_sources_present(
             result
         )
@@ -2648,6 +2684,7 @@ async def generate_profile_research(profile_id: int):
             "has_public_results": has_public_results,
             "failure_message": fail_message if not should_output else None,
             "failures_by_section": v4_failures_2 if v4_failures_2 else None,
+            "lines_auto_pruned": lines_pruned_2,
         }
 
         # --- Decision Leverage Score ---

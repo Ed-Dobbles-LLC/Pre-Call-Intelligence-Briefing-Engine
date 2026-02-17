@@ -371,6 +371,108 @@ def compute_factual_coverage_from_text(text: str) -> float:
     return (tagged / total) * 100.0
 
 
+def prune_uncited_factual_lines(text: str) -> tuple[str, int]:
+    """Auto-remove uncited substantive lines in FACTUAL sections only.
+
+    Strategic sections (9-11) are left untouched.  Structural lines
+    (headers, tables, short labels, bold labels, blockquotes) are kept.
+    Gap phrases ("No evidence available", etc.) are kept.
+
+    Returns (pruned_text, lines_removed_count).
+    """
+    tag_pattern = re.compile(
+        r"\[(?:VERIFIED[–-](?:MEETING|PUBLIC|PDF)|INFERRED[–-][HML]|UNKNOWN"
+        r"|STRATEGIC MODEL[^\]]*)\]",
+        re.IGNORECASE,
+    )
+    gap_pattern = re.compile(
+        r"no evidence available|no evidence found|not available|"
+        r"no (public |internal )?data|no (public |internal )?evidence|"
+        r"no appearances found|no results found|"
+        r"unknown at this time|insufficient (evidence|data)|"
+        r"no supporting evidence|cannot be determined|"
+        r"no (relevant |applicable )?information|"
+        r"no (public )?record|not (publicly )?known|"
+        r"no (published |known )?sources|"
+        r"data not available|information not available|"
+        r"not (publicly )?documented|"
+        r"no (specific |direct )?evidence|"
+        r"unable to (verify|confirm|determine)|"
+        r"no verified external speaking footprint",
+        re.IGNORECASE,
+    )
+    structural_pattern = re.compile(
+        r"^(\*\*[^*]+\*\*:?\s*$"
+        r"|[-*]\s+\*\*[^*]+\*\*:?\s*$"
+        r"|[-*]\s{0,2}$"
+        r"|\*\*[A-Z][A-Z\s/&]+\*\*"
+        r"|^>\s)"
+    )
+
+    lines = text.split("\n")
+    kept: list[str] = []
+    removed = 0
+    current_section: int | None = None
+    in_strategic_block = False
+
+    for line in lines:
+        stripped = line.strip()
+
+        # Track section headers
+        m = _SECTION_HEADER_RE.match(stripped)
+        if m:
+            current_section = int(m.group(1))
+            in_strategic_block = False
+            kept.append(line)
+            continue
+
+        # Always keep strategic sections untouched
+        if current_section in _STRATEGIC_SECTIONS:
+            kept.append(line)
+            continue
+
+        # Always keep non-substantive lines
+        if not stripped or len(stripped) <= 25:
+            kept.append(line)
+            continue
+        if stripped.startswith(("#", "---")):
+            kept.append(line)
+            continue
+        # Keep table rows
+        if stripped.startswith("|"):
+            kept.append(line)
+            continue
+        # Keep structural formatting
+        if structural_pattern.match(stripped):
+            kept.append(line)
+            continue
+        # Keep blockquotes
+        if stripped.startswith(">"):
+            kept.append(line)
+            continue
+        # Keep bullet list markers with minimal content
+        if stripped.startswith(("- ", "* ")) and len(stripped) <= 30:
+            kept.append(line)
+            continue
+
+        # Check for strategic model block
+        if re.search(r"\[STRATEGIC MODEL[^\]]*\]", stripped, re.IGNORECASE):
+            in_strategic_block = True
+            kept.append(line)
+            continue
+        if in_strategic_block:
+            kept.append(line)
+            continue
+
+        # Substantive factual line — keep if tagged or gap phrase
+        if tag_pattern.search(stripped) or gap_pattern.search(stripped):
+            kept.append(line)
+        else:
+            removed += 1
+
+    return "\n".join(kept), removed
+
+
 def check_strategic_sources_present(text: str) -> tuple[bool, list[str]]:
     """Check that each strategic section (9-11) has upstream evidence citations.
 
