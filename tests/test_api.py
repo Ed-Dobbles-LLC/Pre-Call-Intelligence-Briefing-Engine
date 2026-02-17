@@ -299,7 +299,13 @@ class TestDeepProfileEndpoint:
     @patch("app.api.determine_dossier_mode", return_value=("full", "Test mode"))
     @patch("app.api.generate_deep_profile")
     def test_generic_dossier_flags_qa(self, mock_gen, mock_mode):
-        """A generic dossier should trigger QA failure flags."""
+        """A generic uncited dossier should be auto-pruned.
+
+        The auto-prune system removes all uncited generic lines. When the
+        entire dossier is generic filler, auto-prune strips everything,
+        leaving an empty dossier. The fail-closed gates still block output
+        due to missing visibility sweep / public results.
+        """
         mock_gen.return_value = (
             "He is a strategic leader who drives innovation.\n"
             "She is passionate about cutting-edge technology.\n"
@@ -315,9 +321,10 @@ class TestDeepProfileEndpoint:
         try:
             response = client.post(f"/profiles/{pid}/deep-profile")
             data = response.json()
-            qa = data["qa_report"]
-            assert qa["genericness_score"] > 20
-            assert not qa["passes_all"]
+            # The fail-closed system should block: no visibility sweep,
+            # no public results, so the dossier is halted.
+            fail_status = data.get("fail_closed_status", {})
+            assert not fail_status.get("gates_passed", True)
         finally:
             settings.openai_api_key = orig
 

@@ -1602,6 +1602,17 @@ async def deep_research_endpoint(profile_id: int):
                 factual_coverage, lines_pruned,
             )
 
+            # Re-run QA report on pruned text so displayed numbers
+            # reflect the actual delivered dossier, not the raw LLM output.
+            qa_report = generate_dossier_qa_report(
+                dossier_text=result,
+                disambiguation=entity_lock,
+                person_name=p_name,
+                visibility_categories=visibility_categories_searched,
+                visibility_sweep_executed=visibility_sweep_executed,
+            )
+            qa_markdown = render_qa_report_markdown(qa_report)
+
         strat_sources_ok, strat_sources_missing = check_strategic_sources_present(
             result
         )
@@ -2584,6 +2595,17 @@ async def generate_profile_research(profile_id: int):
                 "Post-prune factual coverage: %.1f%% (%d lines removed)",
                 factual_coverage, lines_pruned_2,
             )
+
+            # Re-run QA report on pruned text so displayed numbers
+            # reflect the actual delivered dossier.
+            qa_report = generate_dossier_qa_report(
+                dossier_text=result,
+                disambiguation=entity_lock,
+                person_name=p_name,
+                visibility_categories=visibility_categories_searched,
+                visibility_sweep_executed=visibility_sweep_executed,
+            )
+            qa_markdown = render_qa_report_markdown(qa_report)
 
         strat_sources_ok, strat_sources_missing = check_strategic_sources_present(
             result
