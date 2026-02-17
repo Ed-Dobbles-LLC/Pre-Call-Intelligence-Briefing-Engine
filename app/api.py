@@ -51,6 +51,10 @@ from app.brief.qa import (
     render_qa_report_markdown,
     score_disambiguation,
 )
+from app.brief.decision_leverage import (
+    build_executive_brief,
+    compute_decision_grade,
+)
 from app.clients.serpapi import (
     SerpAPIClient,
     VISIBILITY_CATEGORIES,
@@ -1724,6 +1728,30 @@ async def deep_research_endpoint(profile_id: int):
             "decision_leverage_components": leverage.components,
         }
 
+        # --- STEP 8: Executive Brief + Decision Grade ---
+        executive_brief = None
+        decision_grade = None
+        if should_output and result:
+            try:
+                exec_brief = build_executive_brief(
+                    dossier_text=result,
+                    person_name=p_name,
+                    company=p_company,
+                )
+                dg = compute_decision_grade(
+                    brief=exec_brief,
+                    identity_lock_score=entity_lock.score,
+                    evidence_coverage_pct=factual_coverage,
+                )
+                executive_brief = exec_brief.model_dump()
+                decision_grade = dg.model_dump()
+                leverage_report["executive_brief"] = executive_brief
+                leverage_report["decision_grade"] = decision_grade
+            except Exception:
+                logger.exception(
+                    "Decision leverage engine failed for profile %d", profile_id
+                )
+
         # --- Persist ---
         generated_at = datetime.utcnow().isoformat()
         deep_research_status = (
@@ -1779,6 +1807,8 @@ async def deep_research_endpoint(profile_id: int):
                 "markdown": qa_markdown,
             },
             "decision_leverage": leverage_report,
+            "executive_brief": executive_brief,
+            "decision_grade": decision_grade,
             "search_plan": search_plan,
             "visibility_report": visibility_report,
             "fail_closed_status": fail_closed_status,
@@ -2725,6 +2755,30 @@ async def generate_profile_research(profile_id: int):
             "decision_leverage_components": leverage.components,
         }
 
+        # --- Executive Brief + Decision Grade ---
+        executive_brief_2 = None
+        decision_grade_2 = None
+        if should_output and result:
+            try:
+                exec_brief_2 = build_executive_brief(
+                    dossier_text=result,
+                    person_name=p_name,
+                    company=p_company,
+                )
+                dg_2 = compute_decision_grade(
+                    brief=exec_brief_2,
+                    identity_lock_score=entity_lock.score,
+                    evidence_coverage_pct=factual_coverage,
+                )
+                executive_brief_2 = exec_brief_2.model_dump()
+                decision_grade_2 = dg_2.model_dump()
+                leverage_report["executive_brief"] = executive_brief_2
+                leverage_report["decision_grade"] = decision_grade_2
+            except Exception:
+                logger.exception(
+                    "Decision leverage engine failed for profile %d", profile_id
+                )
+
         # --- Persist ---
         generated_at = datetime.utcnow().isoformat()
         deep_research_status = (
@@ -2782,6 +2836,8 @@ async def generate_profile_research(profile_id: int):
                 "markdown": qa_markdown,
             },
             "decision_leverage": leverage_report,
+            "executive_brief": executive_brief_2,
+            "decision_grade": decision_grade_2,
             "search_plan": search_plan,
             "visibility_report": visibility_report,
             "fail_closed_status": fail_closed_status,
