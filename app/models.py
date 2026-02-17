@@ -516,3 +516,107 @@ class NormalizedEmail(BaseModel):
     snippet: Optional[str] = None
     labels: list[str] = Field(default_factory=list)
     raw_json: Optional[dict] = None
+
+
+# ---------------------------------------------------------------------------
+# Decision Leverage Engine v1 — Executive Brief + Meeting Moves
+# ---------------------------------------------------------------------------
+
+
+class UtilityTag(str, Enum):
+    """Tags identifying the decision-relevant category of a claim."""
+    sponsor_risk = "sponsor_risk"
+    veto_risk = "veto_risk"
+    sales_cycle = "sales_cycle"
+    adoption_friction = "adoption_friction"
+    credibility = "credibility"
+    budget_authority = "budget_authority"
+    politics = "politics"
+    differentiation = "differentiation"
+    negotiation_lever = "negotiation_lever"
+    unknowns_to_resolve = "unknowns_to_resolve"
+
+
+class ClaimType(str, Enum):
+    """Type of evidence backing a claim."""
+    fact = "fact"
+    inference = "inference"
+    strategic_model = "strategic_model"
+
+
+class RelevanceWindow(str, Enum):
+    """How time-sensitive this claim is."""
+    now = "now"
+    next_30d = "next_30d"
+    evergreen = "evergreen"
+
+
+class ScoredClaim(BaseModel):
+    """A claim scored for decision utility.
+
+    Extends the spirit of the existing Claim model with utility scoring.
+    The original Claim model (claim_id, text, tag, evidence_ids, confidence)
+    is preserved for backward compatibility; ScoredClaim adds decision
+    leverage fields for the Executive Brief.
+    """
+    text: str
+    claim_type: ClaimType = ClaimType.fact
+    confidence: str = Field("L", description="H | M | L")
+    tag: str = Field("UNKNOWN", description="Evidence tag from dossier")
+    anchors: list[str] = Field(default_factory=list, description="Evidence refs")
+    utility_tags: list[UtilityTag] = Field(default_factory=list)
+    decision_utility_score: int = Field(0, ge=0, le=100)
+    behavior_implication: str = Field("", description="One-sentence implication")
+    relevance_window: RelevanceWindow = RelevanceWindow.evergreen
+    section: str = Field("", description="Dossier section this came from")
+
+
+class MoveType(str, Enum):
+    """Type of prescriptive meeting move."""
+    opener = "opener"
+    probe = "probe"
+    proof = "proof"
+    wedge = "wedge"
+    close = "close"
+    avoid = "avoid"
+
+
+class RiskLevel(str, Enum):
+    """Risk level of a meeting move."""
+    low = "low"
+    med = "med"
+    high = "high"
+
+
+class MeetingMove(BaseModel):
+    """A prescriptive meeting move with evidence backing."""
+    move_type: MoveType
+    script: str = Field(..., description="1-3 sentence script")
+    why_it_works: str = Field("", description="1-2 sentence rationale")
+    evidence_refs: list[str] = Field(
+        default_factory=list, description="Non-empty evidence references"
+    )
+    risk_level: RiskLevel = RiskLevel.low
+
+
+class ExecutiveBrief(BaseModel):
+    """1-page executive brief: high-leverage claims + meeting moves."""
+    title: str = ""
+    top_claims: list[ScoredClaim] = Field(default_factory=list)
+    risks: list[str] = Field(default_factory=list)
+    agenda: list[str] = Field(default_factory=list)
+    moves: list[MeetingMove] = Field(default_factory=list)
+
+
+class DecisionGradeGateStatus(str, Enum):
+    """Gate result for decision grade."""
+    PASS = "PASS"
+    FAIL = "FAIL"
+
+
+class DecisionGradeQA(BaseModel):
+    """QA metadata for the Decision Leverage Engine."""
+    decision_utility_summary: dict = Field(default_factory=dict)
+    decision_grade_score: int = Field(0, ge=0, le=100)
+    decision_grade_gate: DecisionGradeGateStatus = DecisionGradeGateStatus.FAIL
+    decision_grade_failures: list[str] = Field(default_factory=list)
