@@ -1026,31 +1026,72 @@ def check_snapshot_person_focus(text: str, person_name: str = "") -> SnapshotVal
 
 @dataclass
 class InferredHAudit:
-    """Result of auditing INFERRED-H usage."""
+    """Result of auditing INFERRED-H usage.
+
+    Requires >= 2 upstream anchors per INFERRED-H claim. Claims with
+    fewer than 2 anchors are flagged for downgrade to INFERRED-M.
+    """
     total_inferred_h: int = 0
     with_upstream: int = 0
     without_upstream: list[dict] = field(default_factory=list)
-    # Each dict: {"sentence": str, "line": int}
+    # Each dict: {"sentence": str, "line": int, "anchor_count": int}
+    insufficient_anchors: list[dict] = field(default_factory=list)
+    # Claims with 1 anchor (need 2+): {"sentence": str, "line": int, "anchor_count": int}
 
     @property
     def passes(self) -> bool:
-        """True if all INFERRED-H claims cite upstream signals."""
-        return len(self.without_upstream) == 0
+        """True if all INFERRED-H claims have >= 2 upstream anchors."""
+        return len(self.without_upstream) == 0 and len(self.insufficient_anchors) == 0
 
 
 _INFERRED_H_PATTERN = re.compile(r"\[INFERRED[–\-]H(IGH)?\]", re.IGNORECASE)
-_UPSTREAM_PATTERN = re.compile(
-    r"(because|based on|from|per|citing|signals?|evidence|meeting|transcript|source|"
-    r"indicated by|confirmed by|suggests|observed in|per .{3,30} call)",
-    re.IGNORECASE,
-)
+
+# Individual upstream anchor patterns — each match counts as one anchor
+_ANCHOR_PATTERNS: list[re.Pattern] = [
+    re.compile(r"\bVERIFIED[–\-](?:MEETING|PUBLIC|PDF)\b", re.IGNORECASE),
+    re.compile(r"\bINFERRED[–\-][ML]\b", re.IGNORECASE),
+    re.compile(r"\bmeeting\b", re.IGNORECASE),
+    re.compile(r"\btranscript\b", re.IGNORECASE),
+    re.compile(r"\bLinkedIn\b", re.IGNORECASE),
+    re.compile(r"\bresume\b", re.IGNORECASE),
+    re.compile(r"\bPDF\b"),
+    re.compile(r"\bpublic source\b", re.IGNORECASE),
+    re.compile(r"\bsearch result\b", re.IGNORECASE),
+    re.compile(r"\bcompany (website|site|page)\b", re.IGNORECASE),
+    re.compile(r"\bpress\b", re.IGNORECASE),
+    re.compile(r"\bnews\b", re.IGNORECASE),
+    re.compile(r"\bDerived from\b", re.IGNORECASE),
+    re.compile(r"\bbased on\b", re.IGNORECASE),
+    re.compile(r"\bconfirmed by\b", re.IGNORECASE),
+    re.compile(r"\bobserved in\b", re.IGNORECASE),
+    re.compile(r"\bciting\b", re.IGNORECASE),
+    re.compile(r"\bSection \d+\b", re.IGNORECASE),
+]
+
+MIN_INFERRED_H_ANCHORS = 2
+
+
+def _count_upstream_anchors(line: str) -> int:
+    """Count distinct upstream anchor references in a line.
+
+    Each unique pattern match counts as one anchor. Duplicate matches
+    of the same pattern are not double-counted.
+    """
+    count = 0
+    for pattern in _ANCHOR_PATTERNS:
+        if pattern.search(line):
+            count += 1
+    return count
 
 
 def audit_inferred_h(text: str) -> InferredHAudit:
-    """Audit that INFERRED-H claims cite upstream signals.
+    """Audit that INFERRED-H claims cite >= 2 upstream anchors.
 
-    INFERRED-H should only be used when there are strong converging signals.
-    Each usage should be accompanied by reasoning.
+    INFERRED-H requires multiple converging signals. Each usage must
+    reference at least 2 distinct upstream evidence sources. Claims
+    with 0 anchors are flagged as ``without_upstream``. Claims with
+    exactly 1 anchor are flagged as ``insufficient_anchors`` (should
+    be downgraded to INFERRED-M).
     """
     result = InferredHAudit()
 
@@ -1061,13 +1102,22 @@ def audit_inferred_h(text: str) -> InferredHAudit:
             continue
 
         result.total_inferred_h += 1
+        anchor_count = _count_upstream_anchors(line)
 
-        if _UPSTREAM_PATTERN.search(line):
+        if anchor_count >= MIN_INFERRED_H_ANCHORS:
             result.with_upstream += 1
-        else:
+        elif anchor_count == 0:
             result.without_upstream.append({
                 "sentence": line[:200],
                 "line": line_num,
+                "anchor_count": 0,
+            })
+        else:
+            # 1 anchor — insufficient for INFERRED-H
+            result.insufficient_anchors.append({
+                "sentence": line[:200],
+                "line": line_num,
+                "anchor_count": anchor_count,
             })
 
     return result
@@ -1079,7 +1129,11 @@ def audit_inferred_h(text: str) -> InferredHAudit:
 
 @dataclass
 class QAReport:
-    """Complete QA report for a generated dossier."""
+    """Complete QA report for a generated dossier.
+
+    v2 additions: visibility_artifact_count, narrative_inflation_count,
+    pressure_violations, final_gate_status.
+    """
     genericness: GenericFillerResult = field(default_factory=GenericFillerResult)
     evidence_coverage: EvidenceCoverageResult = field(default_factory=EvidenceCoverageResult)
     contradictions: list[Contradiction] = field(default_factory=list)
@@ -1089,16 +1143,27 @@ class QAReport:
     inferred_h_audit: InferredHAudit = field(default_factory=InferredHAudit)
     top_claims_to_verify: list[str] = field(default_factory=list)
     hallucination_risk_flags: list[str] = field(default_factory=list)
+    # v2 fields
+    visibility_artifact_count: int = 0
+    narrative_inflation_violations: list[dict] = field(default_factory=list)
+    pressure_violations: list[dict] = field(default_factory=list)
 
     @property
     def passes_all(self) -> bool:
-        """True if all gates pass."""
+        """True if all gates pass (v2: includes INFERRED-H and inflation checks)."""
         return (
             self.genericness.genericness_score <= 20
             and self.evidence_coverage.passes
             and len(self.contradictions) == 0
             and self.person_level.passes
+            and self.inferred_h_audit.passes
+            and len(self.narrative_inflation_violations) == 0
         )
+
+    @property
+    def final_gate_status(self) -> str:
+        """Final gate status: PASS or FAIL-CLOSED."""
+        return "PASS" if self.passes_all else "FAIL-CLOSED"
 
 
 def generate_qa_report(
@@ -1161,9 +1226,15 @@ def generate_qa_report(
             "do not mention the person directly"
         )
     if not report.inferred_h_audit.passes:
+        no_anchor = len(report.inferred_h_audit.without_upstream)
+        insufficient = len(report.inferred_h_audit.insufficient_anchors)
+        parts = []
+        if no_anchor:
+            parts.append(f"{no_anchor} with 0 anchors")
+        if insufficient:
+            parts.append(f"{insufficient} with <2 anchors (need downgrade to INFERRED-M)")
         report.hallucination_risk_flags.append(
-            f"{len(report.inferred_h_audit.without_upstream)} INFERRED-H claims lack "
-            "upstream signal citations"
+            f"INFERRED-H anchoring failures: {', '.join(parts)}"
         )
 
     return report
@@ -1226,13 +1297,21 @@ def render_qa_report_markdown(report: QAReport) -> str:
     # INFERRED-H audit
     ih = report.inferred_h_audit
     if ih.total_inferred_h > 0:
-        status = "PASS" if ih.passes else "WARN"
+        status = "PASS" if ih.passes else "FAIL"
         lines.append(
-            f"**INFERRED-H Audit:** {ih.with_upstream}/{ih.total_inferred_h} cite "
-            f"upstream signals [{status}]"
+            f"**INFERRED-H Audit:** {ih.with_upstream}/{ih.total_inferred_h} have "
+            f">=2 upstream anchors [{status}]"
         )
-        if not ih.passes:
+        if ih.without_upstream:
+            lines.append(f"  *{len(ih.without_upstream)} with 0 anchors (FAIL):*")
             for u in ih.without_upstream[:3]:
+                lines.append(f"  - Line {u['line']}: {u['sentence'][:100]}...")
+        if ih.insufficient_anchors:
+            lines.append(
+                f"  *{len(ih.insufficient_anchors)} with 1 anchor "
+                "(need 2+, downgrade to INFERRED-M):*"
+            )
+            for u in ih.insufficient_anchors[:3]:
                 lines.append(f"  - Line {u['line']}: {u['sentence'][:100]}...")
         lines.append("")
 
@@ -1263,6 +1342,43 @@ def render_qa_report_markdown(report: QAReport) -> str:
             lines.append(f"- {flag}")
     else:
         lines.append("**Hallucination Risk:** Low")
+    lines.append("")
+
+    # v2: Visibility artifact count
+    lines.append(f"**Visibility Artifacts:** {report.visibility_artifact_count}")
+    if report.visibility_artifact_count == 0:
+        lines.append("  No verified external speaking footprint located.")
+    lines.append("")
+
+    # v2: Narrative inflation violations
+    inflation_count = len(report.narrative_inflation_violations)
+    status = "PASS" if inflation_count == 0 else "FAIL"
+    lines.append(f"**Narrative Inflation:** {inflation_count} violations [{status}]")
+    if report.narrative_inflation_violations:
+        for v in report.narrative_inflation_violations[:5]:
+            lines.append(
+                f"  - Line {v.get('line', '?')}: \"{v.get('phrase', '')}\" — "
+                f"{v.get('message', '')[:100]}"
+            )
+    lines.append("")
+
+    # v2: Pressure violations
+    if report.pressure_violations:
+        lines.append(f"**Pressure Evidence:** {len(report.pressure_violations)} violations")
+        for v in report.pressure_violations[:3]:
+            lines.append(f"  - {v.get('message', '')[:120]}")
+        lines.append("")
+
+    # v2: Final gate status
+    lines.append(f"**Final Gate Status:** {report.final_gate_status}")
+    lines.append("")
+
+    # v2: Unsupported sentence count (explicit)
+    unsupported = len(report.evidence_coverage.untagged_sentences)
+    lines.append(
+        f"**Unsupported Sentence Count:** {unsupported} / "
+        f"{report.evidence_coverage.total_substantive}"
+    )
     lines.append("")
 
     # Top claims to verify
@@ -1811,28 +1927,12 @@ def enforce_fail_closed_gates(
             f'Run remaining queries for "{person_name}" and log each result.'
         )
 
-    # Gate 2: Evidence coverage — adaptive threshold
+    # Gate 2: Evidence coverage — flat 85% threshold (no partial pass)
     coverage_for_gate = (
         factual_coverage_pct if factual_coverage_pct is not None
         else evidence_coverage_pct
     )
-
-    if factual_coverage_pct is not None:
-        # v2 factual-only thresholds (sections 1-8, 12 only)
-        if web_results_count >= 10:
-            coverage_threshold = 55.0
-        elif web_results_count >= 5:
-            coverage_threshold = 45.0
-        else:
-            coverage_threshold = 35.0
-    else:
-        # Legacy full-text thresholds (backward compatible)
-        if web_results_count >= 10:
-            coverage_threshold = 85.0
-        elif web_results_count >= 5:
-            coverage_threshold = 70.0
-        else:
-            coverage_threshold = 60.0
+    coverage_threshold = 85.0  # Flat threshold — no adaptive lowering
 
     if coverage_for_gate < coverage_threshold:
         coverage_label = (
@@ -1846,18 +1946,18 @@ def enforce_fail_closed_gates(
             "severity": "error",
             "location": "Factual sections (1-8, 12)",
             "message": (
-                f"Coverage {coverage_for_gate:.1f}% < {coverage_threshold:.0f}% threshold "
-                f"(adaptive: {web_results_count} web results). "
-                "Sentences without evidence tags must be cited or removed."
+                f"Coverage {coverage_for_gate:.1f}% < {coverage_threshold:.0f}% threshold. "
+                "No partial pass allowed. "
+                "Uncited sentences must be tagged or removed."
             ),
         })
         failures.append(
             f"FAIL: {coverage_label} {coverage_for_gate:.1f}%\n"
-            f"Coverage must be >= {coverage_threshold:.0f}% "
-            f"(adaptive: {web_results_count} web results). "
+            f"Coverage must be >= {coverage_threshold:.0f}%. "
             f"Current: {coverage_for_gate:.1f}%.\n"
-            "Sentences without evidence tags in factual sections (1-8, 12) "
-            "must be cited or removed."
+            "No partial pass allowed. "
+            "Uncited sentences in factual sections (1-8, 12) "
+            "must be tagged or removed."
         )
 
     if failures:
@@ -1942,25 +2042,12 @@ def enforce_fail_closed_gates_v4(
             f"FAIL: INSUFFICIENT VISIBILITY QUERIES ({visibility_ledger_count}/8)"
         )
 
-    # Gate 2: Evidence coverage
+    # Gate 2: Evidence coverage — flat 85% threshold (no partial pass)
     coverage_for_gate = (
         factual_coverage_pct if factual_coverage_pct is not None
         else evidence_coverage_pct
     )
-    if factual_coverage_pct is not None:
-        if web_results_count >= 10:
-            coverage_threshold = 55.0
-        elif web_results_count >= 5:
-            coverage_threshold = 45.0
-        else:
-            coverage_threshold = 35.0
-    else:
-        if web_results_count >= 10:
-            coverage_threshold = 85.0
-        elif web_results_count >= 5:
-            coverage_threshold = 70.0
-        else:
-            coverage_threshold = 60.0
+    coverage_threshold = 85.0  # Flat threshold — no adaptive lowering
 
     if coverage_for_gate < coverage_threshold:
         result.failing_gate_names.append("EVIDENCE_COVERAGE")
@@ -1969,8 +2056,8 @@ def enforce_fail_closed_gates_v4(
             "severity": "error",
             "location": "Factual sections (1-8, 12)",
             "message": (
-                f"Coverage {coverage_for_gate:.1f}% < {coverage_threshold:.0f}% threshold "
-                f"(adaptive: {web_results_count} web results)."
+                f"Coverage {coverage_for_gate:.1f}% < {coverage_threshold:.0f}% threshold. "
+                "No partial pass allowed."
             ),
         })
         failures.append(

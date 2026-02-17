@@ -489,8 +489,14 @@ def validate_visibility_artifact_table(text: str) -> tuple[int, list[dict[str, s
     """Validate the visibility artifact table in section 5.
 
     Returns (artifact_count, violations).
-    artifact_count is the number of valid table rows with URLs.
+    artifact_count is the *effective* artifact count:
+      - If raw count >= 5: returns raw count.
+      - If raw count < 5: returns 0 (visibility inflation prevention).
     violations list problems (missing table, too few rows without zero declaration).
+
+    Visibility inflation rule: fewer than 5 verified artifacts cannot imply
+    thought leadership. The effective count is collapsed to 0 and any
+    positioning commentary must be replaced with a neutral statement.
     """
     violations: list[dict[str, str]] = []
 
@@ -526,9 +532,9 @@ def validate_visibility_artifact_table(text: str) -> tuple[int, list[dict[str, s
 
     # Count table rows with URLs
     artifact_rows = _VISIBILITY_TABLE_ROW_RE.findall(section_5_text)
-    artifact_count = len(artifact_rows)
+    raw_count = len(artifact_rows)
 
-    if artifact_count == 0:
+    if raw_count == 0:
         violations.append({
             "rule_id": "VISIBILITY_TABLE_MISSING",
             "severity": "error",
@@ -538,18 +544,24 @@ def validate_visibility_artifact_table(text: str) -> tuple[int, list[dict[str, s
                 "Either include a table with URLs or declare total_visibility_artifacts=0."
             ),
         })
-    elif artifact_count < 5:
+        return 0, violations
+
+    # Visibility inflation prevention: <5 artifacts collapses to 0
+    if raw_count < 5:
         violations.append({
-            "rule_id": "VISIBILITY_TABLE_INCOMPLETE",
-            "severity": "warning",
+            "rule_id": "VISIBILITY_INFLATION_PREVENTED",
+            "severity": "error",
             "section": "5",
             "message": (
-                f"Visibility artifact table has {artifact_count} rows (minimum 5 recommended). "
-                "If fewer exist, declare total_visibility_artifacts=<count>."
+                f"Only {raw_count} verified visibility artifacts found (minimum 5 required). "
+                "Effective visibility count collapsed to 0. "
+                "Replace positioning commentary with: "
+                "'No verified external speaking footprint located.'"
             ),
         })
+        return 0, violations
 
-    return artifact_count, violations
+    return raw_count, violations
 
 
 # ---------------------------------------------------------------------------
@@ -676,6 +688,202 @@ def validate_inference_language(text: str) -> list[dict[str, str]]:
                     ),
                     "text": stripped[:120],
                 })
+
+    return violations
+
+
+# ---------------------------------------------------------------------------
+# Narrative Inflation Validation
+# ---------------------------------------------------------------------------
+
+NARRATIVE_INFLATION_PHRASES: list[str] = [
+    "emerging leader",
+    "positioned as",
+    "operating from strength",
+    "growth mode",
+    "strong reputation",
+    "industry-leading",
+    "likely owns budget",
+    "challenger brand",
+]
+
+_INFLATION_PATTERNS: list[re.Pattern] = [
+    re.compile(re.escape(phrase), re.IGNORECASE)
+    for phrase in NARRATIVE_INFLATION_PHRASES
+]
+
+# An inflation phrase is allowed only if the sentence has >= 2 verified anchors
+_VERIFIED_ANCHOR_RE = re.compile(
+    r"\[VERIFIED[–\-](?:MEETING|PUBLIC|PDF)\]",
+    re.IGNORECASE,
+)
+
+
+def validate_narrative_inflation(text: str) -> list[dict[str, str]]:
+    """Validate that narrative inflation phrases have >= 2 verified anchors.
+
+    Scans the dossier for banned inflation phrases. Each occurrence must
+    be in a sentence that cites at least 2 VERIFIED-* anchors. Otherwise
+    the sentence is flagged for removal.
+
+    Returns list of violations (empty if all valid).
+    """
+    violations: list[dict[str, str]] = []
+    lines = text.strip().split("\n")
+    current_section: int | None = None
+
+    for line_num, line in enumerate(lines, 1):
+        stripped = line.strip()
+
+        # Track sections
+        m = _SECTION_HEADER_RE.match(stripped)
+        if m:
+            current_section = int(m.group(1))
+            continue
+
+        if len(stripped) < 15 or stripped.startswith(("#", "|", "---")):
+            continue
+
+        for pattern in _INFLATION_PATTERNS:
+            match = pattern.search(stripped)
+            if not match:
+                continue
+
+            # Count verified anchors in this line
+            verified_anchors = len(_VERIFIED_ANCHOR_RE.findall(stripped))
+            if verified_anchors < 2:
+                violations.append({
+                    "rule_id": "NARRATIVE_INFLATION",
+                    "severity": "error",
+                    "line": str(line_num),
+                    "section": str(current_section) if current_section else "unknown",
+                    "phrase": match.group(0),
+                    "message": (
+                        f"Inflation phrase '{match.group(0)}' used with only "
+                        f"{verified_anchors} verified anchor(s) (need >= 2). "
+                        "Remove the sentence or add verified evidence."
+                    ),
+                    "text": stripped[:120],
+                })
+                break  # One violation per line
+
+    return violations
+
+
+# ---------------------------------------------------------------------------
+# Structural Pressure Validation (signal vs pressure separation)
+# ---------------------------------------------------------------------------
+
+# Pressure dimensions that require explicit evidence anchors
+PRESSURE_DIMENSIONS: list[str] = [
+    "revenue mandate",
+    "hiring ownership",
+    "delivery ownership",
+    "org leadership",
+    "public targets",
+]
+
+# Pattern to find pressure matrix rows
+_PRESSURE_ROW_RE = re.compile(
+    r"\|\s*(Revenue|Delivery|Credibility|Politics|Adoption|Budget)"
+    r"\s*(Pressure|Authority)?\s*\|",
+    re.IGNORECASE,
+)
+
+# Evidence anchors that qualify pressure (not just signal)
+_PRESSURE_EVIDENCE_RE = re.compile(
+    r"(revenue (target|mandate|goal|ownership)|"
+    r"headcount|hir(e|ing)|"
+    r"delivery (deadline|target|milestone)|"
+    r"reports to|reporting to|"
+    r"P&L|profit.?loss|"
+    r"budget (authority|ownership|sign)|"
+    r"KPI|OKR|quota|"
+    r"public (commitment|target|goal)|"
+    r"board (mandate|directive)|"
+    r"accountab(le|ility))",
+    re.IGNORECASE,
+)
+
+# Signal-only patterns (topic emphasis, not accountability)
+_SIGNAL_ONLY_RE = re.compile(
+    r"(talks about|mentions|discusses|spoke about|"
+    r"appears interested in|seems to focus on|"
+    r"frequently references|topic emphasis)",
+    re.IGNORECASE,
+)
+
+
+def validate_pressure_evidence(text: str) -> list[dict[str, str]]:
+    """Validate that Structural Pressure Model dimensions have explicit evidence.
+
+    Signal (what they talk about) is NOT the same as pressure (what they
+    are accountable for). Pressure dimensions without explicit evidence
+    anchors (revenue mandate, hiring ownership, delivery deadlines, etc.)
+    should be marked UNKNOWN rather than inferred from topic emphasis.
+
+    Only checks Section 8 (Structural Pressure Model).
+    Returns list of violations.
+    """
+    violations: list[dict[str, str]] = []
+    lines = text.strip().split("\n")
+    current_section: int | None = None
+    in_section_8 = False
+
+    for line_num, line in enumerate(lines, 1):
+        stripped = line.strip()
+
+        m = _SECTION_HEADER_RE.match(stripped)
+        if m:
+            current_section = int(m.group(1))
+            in_section_8 = current_section == 8
+            continue
+
+        if not in_section_8:
+            continue
+
+        # Check pressure matrix rows
+        if _PRESSURE_ROW_RE.search(stripped):
+            # This is a pressure row — check for evidence vs signal-only
+            has_evidence = bool(_PRESSURE_EVIDENCE_RE.search(stripped))
+            is_signal_only = bool(_SIGNAL_ONLY_RE.search(stripped))
+
+            if is_signal_only and not has_evidence:
+                violations.append({
+                    "rule_id": "PRESSURE_FROM_SIGNAL_ONLY",
+                    "severity": "error",
+                    "line": str(line_num),
+                    "section": "8",
+                    "message": (
+                        "Pressure dimension inferred from topic emphasis alone "
+                        "(signal != pressure). Set to UNKNOWN or provide "
+                        "explicit accountability evidence."
+                    ),
+                    "text": stripped[:150],
+                })
+
+        # Check non-table pressure claims
+        if not stripped.startswith("|") and len(stripped) > 30:
+            # Look for pressure claims without evidence
+            pressure_words = re.search(
+                r"\b(pressure|mandate|accountab|delivery risk|"
+                r"revenue (risk|pressure|target))\b",
+                stripped, re.IGNORECASE,
+            )
+            if pressure_words and _SIGNAL_ONLY_RE.search(stripped):
+                if not _PRESSURE_EVIDENCE_RE.search(stripped):
+                    violations.append({
+                        "rule_id": "PRESSURE_INFERRED_FROM_SIGNAL",
+                        "severity": "warning",
+                        "line": str(line_num),
+                        "section": "8",
+                        "message": (
+                            "Pressure claim appears to be inferred from signal "
+                            "(topic emphasis) rather than explicit evidence. "
+                            "Either cite accountability evidence or mark [UNKNOWN]."
+                        ),
+                        "text": stripped[:150],
+                    })
 
     return violations
 

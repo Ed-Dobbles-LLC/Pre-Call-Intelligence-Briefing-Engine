@@ -38,6 +38,8 @@ from app.brief.evidence_graph import (
     filter_prose_by_mode,
     validate_canonical_fields,
     validate_inference_language,
+    validate_narrative_inflation,
+    validate_pressure_evidence,
     validate_reasoning_anchors,
     validate_visibility_artifact_table,
 )
@@ -1599,8 +1601,9 @@ async def deep_research_endpoint(profile_id: int):
             strategic_sources_missing=strat_sources_missing,
         )
 
-        # --- v4 hardening: structured validation ---
+        # --- v4/v5 hardening: structured validation ---
         v4_failures: dict[str, list[dict[str, str]]] = {}
+        artifact_count = 0
         if should_output:
             # A) Canonical field guardrails
             canonical = extract_canonical_fields(result)
@@ -1608,7 +1611,7 @@ async def deep_research_endpoint(profile_id: int):
             if canon_violations:
                 v4_failures["canonical_fields"] = canon_violations
 
-            # B) Visibility artifact table
+            # B) Visibility artifact table (v2: <5 collapses to 0)
             artifact_count, vis_violations = validate_visibility_artifact_table(result)
             if vis_violations:
                 v4_failures["visibility_artifacts"] = vis_violations
@@ -1622,6 +1625,23 @@ async def deep_research_endpoint(profile_id: int):
             anchor_counts, anchor_violations = validate_reasoning_anchors(result)
             if anchor_violations:
                 v4_failures["reasoning_anchors"] = anchor_violations
+
+            # E) Narrative inflation (v2)
+            inflation_violations = validate_narrative_inflation(result)
+            if inflation_violations:
+                v4_failures["narrative_inflation"] = inflation_violations
+
+            # F) Pressure evidence (v2: signal != pressure)
+            pressure_violations = validate_pressure_evidence(result)
+            if pressure_violations:
+                v4_failures["pressure_evidence"] = pressure_violations
+
+        # Populate v2 QA report fields
+        qa_report.visibility_artifact_count = artifact_count
+        if "narrative_inflation" in v4_failures:
+            qa_report.narrative_inflation_violations = v4_failures["narrative_inflation"]
+        if "pressure_evidence" in v4_failures:
+            qa_report.pressure_violations = v4_failures["pressure_evidence"]
 
         # Apply mode-based prose filtering
         if should_output:
@@ -2546,8 +2566,9 @@ async def generate_profile_research(profile_id: int):
             strategic_sources_missing=strat_sources_missing,
         )
 
-        # --- v4 hardening: structured validation ---
+        # --- v4/v5 hardening: structured validation ---
         v4_failures_2: dict[str, list[dict[str, str]]] = {}
+        artifact_count_2 = 0
         if should_output:
             canonical_2 = extract_canonical_fields(result)
             canon_violations_2 = validate_canonical_fields(canonical_2)
@@ -2565,6 +2586,23 @@ async def generate_profile_research(profile_id: int):
             anchor_counts_2, anchor_violations_2 = validate_reasoning_anchors(result)
             if anchor_violations_2:
                 v4_failures_2["reasoning_anchors"] = anchor_violations_2
+
+            # E) Narrative inflation (v2)
+            inflation_violations_2 = validate_narrative_inflation(result)
+            if inflation_violations_2:
+                v4_failures_2["narrative_inflation"] = inflation_violations_2
+
+            # F) Pressure evidence (v2: signal != pressure)
+            pressure_violations_2 = validate_pressure_evidence(result)
+            if pressure_violations_2:
+                v4_failures_2["pressure_evidence"] = pressure_violations_2
+
+        # Populate v2 QA report fields
+        qa_report.visibility_artifact_count = artifact_count_2
+        if "narrative_inflation" in v4_failures_2:
+            qa_report.narrative_inflation_violations = v4_failures_2["narrative_inflation"]
+        if "pressure_evidence" in v4_failures_2:
+            qa_report.pressure_violations = v4_failures_2["pressure_evidence"]
 
         # --- STEP 6: Apply mode-based prose filtering ---
         if should_output:
