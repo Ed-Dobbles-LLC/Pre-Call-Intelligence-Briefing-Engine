@@ -2858,6 +2858,435 @@ async def generate_profile_research(profile_id: int):
         session.close()
 
 
+# ---------------------------------------------------------------------------
+# Photo Stats
+# ---------------------------------------------------------------------------
+
+@app.get("/stats/photos", dependencies=[Depends(verify_api_key)])
+def photo_stats():
+    """Photo coverage metrics across all contacts."""
+    session = get_session()
+    try:
+        entities = session.query(EntityRecord).filter(
+            EntityRecord.entity_type == "person",
+        ).all()
+
+        total = 0
+        with_photo = 0
+        by_source = {}
+        by_status = {}
+
+        for entity in entities:
+            profile_data = json.loads(entity.domains or "{}")
+            # Only count contacts with interactions
+            if not profile_data.get("meeting_count") and not profile_data.get("email_count"):
+                continue
+            total += 1
+            photo_url = profile_data.get("photo_url", "")
+            photo_source = profile_data.get("photo_source", "unknown")
+            photo_status = profile_data.get("photo_status", "MISSING")
+
+            if photo_url:
+                with_photo += 1
+            by_source[photo_source] = by_source.get(photo_source, 0) + 1
+            by_status[photo_status] = by_status.get(photo_status, 0) + 1
+
+        coverage_pct = round(with_photo / total * 100, 1) if total > 0 else 0.0
+
+        return {
+            "total_contacts": total,
+            "with_photo": with_photo,
+            "without_photo": total - with_photo,
+            "coverage_pct": coverage_pct,
+            "by_source": by_source,
+            "by_status": by_status,
+        }
+    except Exception:
+        logger.exception("Photo stats failed")
+        raise HTTPException(status_code=500, detail="Failed to compute photo stats")
+    finally:
+        session.close()
+
+
+# ---------------------------------------------------------------------------
+# Projects CRUD
+# ---------------------------------------------------------------------------
+
+@app.get("/projects", dependencies=[Depends(verify_api_key)])
+def list_projects(
+    project_type: Optional[str] = Query(None, description="Filter by type"),
+    stage: Optional[str] = Query(None, description="Filter by stage"),
+):
+    """List all projects with optional type/stage filters."""
+    from app.store.database import ProjectRecord, PROJECT_STAGE_PIPELINES
+
+    session = get_session()
+    try:
+        q = session.query(ProjectRecord)
+        if project_type:
+            q = q.filter(ProjectRecord.project_type == project_type)
+        if stage:
+            q = q.filter(ProjectRecord.stage == stage)
+        q = q.order_by(ProjectRecord.updated_at.desc())
+
+        projects = []
+        for p in q.all():
+            projects.append({
+                "id": p.id,
+                "name": p.name,
+                "project_type": p.project_type,
+                "stage": p.stage,
+                "description": p.description,
+                "entity_ids": json.loads(p.entity_ids or "[]"),
+                "source_ids": json.loads(p.source_ids or "[]"),
+                "metadata": json.loads(p.metadata_json or "{}"),
+                "classifier_source": p.classifier_source,
+                "classifier_confidence": p.classifier_confidence,
+                "pipeline": PROJECT_STAGE_PIPELINES.get(p.project_type, []),
+                "created_at": p.created_at.isoformat() if p.created_at else None,
+                "updated_at": p.updated_at.isoformat() if p.updated_at else None,
+            })
+        return {"projects": projects, "total": len(projects)}
+    finally:
+        session.close()
+
+
+@app.post("/projects", dependencies=[Depends(verify_api_key)])
+def create_project(
+    name: str = Query(..., description="Project name"),
+    project_type: str = Query("other", description="Project type"),
+    description: Optional[str] = Query(None),
+):
+    """Create a new project manually."""
+    from app.store.database import ProjectRecord, PROJECT_STAGE_PIPELINES
+
+    if project_type not in PROJECT_STAGE_PIPELINES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid type. Valid: {list(PROJECT_STAGE_PIPELINES.keys())}",
+        )
+
+    session = get_session()
+    try:
+        project = ProjectRecord(
+            name=name,
+            project_type=project_type,
+            stage=PROJECT_STAGE_PIPELINES[project_type][0],
+            description=description,
+            classifier_source="manual",
+            classifier_confidence=1.0,
+        )
+        session.add(project)
+        session.commit()
+        return {
+            "id": project.id,
+            "name": project.name,
+            "project_type": project.project_type,
+            "stage": project.stage,
+            "pipeline": PROJECT_STAGE_PIPELINES[project_type],
+        }
+    except Exception:
+        session.rollback()
+        raise HTTPException(status_code=500, detail="Failed to create project")
+    finally:
+        session.close()
+
+
+@app.put("/projects/{project_id}/stage", dependencies=[Depends(verify_api_key)])
+def update_project_stage(project_id: int, stage: str = Query(...)):
+    """Advance a project to a new stage."""
+    from app.services.project_classifier import advance_project_stage
+    project = advance_project_stage(project_id, stage)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found or invalid stage")
+    return {
+        "id": project.id,
+        "name": project.name,
+        "stage": project.stage,
+        "project_type": project.project_type,
+    }
+
+
+@app.get("/projects/{project_id}", dependencies=[Depends(verify_api_key)])
+def get_project(project_id: int):
+    """Get a single project with full details."""
+    from app.store.database import ProjectRecord, ActionItemRecord, CalendarEventRecord, PROJECT_STAGE_PIPELINES
+
+    session = get_session()
+    try:
+        project = session.query(ProjectRecord).get(project_id)
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+
+        # Get linked action items
+        action_items = session.query(ActionItemRecord).filter(
+            ActionItemRecord.project_id == project_id,
+        ).all()
+
+        # Get linked calendar events
+        events = session.query(CalendarEventRecord).filter(
+            CalendarEventRecord.project_id == project_id,
+        ).all()
+
+        return {
+            "id": project.id,
+            "name": project.name,
+            "project_type": project.project_type,
+            "stage": project.stage,
+            "description": project.description,
+            "entity_ids": json.loads(project.entity_ids or "[]"),
+            "metadata": json.loads(project.metadata_json or "{}"),
+            "pipeline": PROJECT_STAGE_PIPELINES.get(project.project_type, []),
+            "classifier_source": project.classifier_source,
+            "action_items": [
+                {"id": ai.id, "title": ai.title, "priority": ai.priority, "status": ai.status}
+                for ai in action_items
+            ],
+            "calendar_events": [
+                {"id": ev.id, "title": ev.title, "start_time": ev.start_time.isoformat() if ev.start_time else None}
+                for ev in events
+            ],
+            "created_at": project.created_at.isoformat() if project.created_at else None,
+            "updated_at": project.updated_at.isoformat() if project.updated_at else None,
+        }
+    finally:
+        session.close()
+
+
+@app.delete("/projects/{project_id}", dependencies=[Depends(verify_api_key)])
+def delete_project(project_id: int):
+    """Delete a project."""
+    from app.store.database import ProjectRecord
+    session = get_session()
+    try:
+        project = session.query(ProjectRecord).get(project_id)
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+        session.delete(project)
+        session.commit()
+        return {"status": "deleted", "id": project_id}
+    except HTTPException:
+        raise
+    except Exception:
+        session.rollback()
+        raise HTTPException(status_code=500, detail="Failed to delete project")
+    finally:
+        session.close()
+
+
+# ---------------------------------------------------------------------------
+# Action Items CRUD
+# ---------------------------------------------------------------------------
+
+@app.get("/action-items", dependencies=[Depends(verify_api_key)])
+def list_action_items(
+    status: Optional[str] = Query(None, description="Filter: open|in_progress|done|dismissed"),
+    priority: Optional[str] = Query(None, description="Filter: critical|high|medium|low"),
+    entity_id: Optional[int] = Query(None, description="Filter by contact"),
+    project_id: Optional[int] = Query(None, description="Filter by project"),
+    limit: int = Query(50, ge=1, le=200),
+):
+    """List action items with filters."""
+    from app.store.database import ActionItemRecord
+
+    session = get_session()
+    try:
+        q = session.query(ActionItemRecord)
+        if status:
+            q = q.filter(ActionItemRecord.status == status)
+        if priority:
+            q = q.filter(ActionItemRecord.priority == priority)
+        if entity_id:
+            q = q.filter(ActionItemRecord.entity_id == entity_id)
+        if project_id:
+            q = q.filter(ActionItemRecord.project_id == project_id)
+
+        q = q.order_by(ActionItemRecord.extracted_at.desc()).limit(limit)
+
+        items = []
+        for ai in q.all():
+            items.append({
+                "id": ai.id,
+                "title": ai.title,
+                "description": ai.description,
+                "source_type": ai.source_type,
+                "source_id": ai.source_id,
+                "entity_id": ai.entity_id,
+                "project_id": ai.project_id,
+                "priority": ai.priority,
+                "status": ai.status,
+                "due_date": ai.due_date.isoformat() if ai.due_date else None,
+                "assigned_to": ai.assigned_to,
+                "extracted_at": ai.extracted_at.isoformat() if ai.extracted_at else None,
+                "completed_at": ai.completed_at.isoformat() if ai.completed_at else None,
+            })
+        return {"action_items": items, "total": len(items)}
+    finally:
+        session.close()
+
+
+@app.post("/action-items", dependencies=[Depends(verify_api_key)])
+def create_action_item(
+    title: str = Query(...),
+    priority: str = Query("medium"),
+    entity_id: Optional[int] = Query(None),
+    project_id: Optional[int] = Query(None),
+    assigned_to: Optional[str] = Query(None),
+    description: Optional[str] = Query(None),
+):
+    """Create an action item manually."""
+    from app.store.database import ActionItemRecord
+
+    if priority not in ("critical", "high", "medium", "low"):
+        raise HTTPException(status_code=400, detail="Invalid priority")
+
+    session = get_session()
+    try:
+        item = ActionItemRecord(
+            title=title,
+            description=description,
+            source_type="manual",
+            entity_id=entity_id,
+            project_id=project_id,
+            priority=priority,
+            assigned_to=assigned_to,
+            status="open",
+        )
+        session.add(item)
+        session.commit()
+        return {
+            "id": item.id,
+            "title": item.title,
+            "priority": item.priority,
+            "status": item.status,
+        }
+    except Exception:
+        session.rollback()
+        raise HTTPException(status_code=500, detail="Failed to create action item")
+    finally:
+        session.close()
+
+
+@app.put("/action-items/{item_id}", dependencies=[Depends(verify_api_key)])
+def update_action_item(
+    item_id: int,
+    status: Optional[str] = Query(None),
+    priority: Optional[str] = Query(None),
+    assigned_to: Optional[str] = Query(None),
+    project_id: Optional[int] = Query(None),
+):
+    """Update an action item's status, priority, assignment, or project link."""
+    from app.store.database import ActionItemRecord
+
+    session = get_session()
+    try:
+        item = session.query(ActionItemRecord).get(item_id)
+        if not item:
+            raise HTTPException(status_code=404, detail="Action item not found")
+
+        if status:
+            if status not in ("open", "in_progress", "done", "dismissed"):
+                raise HTTPException(status_code=400, detail="Invalid status")
+            item.status = status
+            if status == "done":
+                item.completed_at = datetime.utcnow()
+        if priority:
+            if priority not in ("critical", "high", "medium", "low"):
+                raise HTTPException(status_code=400, detail="Invalid priority")
+            item.priority = priority
+        if assigned_to is not None:
+            item.assigned_to = assigned_to
+        if project_id is not None:
+            item.project_id = project_id
+
+        session.commit()
+        return {
+            "id": item.id,
+            "title": item.title,
+            "status": item.status,
+            "priority": item.priority,
+        }
+    except HTTPException:
+        raise
+    except Exception:
+        session.rollback()
+        raise HTTPException(status_code=500, detail="Update failed")
+    finally:
+        session.close()
+
+
+@app.delete("/action-items/{item_id}", dependencies=[Depends(verify_api_key)])
+def delete_action_item(item_id: int):
+    """Delete an action item."""
+    from app.store.database import ActionItemRecord
+
+    session = get_session()
+    try:
+        item = session.query(ActionItemRecord).get(item_id)
+        if not item:
+            raise HTTPException(status_code=404, detail="Action item not found")
+        session.delete(item)
+        session.commit()
+        return {"status": "deleted", "id": item_id}
+    except HTTPException:
+        raise
+    except Exception:
+        session.rollback()
+        raise HTTPException(status_code=500, detail="Delete failed")
+    finally:
+        session.close()
+
+
+@app.get("/stats/action-items", dependencies=[Depends(verify_api_key)])
+def action_item_stats():
+    """Action item dashboard statistics."""
+    from app.services.action_items import get_action_item_stats
+    return get_action_item_stats()
+
+
+# ---------------------------------------------------------------------------
+# Calendar Events
+# ---------------------------------------------------------------------------
+
+@app.get("/calendar-events", dependencies=[Depends(verify_api_key)])
+def list_calendar_events(
+    status: Optional[str] = Query(None, description="Filter: upcoming|completed|cancelled"),
+    limit: int = Query(25, ge=1, le=100),
+):
+    """List persisted calendar events."""
+    from app.store.database import CalendarEventRecord
+
+    session = get_session()
+    try:
+        q = session.query(CalendarEventRecord)
+        if status:
+            q = q.filter(CalendarEventRecord.status == status)
+        q = q.order_by(CalendarEventRecord.start_time.asc()).limit(limit)
+
+        events = []
+        for ev in q.all():
+            events.append({
+                "id": ev.id,
+                "calendar_event_id": ev.calendar_event_id,
+                "title": ev.title,
+                "start_time": ev.start_time.isoformat() if ev.start_time else None,
+                "end_time": ev.end_time.isoformat() if ev.end_time else None,
+                "location": ev.location,
+                "organizer_email": ev.organizer_email,
+                "attendees": json.loads(ev.attendees_json or "[]"),
+                "entity_ids": json.loads(ev.entity_ids or "[]"),
+                "project_id": ev.project_id,
+                "status": ev.status,
+            })
+        return {"events": events, "total": len(events)}
+    finally:
+        session.close()
+
+
+# ---------------------------------------------------------------------------
+# Dashboard stats
+# ---------------------------------------------------------------------------
+
 @app.get("/stats", dependencies=[Depends(verify_api_key)])
 def dashboard_stats():
     """Return summary statistics for the dashboard."""

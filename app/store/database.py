@@ -131,6 +131,137 @@ class EmbeddingRecord(Base):
 
 
 # ---------------------------------------------------------------------------
+# Projects
+# ---------------------------------------------------------------------------
+
+class ProjectRecord(Base):
+    """Tracks deals, job interviews, partnerships, and internal initiatives."""
+    __tablename__ = "projects"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String(512), nullable=False)
+    project_type = Column(String(64), nullable=False, default="other")
+    stage = Column(String(64), nullable=False, default="identified")
+    description = Column(Text, nullable=True)
+    entity_ids = Column(Text, default="[]")      # JSON list of contact entity IDs
+    source_ids = Column(Text, default="[]")      # JSON list of source_record IDs
+    metadata_json = Column(Text, default="{}")   # Flexible metadata
+    classifier_source = Column(String(32), default="rule")  # llm | rule | manual
+    classifier_confidence = Column(Float, default=0.0)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (
+        Index("ix_projects_type", "project_type"),
+        Index("ix_projects_stage", "stage"),
+    )
+
+    def get_entity_ids(self) -> list[int]:
+        return json.loads(self.entity_ids) if self.entity_ids else []
+
+    def set_entity_ids(self, ids: list[int]) -> None:
+        self.entity_ids = json.dumps(ids)
+
+    def add_entity_id(self, entity_id: int) -> None:
+        ids = self.get_entity_ids()
+        if entity_id not in ids:
+            ids.append(entity_id)
+            self.entity_ids = json.dumps(ids)
+
+    def get_metadata(self) -> dict:
+        return json.loads(self.metadata_json) if self.metadata_json else {}
+
+    def set_metadata(self, data: dict) -> None:
+        self.metadata_json = json.dumps(data)
+
+
+# Stage pipelines by project type
+PROJECT_STAGE_PIPELINES = {
+    "job_interview": ["identified", "applied", "screening", "interviewing", "offer", "closed_won", "closed_lost"],
+    "sales_deal": ["identified", "qualified", "proposal", "negotiation", "closed_won", "closed_lost"],
+    "partnership": ["identified", "exploring", "terms", "active", "completed", "stalled"],
+    "internal": ["identified", "planning", "in_progress", "review", "completed"],
+    "other": ["identified", "in_progress", "completed"],
+}
+
+
+# ---------------------------------------------------------------------------
+# Action Items
+# ---------------------------------------------------------------------------
+
+class ActionItemRecord(Base):
+    """Action items extracted from transcripts and emails."""
+    __tablename__ = "action_items"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    title = Column(String(1024), nullable=False)
+    description = Column(Text, nullable=True)
+    source_type = Column(String(32), nullable=True)
+    source_id = Column(String(512), nullable=True)
+    source_record_id = Column(Integer, ForeignKey("source_records.id"), nullable=True)
+    entity_id = Column(Integer, ForeignKey("entities.id"), nullable=True)
+    project_id = Column(Integer, ForeignKey("projects.id"), nullable=True)
+    priority = Column(String(16), default="medium")
+    status = Column(String(32), default="open")
+    due_date = Column(DateTime, nullable=True)
+    assigned_to = Column(String(512), nullable=True)
+    extracted_at = Column(DateTime, default=datetime.utcnow)
+    completed_at = Column(DateTime, nullable=True)
+    metadata_json = Column(Text, default="{}")
+
+    entity = relationship("EntityRecord", backref="action_items")
+    project = relationship("ProjectRecord", backref="action_items")
+    source_record = relationship("SourceRecord", backref="action_items_records")
+
+    __table_args__ = (
+        Index("ix_action_items_status", "status"),
+        Index("ix_action_items_priority", "priority"),
+        Index("ix_action_items_entity", "entity_id"),
+        Index("ix_action_items_project", "project_id"),
+    )
+
+    def get_metadata(self) -> dict:
+        return json.loads(self.metadata_json) if self.metadata_json else {}
+
+
+# ---------------------------------------------------------------------------
+# Calendar Events
+# ---------------------------------------------------------------------------
+
+class CalendarEventRecord(Base):
+    """Persisted calendar events linked to contacts and projects."""
+    __tablename__ = "calendar_events"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    calendar_event_id = Column(String(512), nullable=False, unique=True)
+    title = Column(String(1024), nullable=True)
+    description = Column(Text, nullable=True)
+    start_time = Column(DateTime, nullable=True)
+    end_time = Column(DateTime, nullable=True)
+    location = Column(String(1024), nullable=True)
+    organizer_email = Column(String(512), nullable=True)
+    attendees_json = Column(Text, default="[]")
+    entity_ids = Column(Text, default="[]")
+    project_id = Column(Integer, ForeignKey("projects.id"), nullable=True)
+    status = Column(String(32), default="upcoming")
+    synced_at = Column(DateTime, default=datetime.utcnow)
+    metadata_json = Column(Text, default="{}")
+
+    project = relationship("ProjectRecord", backref="calendar_events")
+
+    __table_args__ = (
+        Index("ix_calendar_events_start", "start_time"),
+        Index("ix_calendar_events_status", "status"),
+    )
+
+    def get_entity_ids(self) -> list[int]:
+        return json.loads(self.entity_ids) if self.entity_ids else []
+
+    def set_entity_ids(self, ids: list[int]) -> None:
+        self.entity_ids = json.dumps(ids)
+
+
+# ---------------------------------------------------------------------------
 # Brief audit log
 # ---------------------------------------------------------------------------
 

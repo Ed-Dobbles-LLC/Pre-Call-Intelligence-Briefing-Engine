@@ -62,6 +62,10 @@ class Settings(BaseSettings):
     # Retrieval window
     retrieval_window_days: int = 90
 
+    # Project classifier
+    project_classifier_model: str = "gpt-4o-mini"
+    project_classifier_enabled: bool = True
+
     @property
     def is_sqlite(self) -> bool:
         return self.database_url.startswith("sqlite")

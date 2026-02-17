@@ -19,7 +19,14 @@ from app.clients.fireflies import FirefliesClient
 from app.config import settings
 from app.ingest.fireflies_ingest import normalize_transcript, store_transcript
 from app.ingest.gmail_ingest import normalize_email, store_email
-from app.store.database import EntityRecord, SourceRecord, get_session, init_db
+from app.store.database import (
+    ActionItemRecord,
+    CalendarEventRecord,
+    EntityRecord,
+    SourceRecord,
+    get_session,
+    init_db,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -464,6 +471,32 @@ def sync_fireflies_transcripts() -> dict:
             result["photos_re_enriched"] = re_enriched
         finally:
             enrich_loop.close()
+
+        # --- Calendar sync (alongside Fireflies/Gmail) ---
+        try:
+            calendar_result = _sync_calendar_events()
+            result["calendar_events_synced"] = calendar_result.get("events_synced", 0)
+            result["calendar_contacts_matched"] = calendar_result.get("contacts_matched", 0)
+            result["calendar_stubs_created"] = calendar_result.get("stubs_created", 0)
+        except Exception as e:
+            logger.warning("Calendar sync failed (non-blocking): %s", e)
+            result["calendar_error"] = str(e)
+
+        # --- Auto photo resolution for new/missing contacts ---
+        try:
+            photos_resolved = _auto_resolve_photos()
+            result["photos_auto_resolved"] = photos_resolved
+        except Exception as e:
+            logger.warning("Auto photo resolution failed (non-blocking): %s", e)
+            result["photo_resolution_error"] = str(e)
+
+        # --- Action item extraction from newly synced sources ---
+        try:
+            actions_extracted = _extract_and_persist_action_items()
+            result["action_items_extracted"] = actions_extracted
+        except Exception as e:
+            logger.warning("Action item extraction failed (non-blocking): %s", e)
+            result["action_items_error"] = str(e)
 
         return result
 
@@ -1222,6 +1255,249 @@ def _auto_clean_garbled_fields(profile_data: dict) -> None:
                         profile_data["linkedin_pdf_sections"] = {}
                         profile_data["linkedin_pdf_text_usable"] = False
                         break
+
+
+# ---------------------------------------------------------------------------
+# Calendar sync helper (called from sync loop)
+# ---------------------------------------------------------------------------
+
+def _sync_calendar_events() -> dict:
+    """Sync Google Calendar events and persist to CalendarEventRecord table.
+
+    Also runs the existing calendar_ingest to match attendees to contacts.
+    """
+    from app.store.database import CalendarEventRecord
+
+    if not settings.google_client_id or not settings.google_refresh_token:
+        return {"events_synced": 0, "note": "Google Calendar not configured"}
+
+    try:
+        from app.ingest.calendar_ingest import run_calendar_ingest
+        ingest_result = run_calendar_ingest(days=7)
+    except Exception as e:
+        logger.warning("Calendar ingest failed: %s", e)
+        return {"events_synced": 0, "error": str(e)}
+
+    # Persist calendar events to the new CalendarEventRecord table
+    session = get_session()
+    persisted = 0
+    try:
+        for meeting in ingest_result.meetings:
+            cal_id = meeting.get("calendar_event_id", "")
+            if not cal_id:
+                continue
+
+            existing = session.query(CalendarEventRecord).filter(
+                CalendarEventRecord.calendar_event_id == cal_id,
+            ).first()
+
+            if existing:
+                # Update existing event
+                existing.title = meeting.get("title")
+                existing.start_time = _parse_dt(meeting.get("start_time"))
+                existing.end_time = _parse_dt(meeting.get("end_time"))
+                existing.attendees_json = json.dumps(meeting.get("attendees", []))
+                existing.status = "upcoming"
+            else:
+                # Create new event record
+                record = CalendarEventRecord(
+                    calendar_event_id=cal_id,
+                    title=meeting.get("title"),
+                    description=meeting.get("description", ""),
+                    start_time=_parse_dt(meeting.get("start_time")),
+                    end_time=_parse_dt(meeting.get("end_time")),
+                    location=meeting.get("location", ""),
+                    organizer_email=meeting.get("organizer_email", ""),
+                    attendees_json=json.dumps(meeting.get("attendees", [])),
+                    entity_ids=json.dumps(meeting.get("entity_ids", [])),
+                    status="upcoming",
+                )
+                session.add(record)
+                persisted += 1
+
+        session.commit()
+    except Exception:
+        session.rollback()
+        logger.exception("Calendar event persistence failed")
+    finally:
+        session.close()
+
+    return {
+        "events_synced": ingest_result.events_fetched,
+        "contacts_matched": ingest_result.matched_contacts,
+        "stubs_created": ingest_result.created_stubs,
+        "events_persisted": persisted,
+    }
+
+
+def _parse_dt(value) -> datetime | None:
+    """Parse a datetime value from various formats."""
+    if not value:
+        return None
+    if isinstance(value, datetime):
+        return value
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (ValueError, TypeError):
+        return None
+
+
+# ---------------------------------------------------------------------------
+# Auto photo resolution (called from sync loop)
+# ---------------------------------------------------------------------------
+
+def _auto_resolve_photos() -> int:
+    """Auto-resolve photos for contacts missing them.
+
+    Runs the PhotoResolutionService on all contacts without a photo_url.
+    Returns count of newly resolved photos.
+    """
+    from app.services.photo_resolution import PhotoResolutionService
+
+    session = get_session()
+    service = PhotoResolutionService()
+    resolved_count = 0
+
+    try:
+        entities = session.query(EntityRecord).filter(
+            EntityRecord.entity_type == "person",
+        ).all()
+
+        for entity in entities:
+            profile_data = json.loads(entity.domains or "{}")
+
+            # Skip if already has a photo that isn't failed
+            if profile_data.get("photo_url") and profile_data.get("photo_status") != "FAILED_RENDER":
+                continue
+
+            emails = entity.get_emails()
+            try:
+                result = service.resolve(
+                    contact_id=entity.id,
+                    contact_name=entity.name,
+                    email=emails[0] if emails else "",
+                    linkedin_url=profile_data.get("linkedin_url", ""),
+                    company_domain=profile_data.get("company_domain", ""),
+                    existing_photo_url=profile_data.get("photo_url", ""),
+                    existing_photo_source=profile_data.get("photo_source", ""),
+                    existing_photo_status=profile_data.get("photo_status", ""),
+                )
+                if result.photo_url:
+                    profile_data["photo_url"] = result.photo_url
+                    profile_data["photo_source"] = result.photo_source
+                    profile_data["photo_status"] = result.photo_status
+                    profile_data["photo_last_checked_at"] = result.resolved_at
+                    entity.domains = json.dumps(profile_data)
+                    resolved_count += 1
+            except Exception as e:
+                logger.debug("Photo resolution failed for %s: %s", entity.name, e)
+
+        session.commit()
+        if resolved_count:
+            logger.info("Auto-resolved photos for %d contacts", resolved_count)
+    except Exception:
+        session.rollback()
+        logger.exception("Auto photo resolution batch failed")
+    finally:
+        session.close()
+
+    return resolved_count
+
+
+# ---------------------------------------------------------------------------
+# Action item extraction (called from sync loop)
+# ---------------------------------------------------------------------------
+
+def _extract_and_persist_action_items() -> int:
+    """Extract action items from recently synced transcripts and emails.
+
+    Scans SourceRecords that don't yet have ActionItemRecords and extracts.
+    Returns total count of new action items created.
+    """
+    from app.services.action_items import (
+        extract_action_items_from_email,
+        extract_action_items_from_transcript,
+        persist_action_items,
+    )
+    from app.store.database import ActionItemRecord
+
+    session = get_session()
+    total_created = 0
+
+    try:
+        # Find source records without action items
+        from sqlalchemy import func, and_
+
+        # Get source IDs that already have action items
+        existing_source_ids = set(
+            r[0] for r in session.query(ActionItemRecord.source_id).filter(
+                ActionItemRecord.source_id.isnot(None),
+            ).distinct().all()
+        )
+
+        # Process transcripts
+        transcripts = session.query(SourceRecord).filter(
+            SourceRecord.source_type == "fireflies",
+        ).all()
+
+        for sr in transcripts:
+            if sr.source_id in existing_source_ids:
+                continue
+
+            action_items_raw = json.loads(sr.action_items or "[]")
+            if not action_items_raw:
+                continue
+
+            items = extract_action_items_from_transcript(
+                action_items_raw,
+                title=sr.title or "",
+            )
+            if items:
+                created = persist_action_items(
+                    items=items,
+                    source_type="fireflies",
+                    source_id=sr.source_id,
+                    source_record_id=sr.id,
+                    entity_id=sr.entity_id,
+                )
+                total_created += len(created)
+
+        # Process emails
+        emails = session.query(SourceRecord).filter(
+            SourceRecord.source_type == "gmail",
+        ).all()
+
+        for sr in emails:
+            if sr.source_id in existing_source_ids:
+                continue
+
+            body = sr.body or ""
+            if not body or len(body) < 20:
+                continue
+
+            items = extract_action_items_from_email(
+                body=body,
+                subject=sr.title or "",
+            )
+            if items:
+                created = persist_action_items(
+                    items=items,
+                    source_type="gmail",
+                    source_id=sr.source_id,
+                    source_record_id=sr.id,
+                    entity_id=sr.entity_id,
+                )
+                total_created += len(created)
+
+        if total_created:
+            logger.info("Extracted %d new action items from synced sources", total_created)
+
+    except Exception:
+        logger.exception("Action item extraction failed")
+    finally:
+        session.close()
+
+    return total_created
 
 
 def get_all_profiles() -> list[dict]:
