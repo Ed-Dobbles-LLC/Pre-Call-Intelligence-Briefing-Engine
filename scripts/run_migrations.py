@@ -26,6 +26,7 @@ ORDERED_MIGRATIONS = [
     "005_photo_and_calendar.sql",
     "006_pdl_enrichment.sql",
     "007_canonical_columns.sql",
+    "008_projects_actions_calendar.sql",
 ]
 
 VERIFY_QUERY = """\
@@ -123,6 +124,16 @@ def run_migrations() -> None:
                     len(columns),
                 )
                 sys.exit(1)
+
+            # Verify 008 tables
+            for table in ("projects", "action_items", "calendar_events"):
+                row = conn.execute(text(
+                    f"SELECT 1 FROM information_schema.tables WHERE table_name = '{table}'"
+                )).fetchone()
+                if row:
+                    logger.info("  ✓ Table '%s' exists", table)
+                else:
+                    logger.warning("  ✗ Table '%s' not found", table)
 
     logger.info("Migrations complete.")
 
