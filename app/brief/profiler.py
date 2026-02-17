@@ -477,6 +477,13 @@ SELF-CHECK before finalizing: scan every sentence in sections 1–8 and 12. \
 If it lacks an evidence tag and doesn't acknowledge a gap, add a tag or \
 delete it. For sections 9–11, verify each section header has a \
 "Derived from" citation list.
+
+**FINAL WARNING — SENTENCES WITHOUT TAGS WILL BE AUTO-REMOVED.**
+Any substantive sentence in sections 1–8 and 12 that lacks an evidence \
+tag will be stripped from the final output by the QA system. This means \
+transition sentences, context framing, and commentary without tags will \
+be deleted. Tag everything or lose it. Prefer short, tagged sentences \
+over long, eloquent paragraphs that get cut.
 """
 
 
